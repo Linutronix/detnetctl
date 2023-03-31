@@ -5,6 +5,10 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Florian Kauer <florian.kauer@linutronix.de>"]
 
+[features]
+default = ["dbus"]
+dbus = ["dep:dbus", "dep:dbus-crossroads", "dep:dbus-tokio", "dep:async-shutdown", "dep:async-trait"]
+
 [dependencies]
 anyhow = "1.0"
 tokio = {version = "1.0", features=["rt", "net", "macros", "sync", "signal"]}
@@ -15,6 +19,15 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = { version = "0.9" }
 
 clap = { version = "4.2.0", features = ["derive","wrap_help","cargo"] }
+
+### dbus feature
+# From github to include the set_sender feature just merged TODO replace when released
+dbus = { git = "https://github.com/diwic/dbus-rs", branch = "master", optional = true }
+dbus-crossroads = { git = "https://github.com/diwic/dbus-rs", branch = "master", optional = true }
+dbus-tokio = { git = "https://github.com/diwic/dbus-rs", branch = "master", optional = true }
+
+async-shutdown = { version = "0.1.2", optional = true }
+async-trait = { version = "0.1.67", optional = true }
 
 [dev-dependencies]
 mockall = "0.11.3"

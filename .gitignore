@@ -2,3 +2,4 @@
 *.o
 Cargo.lock
 target
+myconfig.yml

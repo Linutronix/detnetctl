@@ -8,6 +8,10 @@ and thus might sent their traffic in the same time slot leading to missed deadli
 In its current status, this software should be classified as demonstrator or research prototype intended for collecting experience with the requirements.
 For feedback or if you have a related productive use case, please contact [Linutronix](https://linutronix.de/).
 
+There are two options for registering an application:
+* Via D-Bus interface after detnetctl was spawned as service (preferred, but requires `dbus` feature)
+* Oneshot registration via `--app-name`
+
 ## Command Line Interface
 
 ```console
@@ -16,7 +20,7 @@ A TSN/DetNet Node Controller with Interference Protection
 Usage: detnetctl [OPTIONS]
 
 Options:
-  -a, --app-name <APP_NAME>      Oneshot registration with the provided app name
+  -a, --app-name <APP_NAME>      Oneshot registration with the provided app name and do not spawn D-Bus service
   -c, --config <FILE>            Use YAML configuration with the provided file
       --no-nic-setup <PRIORITY>  Skip NIC setup and return the given PRIORITY
       --no-guard                 Skip installing eBPFs - no interference protection!
@@ -80,4 +84,48 @@ Final result: RegisterResponse {
     token: 11251116261202197512,
 }
 ```
+
+## D-Bus Interface
+
+Allows for applications to register themselves via D-Bus.
+
+### Build
+
+1. Make sure you have D-Bus running on your system
+2. Create a user that should later run the application, e.g.
+```console
+sudo adduser app0
+```
+2. Make yourself familiar with the D-Bus policy in `config/dbus/detnetctl.conf` and install it
+```console
+sudo cp config/dbus/detnetctl.conf /etc/dbus-1/system.d/
+```
+3. Restart the D-Bus daemon, e.g.
+```console
+sudo systemctl restart dbus
+```
+4. Install the build dependencies for D-Bus applications, e.g.
+```console
+sudo apt install libdbus-1-dev libdbus-1-3 build-essential pkg-config
+```
+5. Build detnetctl
+```console
+cargo build --no-default-features --features dbus
+```
+
+### Run
+
+Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
+```yaml
+app0:
+  logical_interface: eth0
+  physical_interface: eth0
+```
+
+Start the service with
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml --no-nic-setup 2 --no-guard
+```
+
+`sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
 
