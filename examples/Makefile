@@ -1,4 +1,4 @@
-SUBDIRS := simple
+SUBDIRS := simple timestamps utils
 
 all: $(SUBDIRS)
 $(SUBDIRS):
