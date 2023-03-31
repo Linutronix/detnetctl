@@ -17,6 +17,7 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [eBPF Guards](#ebpf-guards) - requires `bpf` feature, skip at runtime via `--no-guard`
 - [NIC setup with detd](#nic-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-nic-setup`
+- [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
 
 ## Command Line Interface
 
@@ -27,7 +28,7 @@ Usage: detnetctl [OPTIONS]
 
 Options:
   -a, --app-name <APP_NAME>      Oneshot registration with the provided app name and do not spawn D-Bus service
-  -c, --config <FILE>            Use YAML configuration with the provided file
+  -c, --config <FILE>            Use YAML configuration with the provided file. Otherwise, uses sysrepo.
       --no-nic-setup <PRIORITY>  Skip NIC setup and return the given PRIORITY
       --no-guard                 Skip installing eBPFs - no interference protection!
   -h, --help                     Print help
@@ -197,4 +198,63 @@ Adapt the configuration (see `config/yaml/example.yml`) to include the required 
 sudo ./target/debug/detnetctl -c myconfig.yml
 ```
 Then start the applications as before.
+
+## Configuration via sysrepo (YANG/NETCONF)
+
+Instead of using a YAML file, the configuration can also be made via [sysrepo](https://www.sysrepo.org/) that uses YANG data models and can be configured via NETCONF.
+
+### Build
+
+1. Install [sysrepo](https://www.sysrepo.org/) and its dependencies. You might need to build from source, because most available packages are too old. It was successfully tested with the following versions:
+```console
+libsysrepo-dev: 2.2.36
+libsysrepo7:    2.2.36
+sysrepo-tools:  2.2.36
+
+libyang2:       2.1.30.1
+libyang2-dev:   2.1.30.1
+libyang2-tools: 2.1.30.1
+
+netopeer2:      2.1.49
+libnetconf2-3:  2.1.28
+```
+2. Clone submodule to get YANG schema definitions
+```console
+git submodule update --init --recursive
+```
+3. Build detnetctl
+```console
+cargo build --no-default-features --features dbus,bpf,detd,sysrepo
+```
+or equivalent
+```console
+cargo build
+```
+
+### Run
+
+Load the YANG configuration from `config/yang/example.json` after adapting it to your needs:
+```console
+sudo sysrepocfg --import=config/yang/example.json
+```
+In case of errors, load the missing schemas from `config/yang/schemas`, e.g.
+```console
+sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-interfaces@2018-02-20.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/draft/1588/ieee1588-ptp.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-ethertypes@2019-03-04.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-routing-types@2017-12-04.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-packet-fields@2019-03-04.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-types.yang
+sudo sysrepoctl -i config/yang/schemas/experimental/ietf-extracted-YANG-modules/ietf-detnet@2022-10-04.yang
+sudo sysrepoctl -i config/yang/schemas/standard/iana/iana-if-type@2023-01-26.yang
+sudo sysrepoctl -i config/yang/schemas/experimental/ietf-extracted-YANG-modules/ietf-if-extensions@2023-01-26.yang -e sub-interfaces
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-tsn-types.yang
+sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
+```
+
+Then start detnetctl as
+```console
+sudo ./target/debug/detnetctl
+```
+as well as the applications like before.
 

@@ -1,0 +1,66 @@
+{
+  "ietf-detnet:detnet": {
+    "traffic-profile": [
+      {
+        "name": "pf-1",
+        "traffic-spec": {
+          "interval": 2000000,
+          "max-pkts-per-interval": 10,
+          "max-payload-size": 1500
+        }
+      }
+    ],
+    "app-flows": {
+      "app-flow": [
+        {
+          "name": "app0",
+          "traffic-profile": "pf-1",
+          "ingress": {
+            "interface": "enp1s0.5"
+          }
+        }
+      ]
+    }
+  },
+  "ietf-interfaces:interfaces": {
+    "interface": [
+      {
+        "name": "enp1s0",
+        "type": "iana-if-type:ethernetCsmacd"
+      },
+      {
+        "name": "enp1s0.5",
+        "type": "iana-if-type:l2vlan",
+        "ietf-if-extensions:parent-interface": "enp1s0"
+      }
+    ]
+  },
+  "tsn-interface-configuration:tsn-interface-configuration": {
+    "interface-list": [
+      {
+        "mac-address": "AB-AB-AB-AB-AB-AB",
+        "interface-name": "enp1s0.5",
+        "config-list": [
+          {
+            "index": 0,
+            "time-aware-offset": 0
+          },
+          {
+            "index": 1,
+            "ieee802-vlan-tag": {
+              "priority-code-point": 3,
+              "vlan-id": 5
+            }
+          },
+          {
+            "index": 2,
+            "ieee802-mac-addresses": {
+              "destination-mac-address": "CB-CB-CB-CB-CB-CB"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+

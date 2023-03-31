@@ -15,6 +15,15 @@
 //! let config = yaml_config.get_ethernet_config("app0")?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
+//!
+//! With sysrepo configuration (for NETCONF integration):
+//!
+//! ```no_run
+//! use detnetctl::configuration::{Configuration, SysrepoConfiguration};
+//! let mut sysrepo_config = SysrepoConfiguration::new()?;
+//! let config = sysrepo_config.get_ethernet_config("app0");
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 use anyhow::Result;
 use eui48::MacAddress;
 use serde::{Deserialize, Serialize};
@@ -98,3 +107,8 @@ pub trait Configuration {
 
 mod yaml;
 pub use yaml::YAMLConfiguration;
+
+#[cfg(feature = "sysrepo")]
+mod sysrepo;
+#[cfg(feature = "sysrepo")]
+pub use self::sysrepo::SysrepoConfiguration;

@@ -1,6 +1,6 @@
 extern crate detnetctl;
 
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, Error, Result};
 use clap::Parser;
 use std::fs::File;
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ struct Cli {
     #[arg(short, long)]
     app_name: Option<String>,
 
-    /// Use YAML configuration with the provided file
+    /// Use YAML configuration with the provided file. Otherwise, uses sysrepo.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
@@ -46,9 +46,7 @@ pub async fn main() -> Result<()> {
             c.read(File::open(file)?)?;
             c
         }
-        None => {
-            bail!("Not yet implemented, please provide --config");
-        }
+        None => new_sysrepo_config()?,
     };
 
     let mut nic_setup = match cli.no_nic_setup {
@@ -144,6 +142,18 @@ fn new_bpf_guard(debug_output: bool) -> Result<Box<dyn Guard + Send>> {
 #[cfg(not(feature = "bpf"))]
 fn new_bpf_guard(_debug_output: bool) -> Result<Box<dyn Guard + Send>> {
     Err(feature_missing_error("bpf", "--no-guard"))
+}
+
+#[cfg(feature = "sysrepo")]
+use detnetctl::configuration::SysrepoConfiguration;
+#[cfg(feature = "sysrepo")]
+fn new_sysrepo_config() -> Result<Box<dyn Configuration + Send>> {
+    Ok(Box::new(SysrepoConfiguration::new()?))
+}
+
+#[cfg(not(feature = "sysrepo"))]
+fn new_sysrepo_config() -> Result<Box<dyn Configuration + Send>> {
+    Err(feature_missing_error("sysrepo", "--config"))
 }
 
 #[cfg(feature = "detd")]
