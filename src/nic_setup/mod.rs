@@ -1,4 +1,23 @@
 //! Setup a TSN-capable NIC and qdiscs
+//!
+//! ```no_run
+//! use detnetctl::nic_setup::{NICSetup, DetdGateway};
+//! use detnetctl::configuration::EthernetConfig;
+//!
+//! let ethernet_config = EthernetConfig{
+//!     logical_interface: String::from("eth0.3"),
+//!     physical_interface: String::from("eth0"),
+//!     period_ns: Some(1000*100),
+//!     offset_ns: Some(0),
+//!     size_bytes: Some(1000),
+//!     destination_address: Some("8a:de:82:a1:59:5a".parse()?),
+//!     vid: Some(3),
+//!     pcp: Some(4),
+//! };
+//! let mut nic_setup = DetdGateway::new(None, None)?;
+//! let socket_config = nic_setup.apply_config(&ethernet_config)?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 use crate::configuration;
 use anyhow::Result;
 
@@ -21,6 +40,11 @@ pub trait NICSetup {
     /// Apply the given configuration by setting up NIC and qdiscs
     fn apply_config(&self, config: &configuration::EthernetConfig) -> Result<SocketConfig>;
 }
+
+#[cfg(feature = "detd")]
+mod detd;
+#[cfg(feature = "detd")]
+pub use detd::DetdGateway;
 
 /// A NIC setup doing nothing, but still providing the NICSetup trait
 ///

@@ -53,9 +53,7 @@ pub async fn main() -> Result<()> {
 
     let mut nic_setup = match cli.no_nic_setup {
         Some(priority) => Box::new(DummyNICSetup::new(priority)),
-        None => {
-            bail!("Not yet implemented, please provide --no-nic-setup");
-        }
+        None => new_detd_gateway()?,
     };
 
     let mut guard = match cli.no_guard {
@@ -146,4 +144,16 @@ fn new_bpf_guard(debug_output: bool) -> Result<Box<dyn Guard + Send>> {
 #[cfg(not(feature = "bpf"))]
 fn new_bpf_guard(_debug_output: bool) -> Result<Box<dyn Guard + Send>> {
     Err(feature_missing_error("bpf", "--no-guard"))
+}
+
+#[cfg(feature = "detd")]
+use detnetctl::nic_setup::DetdGateway;
+#[cfg(feature = "detd")]
+fn new_detd_gateway() -> Result<Box<dyn NICSetup + Send>> {
+    Ok(Box::new(DetdGateway::new(None, None)?))
+}
+
+#[cfg(not(feature = "detd"))]
+fn new_detd_gateway() -> Result<Box<dyn NICSetup + Send>> {
+    Err(feature_missing_error("detd", "--no-nic-setup"))
 }

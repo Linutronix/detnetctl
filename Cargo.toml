@@ -6,9 +6,10 @@ edition = "2021"
 authors = ["Florian Kauer <florian.kauer@linutronix.de>"]
 
 [features]
-default = ["dbus", "bpf"]
+default = ["dbus", "bpf", "detd"]
 dbus = ["dep:dbus", "dep:dbus-crossroads", "dep:dbus-tokio", "dep:async-shutdown", "dep:async-trait"]
 bpf = ["dep:libbpf-rs", "dep:libbpf-cargo", "dep:log", "dep:nix"]
+detd = ["dep:bytes", "dep:prost"]
 libbpf_with_sotoken = []
 
 [dependencies]
@@ -37,9 +38,16 @@ libbpf-rs = { version = "0.19", optional = true }
 log = { version = "0.4.17", optional = true }
 nix = { version = "0.24", default-features = false, features = ["net", "user"], optional = true }
 
+### detd feature
+bytes = { version = "1.4.0", optional = true }
+prost = { version = "0.11.6", optional = true }
+
 [build-dependencies]
 ### bpf feature
 libbpf-cargo = { version = "0.13", optional = true }
+
+### detd feature
+prost-build = "0.11.6"
 
 [dev-dependencies]
 mockall = "0.11.3"

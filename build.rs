@@ -7,9 +7,12 @@ use {
 
 #[cfg(feature = "bpf")]
 const BPF_SRC: &str = "./src/guard/bpf/network_guard.bpf.c";
+#[cfg(feature = "detd")]
+const DETD_PROTO_SRC: &str = "./src/nic_setup/detdipc.proto";
 
 fn main() -> Result<()> {
     build_bpf();
+    build_detd()?;
     Ok(())
 }
 
@@ -33,3 +36,15 @@ fn build_bpf() {
 
 #[cfg(not(feature = "bpf"))]
 fn build_bpf() {}
+
+#[cfg(feature = "detd")]
+fn build_detd() -> Result<()> {
+    prost_build::compile_protos(&[DETD_PROTO_SRC], &["src/"])?;
+    println!("cargo:rerun-if-changed={DETD_PROTO_SRC}");
+    Ok(())
+}
+
+#[cfg(not(feature = "detd"))]
+fn build_detd() -> Result<()> {
+    Ok(())
+}

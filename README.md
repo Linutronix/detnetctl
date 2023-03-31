@@ -16,6 +16,7 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name`
 - [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [eBPF Guards](#ebpf-guards) - requires `bpf` feature, skip at runtime via `--no-guard`
+- [NIC setup with detd](#nic-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-nic-setup`
 
 ## Command Line Interface
 
@@ -175,3 +176,25 @@ While the first application should happily connect, the second application shoul
 ```console
 sudo cat /sys/kernel/debug/tracing/trace_pipe
 ```
+
+## NIC setup with detd
+
+Set up the network interface card (NIC) according to the configuration to enable TSN communication using TAPRIO Qdiscs aka Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv.
+
+This requires a at least one network card supported by [detd](https://github.com/Avnu/detd) (e.g. Intel® Ethernet Controller I225-LM).
+
+### Build
+
+1. [Install and run detd](https://github.com/Avnu/detd)
+2. Build detnetctl
+```console
+cargo build --no-default-features --features dbus,bpf,detd
+```
+
+### Run
+Adapt the configuration (see `config/yaml/example.yml`) to include the required parameters and start the service with
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml
+```
+Then start the applications as before.
+
