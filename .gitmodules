@@ -1,0 +1,3 @@
+[submodule "config/yang/schemas"]
+	path = config/yang/schemas
+	url = https://github.com/YangModels/yang.git
