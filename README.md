@@ -112,6 +112,11 @@ sudo apt install libdbus-1-dev libdbus-1-3 build-essential pkg-config
 ```console
 cargo build --no-default-features --features dbus
 ```
+6. Build the example application
+```console
+SETCAPS=1 make -C examples
+```
+The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, so you might get a password prompt.
 
 ### Run
 
@@ -129,3 +134,7 @@ sudo ./target/debug/detnetctl -c myconfig.yml --no-nic-setup 2 --no-guard
 
 `sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
 
+Then in a second terminal start the sample application with
+```console
+sudo -u app0 ./examples/simple/simple example.org app0
+```
