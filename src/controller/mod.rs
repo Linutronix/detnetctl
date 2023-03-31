@@ -124,7 +124,7 @@ impl Registration for Controller {
                 socket_config.priority,
                 token,
             )
-            .context("Installing protection via the guard failed")
+            .context("Installing protection via the guard failed. SO_TOKEN patch missing?")
             .map_err(|e| {
                 eprintln!("{:#}", e);
                 e

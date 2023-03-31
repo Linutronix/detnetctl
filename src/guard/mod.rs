@@ -1,4 +1,11 @@
 //! Installs filters to avoid interference between applications
+//!
+//! ```no_run
+//! use detnetctl::guard::{Guard, BPFGuard};
+//! let mut guard = BPFGuard::new();
+//! guard.protect_priority("eth0", 5, 0x9e25b4d41b6c390b)?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 use anyhow::Result;
 
 #[cfg(test)]
@@ -13,6 +20,11 @@ pub trait Guard {
     /// with the same priority will be dropped.
     fn protect_priority(&mut self, interface: &str, priority: u8, token: u64) -> Result<()>;
 }
+
+#[cfg(feature = "bpf")]
+mod bpf;
+#[cfg(feature = "bpf")]
+pub use bpf::BPFGuard;
 
 /// A guard doing nothing, but still providing the Guard trait
 ///

@@ -32,6 +32,8 @@ struct Cli {
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<()> {
+    env_logger::init();
+
     let cli = Cli::parse();
 
     let mut configuration = match cli.config {
@@ -54,9 +56,7 @@ pub async fn main() -> Result<()> {
 
     let mut guard = match cli.no_guard {
         true => Box::new(DummyGuard::new()),
-        false => {
-            bail!("Not yet implemented, please provide --no-guard");
-        }
+        false => new_bpf_guard()?,
     };
 
     let controller = Controller::new();
@@ -130,4 +130,16 @@ async fn spawn_dbus_service(
     mut _guard: Box<dyn Guard + Send>,
 ) -> Result<()> {
     Err(feature_missing_error("dbus", "--app-name"))
+}
+
+#[cfg(feature = "bpf")]
+use detnetctl::guard::BPFGuard;
+#[cfg(feature = "bpf")]
+fn new_bpf_guard() -> Result<Box<dyn Guard + Send>> {
+    Ok(Box::new(BPFGuard::new()))
+}
+
+#[cfg(not(feature = "bpf"))]
+fn new_bpf_guard() -> Result<Box<dyn Guard + Send>> {
+    Err(feature_missing_error("bpf", "--no-guard"))
 }

@@ -6,14 +6,17 @@ edition = "2021"
 authors = ["Florian Kauer <florian.kauer@linutronix.de>"]
 
 [features]
-default = ["dbus"]
+default = ["dbus", "bpf"]
 dbus = ["dep:dbus", "dep:dbus-crossroads", "dep:dbus-tokio", "dep:async-shutdown", "dep:async-trait"]
+bpf = ["dep:libbpf-rs", "dep:libbpf-cargo", "dep:log", "dep:nix"]
+libbpf_with_sotoken = []
 
 [dependencies]
 anyhow = "1.0"
 tokio = {version = "1.0", features=["rt", "net", "macros", "sync", "signal"]}
 eui48 = "1.1.0"
 getrandom = { version = "0.2.8", features = ["std"] }
+env_logger = "0.10.0"
 
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = { version = "0.9" }
@@ -28,6 +31,15 @@ dbus-tokio = { git = "https://github.com/diwic/dbus-rs", branch = "master", opti
 
 async-shutdown = { version = "0.1.2", optional = true }
 async-trait = { version = "0.1.67", optional = true }
+
+### bpf feature
+libbpf-rs = { version = "0.19", optional = true }
+log = { version = "0.4.17", optional = true }
+nix = { version = "0.24", default-features = false, features = ["net", "user"], optional = true }
+
+[build-dependencies]
+### bpf feature
+libbpf-cargo = { version = "0.13", optional = true }
 
 [dev-dependencies]
 mockall = "0.11.3"

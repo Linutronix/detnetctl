@@ -8,9 +8,14 @@ and thus might sent their traffic in the same time slot leading to missed deadli
 In its current status, this software should be classified as demonstrator or research prototype intended for collecting experience with the requirements.
 For feedback or if you have a related productive use case, please contact [Linutronix](https://linutronix.de/).
 
-There are two options for registering an application:
-* Via D-Bus interface after detnetctl was spawned as service (preferred, but requires `dbus` feature)
-* Oneshot registration via `--app-name`
+## Features
+
+The detnetctl software is split up into features that can be individually enabled to make it possible to try it out without the full set of dependencies.
+The features are introduced one by one below, but you should be able to mix and match by adapting the respective `cargo build` commands.
+
+- [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name`
+- [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
+- [eBPF Guards](#ebpf-guards) - requires `bpf` feature, skip at runtime via `--no-guard`
 
 ## Command Line Interface
 
@@ -28,7 +33,7 @@ Options:
   -V, --version                  Print version
 ```
 
-## Oneshot Dry-Run Registration
+## Oneshot Dry-Run Registration (Minimal Feature Set)
 
 Only performs a one-shot dry-run reading the configuration from a YAML file.
 
@@ -85,7 +90,7 @@ Final result: RegisterResponse {
 }
 ```
 
-## D-Bus Interface
+## Registration via D-Bus Interface
 
 Allows for applications to register themselves via D-Bus.
 
@@ -137,4 +142,36 @@ sudo ./target/debug/detnetctl -c myconfig.yml --no-nic-setup 2 --no-guard
 Then in a second terminal start the sample application with
 ```console
 sudo -u app0 ./examples/simple/simple example.org app0
+```
+
+## eBPF Guards
+
+Install an eBPF at tc egress that after an application has registered, only that application (in possession of a dedicated token) can transmit for the given priority.
+
+This requires the support of the SO_TOKEN socket option. You can skip this feature if you do not have a matching kernel available.
+
+### Build
+```console
+cargo build --no-default-features --features dbus,bpf
+```
+
+If you have a libbpf version available that was synced with a kernel with SO_TOKEN patch, add the feature `libbpf_with_sotoken`.
+
+### Run
+Start the service with
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml --no-nic-setup 3
+```
+Then in a second terminal start the sample application with
+```console
+sudo -u app0 ./examples/simple/simple example.org app0
+```
+and start a second sample application with
+```console
+sudo -u app0 ./examples/simple/simple example.org --skip-registration eth0 3
+```
+Consider to replace `eth0` with your interface. The priority 3 given here matches the 3 provided to `--no-nic-setup`.
+While the first application should happily connect, the second application should be blocked, that is it will not be able to establish a connection since all its traffic gets dropped. You can monitor the filter with 
+```console
+sudo cat /sys/kernel/debug/tracing/trace_pipe
 ```
