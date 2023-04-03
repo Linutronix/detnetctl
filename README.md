@@ -258,3 +258,5 @@ sudo ./target/debug/detnetctl
 ```
 as well as the applications like before.
 
+For a more complex example have a look at the [timestamp example](timestamp_example/index.html).
+

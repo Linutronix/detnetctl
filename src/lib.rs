@@ -8,3 +8,7 @@ pub mod nic_setup;
 
 #[cfg(feature = "dbus")]
 pub mod facade;
+
+// Only for documentation
+#[doc = include_str!("../examples/timestamps/README.md")]
+pub mod timestamp_example {}
