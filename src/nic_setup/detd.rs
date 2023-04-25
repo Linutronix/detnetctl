@@ -2,7 +2,7 @@ use crate::configuration;
 use crate::nic_setup::{NICSetup, SocketConfig};
 use anyhow::{anyhow, Context, Result};
 use prost::Message;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub mod detdipc {
     include!(concat!(env!("OUT_DIR"), "/detdipc.rs"));
@@ -15,7 +15,8 @@ const DETD_SOCK: &str = "/var/run/detd/detd_service.sock";
 /// Configures the NIC using the external detd service
 #[derive(Debug)]
 pub struct DetdGateway {
-    socket: UnixDatagram,
+    remote_socket_path: PathBuf,
+    local_socket_path: PathBuf,
 }
 
 impl DetdGateway {
@@ -33,12 +34,12 @@ impl DetdGateway {
         remote_socket_path: Option<&Path>,
         local_socket_path: Option<&Path>,
     ) -> Result<Self> {
-        let socket = UnixDatagram::bind(local_socket_path.unwrap_or(Path::new("")))
-            .context("Failed to bind to local UNIX socket")?;
-        socket
-            .connect(remote_socket_path.unwrap_or(Path::new(DETD_SOCK)))
-            .context("Failed to connect to detd")?;
-        Ok(DetdGateway { socket })
+        Ok(DetdGateway {
+            remote_socket_path: remote_socket_path
+                .unwrap_or(Path::new(DETD_SOCK))
+                .to_path_buf(),
+            local_socket_path: local_socket_path.unwrap_or(Path::new("")).to_path_buf(),
+        })
     }
 }
 
@@ -47,6 +48,11 @@ impl NICSetup for DetdGateway {
         if config.offset_ns > config.period_ns {
             return Err(anyhow!("Not possible to setup if offset > period!"));
         }
+        let socket = UnixDatagram::bind(self.local_socket_path.as_path())
+            .context("Failed to bind to local UNIX socket")?;
+        socket
+            .connect(self.remote_socket_path.as_path())
+            .context("Failed to connect to detd")?;
 
         let request = detdipc::StreamQosRequest {
             period: config
@@ -80,9 +86,9 @@ impl NICSetup for DetdGateway {
 
         let mut message = vec![];
         request.encode(&mut message)?;
-        self.socket.send(&message)?;
+        socket.send(&message)?;
         let mut buf = [0; 1024];
-        let count = self.socket.recv(&mut buf)?;
+        let count = socket.recv(&mut buf)?;
 
         let response = detdipc::StreamQosResponse::decode(&buf[..count])?;
 
