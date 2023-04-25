@@ -14,6 +14,8 @@ struct {
 	__type(value, u64);
 } allowed_tokens SEC(".maps");
 
+const volatile bool debug_output = false;
+
 SEC("tc")
 int tc_egress(struct __sk_buff *ctx)
 {
@@ -32,15 +34,22 @@ int tc_egress(struct __sk_buff *ctx)
 
 	allowed_token = *allowed_token_ptr;
 	u64 token = bpf_get_socket_token(ctx);
-	bpf_printk(
-		"TX packet with priority %i and token %lu. Allowed token is %lu -> ",
-		priority, token, allowed_token);
+
+	if (debug_output) {
+		bpf_printk(
+			"TX packet with priority %i and token %lu. Allowed token is %lu -> ",
+			priority, token, allowed_token);
+	}
 
 	if (allowed_token == token) {
-		bpf_printk("OK\n");
+		if (debug_output) {
+			bpf_printk("OK\n");
+		}
 		return TC_ACT_OK;
 	} else {
-		bpf_printk("DROP\n");
+		if (debug_output) {
+			bpf_printk("DROP\n");
+		}
 		return TC_ACT_SHOT;
 	}
 }

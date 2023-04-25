@@ -9,9 +9,18 @@ mock! {
     }
 }
 
+pub mod network_guard_rodata_types {
+    #[derive(Debug, Copy, Clone)]
+    #[repr(C)]
+    pub struct rodata {
+        pub debug_output: bool,
+    }
+}
+
 mock! {
     pub OpenNetworkGuardSkel {
         pub fn load(mut self) -> libbpf_rs::Result<MockNetworkGuardSkel<'static>>;
+        pub fn rodata(&mut self) -> &mut network_guard_rodata_types::rodata;
     }
 }
 

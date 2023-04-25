@@ -28,6 +28,10 @@ struct Cli {
     /// Skip installing eBPFs - no interference protection!
     #[arg(long)]
     no_guard: bool,
+
+    /// Print eBPF debug output to kernel tracing
+    #[arg(long)]
+    bpf_debug_output: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -56,7 +60,7 @@ pub async fn main() -> Result<()> {
 
     let mut guard = match cli.no_guard {
         true => Box::new(DummyGuard::new()),
-        false => new_bpf_guard()?,
+        false => new_bpf_guard(cli.bpf_debug_output)?,
     };
 
     let controller = Controller::new();
@@ -135,11 +139,11 @@ async fn spawn_dbus_service(
 #[cfg(feature = "bpf")]
 use detnetctl::guard::BPFGuard;
 #[cfg(feature = "bpf")]
-fn new_bpf_guard() -> Result<Box<dyn Guard + Send>> {
-    Ok(Box::new(BPFGuard::new()))
+fn new_bpf_guard(debug_output: bool) -> Result<Box<dyn Guard + Send>> {
+    Ok(Box::new(BPFGuard::new(debug_output)))
 }
 
 #[cfg(not(feature = "bpf"))]
-fn new_bpf_guard() -> Result<Box<dyn Guard + Send>> {
+fn new_bpf_guard(_debug_output: bool) -> Result<Box<dyn Guard + Send>> {
     Err(feature_missing_error("bpf", "--no-guard"))
 }

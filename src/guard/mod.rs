@@ -2,7 +2,7 @@
 //!
 //! ```no_run
 //! use detnetctl::guard::{Guard, BPFGuard};
-//! let mut guard = BPFGuard::new();
+//! let mut guard = BPFGuard::new(false);
 //! guard.protect_priority("eth0", 5, 0x9e25b4d41b6c390b)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```

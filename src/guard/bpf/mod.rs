@@ -36,6 +36,7 @@ pub struct BPFGuard<'a> {
     interfaces: HashMap<String, BPFInterface<'a>>,
     generate_skel: GenerateSkelCallback,
     nametoindex: NameToIndexCallback,
+    debug_output: bool,
 }
 
 impl<'a> Guard for BPFGuard<'a> {
@@ -54,18 +55,21 @@ impl<'a> Guard for BPFGuard<'a> {
 
 impl<'a> BPFGuard<'a> {
     /// Create a new BPFGuard
-    pub fn new() -> Self {
+    pub fn new(debug_output: bool) -> Self {
         set_print(Some((PrintLevel::Debug, print_to_log)));
         BPFGuard {
             interfaces: HashMap::default(),
             generate_skel: Box::new(NetworkGuardSkelBuilder::default),
             nametoindex: Box::new(|interface| Ok(nix::net::if_::if_nametoindex(interface)? as i32)),
+            debug_output,
         }
     }
 
     fn attach_interface(&mut self, interface: &str) -> Result<()> {
         let skel_builder = (self.generate_skel)();
-        let open_skel = skel_builder.open()?;
+        let mut open_skel = skel_builder.open()?;
+        open_skel.rodata().debug_output = self.debug_output;
+
         let skel = open_skel.load()?;
 
         let fd = skel.progs().tc_egress().fd();
@@ -97,7 +101,7 @@ impl<'a> BPFGuard<'a> {
 
 impl<'a> Default for BPFGuard<'a> {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
@@ -150,6 +154,11 @@ mod tests {
             .expect_load()
             .times(1)
             .returning(|| Ok(generate_skel()));
+        open_skel.expect_rodata().times(1).returning(|| {
+            mocks::network_guard_rodata_types::rodata {
+                debug_output: false,
+            }
+        });
         open_skel
     }
 
@@ -200,6 +209,7 @@ mod tests {
                 assert_eq!(interface, INTERFACE);
                 Ok(3)
             }),
+            debug_output: false,
         };
 
         guard.protect_priority(INTERFACE, PRIORITY, TOKEN)?;
@@ -215,6 +225,7 @@ mod tests {
                 assert_eq!(interface, INTERFACE);
                 Err(anyhow!("interface not found"))
             }),
+            debug_output: false,
         };
 
         let result = guard.protect_priority(INTERFACE, PRIORITY, TOKEN);
