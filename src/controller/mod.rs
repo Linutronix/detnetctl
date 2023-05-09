@@ -14,13 +14,18 @@
 //! # let tmpfile = doctest::generate_example_yaml();
 //! # let filepath = tmpfile.path();
 //! use std::fs::File;
-//! #
+//! use std::sync::Arc;
+//! use futures::lock::Mutex;
+//!
+//! # tokio_test::block_on(async {
 //! let controller = Controller::new();
-//! let mut configuration = YAMLConfiguration::new();
-//! configuration.read(File::open(filepath)?)?;
-//! let mut queue_setup = DummyQueueSetup::new(3);
-//! let mut guard = DummyGuard::new();
-//! let response = controller.register("app0", &mut configuration, &mut queue_setup, &mut guard)?;
+//! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
+//! configuration.lock().await.read(File::open(filepath)?)?;
+//! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
+//! let mut guard = Arc::new(Mutex::new(DummyGuard::new()));
+//! let response = controller.register("app0", configuration, queue_setup, guard).await?;
+//! # Ok::<(), anyhow::Error>(())
+//! # });
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -28,7 +33,10 @@ use crate::configuration::Configuration;
 use crate::guard::Guard;
 use crate::queue_setup::QueueSetup;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
+use futures::lock::Mutex;
 use getrandom::getrandom;
+use std::sync::Arc;
 
 /// The reponse of a registration to be passed back to the application
 /// for setting up the socket appropriately.
@@ -43,6 +51,7 @@ pub struct RegisterResponse {
 }
 
 /// Defines a registration operation
+#[async_trait]
 pub trait Registration {
     /// Register an application including the following steps
     ///
@@ -52,12 +61,12 @@ pub trait Registration {
     /// 4. Set up the guard to prevent interfering messages from other applications
     /// 5. Return the appropriate socket settings for the application
     ///
-    fn register(
+    async fn register(
         &self,
         app_name: &str,
-        configuration: &mut dyn Configuration,
-        queue_setup: &mut dyn QueueSetup,
-        guard: &mut dyn Guard,
+        mut configuration: Arc<Mutex<dyn Configuration + Send>>,
+        queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+        mut guard: Arc<Mutex<dyn Guard + Send>>,
     ) -> Result<RegisterResponse>;
 }
 
@@ -79,13 +88,14 @@ impl Controller {
     }
 }
 
+#[async_trait]
 impl Registration for Controller {
-    fn register(
+    async fn register(
         &self,
         app_name: &str,
-        configuration: &mut dyn Configuration,
-        queue_setup: &mut dyn QueueSetup,
-        guard: &mut dyn Guard,
+        configuration: Arc<Mutex<dyn Configuration + Send>>,
+        queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+        guard: Arc<Mutex<dyn Guard + Send>>,
     ) -> Result<RegisterResponse> {
         println!("Request to register {}", app_name);
 
@@ -94,6 +104,8 @@ impl Registration for Controller {
 
         // Fetch configuration for app
         let app_config = configuration
+            .lock()
+            .await
             .get_app_config(app_name)
             .context("Fetching the configuration failed")
             .map_err(|e| {
@@ -105,6 +117,8 @@ impl Registration for Controller {
 
         // Setup NIC
         let socket_config = queue_setup
+            .lock()
+            .await
             .apply_config(&app_config)
             .context("Setting up the queues failed")
             .map_err(|e| {
@@ -118,7 +132,8 @@ impl Registration for Controller {
         // here, because otherwise it would be possible to use a different logical interface,
         // but same SO_PRIORITY and physical interface. Even though it would not be routed to the
         // same VLAN it could still block the time slot!
-        guard
+        let mut locked_guard = guard.lock().await;
+        locked_guard
             .protect_priority(
                 &app_config.physical_interface,
                 socket_config.priority,
@@ -216,53 +231,60 @@ mod tests {
         guard
     }
 
-    #[test]
-    fn test_register_happy() -> Result<()> {
+    #[tokio::test]
+    async fn test_register_happy() -> Result<()> {
         let interface = "ethxy";
         let vid = 43;
         let priority = 32;
-        let mut configuration = configuration_happy(String::from(interface), vid);
-        let mut queue_setup = queue_setup_happy(priority);
-        let mut guard = guard_happy();
+        let configuration = Arc::new(Mutex::new(configuration_happy(
+            String::from(interface),
+            vid,
+        )));
+        let queue_setup = Arc::new(Mutex::new(queue_setup_happy(priority)));
+        let guard = Arc::new(Mutex::new(guard_happy()));
         let controller = Controller::new();
-        let response =
-            controller.register("app123", &mut configuration, &mut queue_setup, &mut guard)?;
+        let response = controller
+            .register("app123", configuration, queue_setup, guard)
+            .await?;
         assert_eq!(response.logical_interface, format!("{}.{}", interface, vid));
         assert_eq!(response.priority, priority);
         assert!(response.token > 10); // not GUARANTEED, but VERY unlikely to fail
         Ok(())
     }
 
-    #[test]
-    fn test_register_configuration_failure() {
-        let mut configuration = configuration_failing();
-        let mut queue_setup = queue_setup_happy(32);
-        let mut guard = guard_happy();
+    #[tokio::test]
+    async fn test_register_configuration_failure() {
+        let configuration = Arc::new(Mutex::new(configuration_failing()));
+        let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
+        let guard = Arc::new(Mutex::new(guard_happy()));
         let controller = Controller::new();
         assert!(controller
-            .register("app123", &mut configuration, &mut queue_setup, &mut guard)
+            .register("app123", configuration, queue_setup, guard)
+            .await
             .is_err());
     }
 
-    #[test]
-    fn test_register_queue_setup_failure() {
-        let mut configuration = configuration_happy(String::from("abc"), 4);
-        let mut queue_setup = queue_setup_failing();
-        let mut guard = guard_happy();
+    #[tokio::test]
+    async fn test_register_queue_setup_failure() {
+        let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
+        let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
+        let guard = Arc::new(Mutex::new(guard_happy()));
         let controller = Controller::new();
         assert!(controller
-            .register("app123", &mut configuration, &mut queue_setup, &mut guard)
+            .register("app123", configuration, queue_setup, guard)
+            .await
             .is_err());
     }
 
-    #[test]
-    fn test_register_guard_failure() {
-        let mut configuration = configuration_happy(String::from("abc"), 4);
-        let mut queue_setup = queue_setup_happy(32);
-        let mut guard = guard_failing();
+    #[tokio::test]
+    async fn test_register_guard_failure() {
+        let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
+        let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
+        let guard = Arc::new(Mutex::new(guard_failing()));
         let controller = Controller::new();
         assert!(controller
-            .register("app123", &mut configuration, &mut queue_setup, &mut guard)
+            .register("app123", configuration, queue_setup, guard)
+            .await
             .is_err());
     }
 }

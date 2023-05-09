@@ -2,8 +2,10 @@ extern crate detnetctl;
 
 use anyhow::{anyhow, Error, Result};
 use clap::Parser;
+use futures::lock::Mutex;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use detnetctl::configuration::{Configuration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Registration};
@@ -40,22 +42,22 @@ pub async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let mut configuration = match cli.config {
+    let configuration = match cli.config {
         Some(file) => {
-            let mut c = Box::new(YAMLConfiguration::new());
+            let mut c = YAMLConfiguration::new();
             c.read(File::open(file)?)?;
-            c
+            Arc::new(Mutex::new(c))
         }
         None => new_sysrepo_config()?,
     };
 
-    let mut queue_setup = match cli.no_queue_setup {
-        Some(priority) => Box::new(DummyQueueSetup::new(priority)),
+    let queue_setup = match cli.no_queue_setup {
+        Some(priority) => Arc::new(Mutex::new(DummyQueueSetup::new(priority))),
         None => new_detd_gateway()?,
     };
 
-    let mut guard = match cli.no_guard {
-        true => Box::new(DummyGuard::new()),
+    let guard = match cli.no_guard {
+        true => Arc::new(Mutex::new(DummyGuard::new())),
         false => new_bpf_guard(cli.bpf_debug_output)?,
     };
 
@@ -63,15 +65,25 @@ pub async fn main() -> Result<()> {
 
     match cli.app_name {
         Some(app_name) => {
-            let response = controller.register(
-                &app_name,
-                &mut *configuration,
-                &mut *queue_setup,
-                &mut *guard,
-            )?;
+            let response = controller
+                .register(
+                    &app_name,
+                    configuration,
+                    queue_setup,
+                    guard,
+                )
+                .await?;
             println!("Final result: {:#?}", response);
         }
-        None => spawn_dbus_service(controller, configuration, queue_setup, guard).await?,
+        None => {
+            spawn_dbus_service(
+                Arc::new(Mutex::new(controller)),
+                configuration,
+                queue_setup,
+                guard,
+            )
+            .await?
+        }
     }
 
     Ok(())
@@ -90,17 +102,33 @@ use {
 };
 #[cfg(feature = "dbus")]
 async fn spawn_dbus_service(
-    controller: Controller,
-    mut configuration: Box<dyn Configuration + Send>,
-    mut queue_setup: Box<dyn QueueSetup + Send>,
-    mut guard: Box<dyn Guard + Send>,
+    controller: Arc<Mutex<Controller>>,
+    configuration: Arc<Mutex<dyn Configuration + Send>>,
+    queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+    guard: Arc<Mutex<dyn Guard + Send>>,
 ) -> Result<()> {
     let shutdown = Shutdown::new();
     let mut facade = Facade::new(shutdown.clone())?;
 
     facade
         .setup(Box::new(move |app_name| {
-            controller.register(app_name, &mut *configuration, &mut *queue_setup, &mut *guard)
+            let app_name = String::from(app_name);
+            let cloned_controller = controller.clone();
+            let cloned_configuration = configuration.clone();
+            let cloned_queue_setup = queue_setup.clone();
+            let cloned_guard = guard.clone();
+            Box::pin(async move {
+                cloned_controller
+                    .lock()
+                    .await
+                    .register(
+                        &app_name,
+                        cloned_configuration,
+                        cloned_queue_setup,
+                        cloned_guard,
+                    )
+                    .await
+            })
         }))
         .await?;
 
@@ -124,7 +152,7 @@ async fn spawn_dbus_service(
 
 #[cfg(not(feature = "dbus"))]
 async fn spawn_dbus_service(
-    _controller: Controller,
+    _controller: Arc<Mutex<Controller>>,
     mut _configuration: Box<dyn Configuration + Send>,
     mut _queue_setup: Box<dyn QueueSetup + Send>,
     mut _guard: Box<dyn Guard + Send>,
@@ -135,35 +163,35 @@ async fn spawn_dbus_service(
 #[cfg(feature = "bpf")]
 use detnetctl::guard::BPFGuard;
 #[cfg(feature = "bpf")]
-fn new_bpf_guard(debug_output: bool) -> Result<Box<dyn Guard + Send>> {
-    Ok(Box::new(BPFGuard::new(debug_output)))
+fn new_bpf_guard(debug_output: bool) -> Result<Arc<Mutex<dyn Guard + Send>>> {
+    Ok(Arc::new(Mutex::new(BPFGuard::new(debug_output))))
 }
 
 #[cfg(not(feature = "bpf"))]
-fn new_bpf_guard(_debug_output: bool) -> Result<Box<dyn Guard + Send>> {
+fn new_bpf_guard(_debug_output: bool) -> Result<Arc<Mutex<dyn Guard + Send>>> {
     Err(feature_missing_error("bpf", "--no-guard"))
 }
 
 #[cfg(feature = "sysrepo")]
 use detnetctl::configuration::SysrepoConfiguration;
 #[cfg(feature = "sysrepo")]
-fn new_sysrepo_config() -> Result<Box<dyn Configuration + Send>> {
-    Ok(Box::new(SysrepoConfiguration::new()?))
+fn new_sysrepo_config() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
+    Ok(Arc::new(Mutex::new(SysrepoConfiguration::new()?)))
 }
 
 #[cfg(not(feature = "sysrepo"))]
-fn new_sysrepo_config() -> Result<Box<dyn Configuration + Send>> {
+fn new_sysrepo_config() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
     Err(feature_missing_error("sysrepo", "--config"))
 }
 
 #[cfg(feature = "detd")]
 use detnetctl::queue_setup::DetdGateway;
 #[cfg(feature = "detd")]
-fn new_detd_gateway() -> Result<Box<dyn QueueSetup + Send>> {
-    Ok(Box::new(DetdGateway::new(None, None)?))
+fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
+    Ok(Arc::new(Mutex::new(DetdGateway::new(None, None)?)))
 }
 
 #[cfg(not(feature = "detd"))]
-fn new_detd_gateway() -> Result<Box<dyn QueueSetup + Send>> {
+fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
     Err(feature_missing_error("detd", "--no-queue-setup"))
 }

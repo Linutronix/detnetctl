@@ -25,6 +25,8 @@ serde_yaml = { version = "0.9" }
 
 clap = { version = "4.2.0", features = ["derive","wrap_help","cargo"] }
 
+futures = "0.3.11"
+
 ### dbus feature
 # From github to include the set_sender feature just merged TODO replace when released
 dbus = { git = "https://github.com/diwic/dbus-rs", branch = "master", optional = true }

@@ -15,16 +15,30 @@
 //! #
 //! # tokio_test::block_on(async {
 //! use std::fs::File;
-//! let controller = Controller::new();
+//! use std::sync::Arc;
+//! use futures::lock::Mutex;
+//!
+//! let controller = Arc::new(Mutex::new(Controller::new()));
 //! let shutdown = Shutdown::new();
 //! let mut facade = Facade::new(shutdown.clone())?;
-//! let mut configuration = YAMLConfiguration::new();
-//! configuration.read(File::open(filepath)?)?;
-//! let mut queue_setup = DummyQueueSetup::new(3);
-//! let mut guard = DummyGuard::new();
+//! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
+//! configuration.lock().await.read(File::open(filepath)?)?;
+//! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
+//! let mut guard = Arc::new(Mutex::new(DummyGuard::new()));
 //!
 //! facade.setup(Box::new(move |app_name| {
-//!     controller.register(app_name, &mut configuration, &mut queue_setup, &mut guard)
+//!     let app_name = String::from(app_name);
+//!     let cloned_controller = controller.clone();
+//!     let cloned_configuration = configuration.clone();
+//!     let cloned_queue_setup = queue_setup.clone();
+//!     let cloned_guard = guard.clone();
+//!     Box::pin(async move {
+//!         cloned_controller.lock().await.register(
+//!             &app_name,
+//!             cloned_configuration,
+//!             cloned_queue_setup,
+//!             cloned_guard).await
+//!     })
 //! })).await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
@@ -34,17 +48,19 @@ use crate::controller::RegisterResponse;
 use anyhow::Result;
 use async_shutdown::Shutdown;
 use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 
 mod dbus;
+
+type RegisterFuture = Pin<Box<dyn Future<Output = Result<RegisterResponse, anyhow::Error>> + Send>>;
+type RegisterCallback = Box<dyn for<'a> FnMut(&'a str) -> RegisterFuture + Send>;
 
 /// Setup of the facade
 #[async_trait]
 pub trait Setup {
     /// Setup the facade by providing a callback for the registration command
-    async fn setup(
-        &mut self,
-        register: Box<dyn for<'a> FnMut(&'a str) -> Result<RegisterResponse> + Send>,
-    ) -> Result<()>;
+    async fn setup(&mut self, register: RegisterCallback) -> Result<()>;
 }
 
 /// Represents the D-Bus facade
@@ -63,10 +79,7 @@ impl Facade {
 
 #[async_trait]
 impl Setup for Facade {
-    async fn setup(
-        &mut self,
-        register: Box<dyn for<'a> FnMut(&'a str) -> Result<RegisterResponse> + Send>,
-    ) -> Result<()> {
+    async fn setup(&mut self, register: RegisterCallback) -> Result<()> {
         self.dbus.setup(register).await?;
         Ok(())
     }

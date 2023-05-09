@@ -1,3 +1,4 @@
+use crate::facade::RegisterCallback;
 use anyhow::{anyhow, Result};
 use async_shutdown::Shutdown;
 use async_trait::async_trait;
@@ -36,8 +37,6 @@ pub struct DBus {
     resource_handle: Arc<tokio::task::JoinHandle<()>>,
     shutdown: Shutdown,
 }
-
-type RegisterCallback = Box<dyn FnMut(&str) -> Result<controller::RegisterResponse> + Send>;
 
 impl DBus {
     pub fn new(shutdown: Shutdown) -> Result<Self> {
@@ -90,7 +89,7 @@ impl DBus {
                 )
                 .await
                 {
-                    Ok(()) => register(&cmd.app_name),
+                    Ok(()) => register(&cmd.app_name).await,
                     Err(e) => Err(e),
                 };
 
@@ -300,10 +299,12 @@ mod tests {
             let register_called_for_setup = register_called.clone();
             dbus.setup(Box::new(move |_| {
                 register_called_for_setup.store(true, Ordering::Relaxed);
-                Ok(controller::RegisterResponse {
-                    logical_interface: String::from(INTERFACE),
-                    priority: PRIORITY,
-                    token: TOKEN,
+                Box::pin(async move {
+                    Ok(controller::RegisterResponse {
+                        logical_interface: String::from(INTERFACE),
+                        priority: PRIORITY,
+                        token: TOKEN,
+                    })
                 })
             }))
             .await?;
