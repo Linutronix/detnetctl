@@ -8,7 +8,7 @@ use {
 #[cfg(feature = "bpf")]
 const BPF_SRC: &str = "./src/guard/bpf/network_guard.bpf.c";
 #[cfg(feature = "detd")]
-const DETD_PROTO_SRC: &str = "./src/nic_setup/detdipc.proto";
+const DETD_PROTO_SRC: &str = "./src/queue_setup/detdipc.proto";
 
 fn main() -> Result<()> {
     build_bpf();

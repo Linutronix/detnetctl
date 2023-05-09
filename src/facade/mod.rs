@@ -4,7 +4,7 @@
 //! use detnetctl::controller::{Registration, Controller};
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
 //! use detnetctl::facade::{Facade, Setup};
-//! use detnetctl::nic_setup::{NICSetup, DummyNICSetup};
+//! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
 //! use detnetctl::guard::{Guard, DummyGuard};
 //! use async_shutdown::Shutdown;
 //! #
@@ -20,11 +20,11 @@
 //! let mut facade = Facade::new(shutdown.clone())?;
 //! let mut configuration = YAMLConfiguration::new();
 //! configuration.read(File::open(filepath)?)?;
-//! let mut nic_setup = DummyNICSetup::new(3);
+//! let mut queue_setup = DummyQueueSetup::new(3);
 //! let mut guard = DummyGuard::new();
 //!
 //! facade.setup(Box::new(move |app_name| {
-//!     controller.register(app_name, &mut configuration, &mut nic_setup, &mut guard)
+//!     controller.register(app_name, &mut configuration, &mut queue_setup, &mut guard)
 //! })).await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });

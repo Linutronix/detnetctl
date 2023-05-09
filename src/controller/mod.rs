@@ -6,7 +6,7 @@
 //! ```
 //! use detnetctl::controller::{Registration, Controller};
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
-//! use detnetctl::nic_setup::{NICSetup, DummyNICSetup};
+//! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
 //! use detnetctl::guard::{Guard, DummyGuard};
 //!
 //! # #[path = "../configuration/doctest.rs"]
@@ -18,15 +18,15 @@
 //! let controller = Controller::new();
 //! let mut configuration = YAMLConfiguration::new();
 //! configuration.read(File::open(filepath)?)?;
-//! let mut nic_setup = DummyNICSetup::new(3);
+//! let mut queue_setup = DummyQueueSetup::new(3);
 //! let mut guard = DummyGuard::new();
-//! let response = controller.register("app0", &mut configuration, &mut nic_setup, &mut guard)?;
+//! let response = controller.register("app0", &mut configuration, &mut queue_setup, &mut guard)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
 use crate::configuration::Configuration;
 use crate::guard::Guard;
-use crate::nic_setup::NICSetup;
+use crate::queue_setup::QueueSetup;
 use anyhow::{Context, Result};
 use getrandom::getrandom;
 
@@ -56,7 +56,7 @@ pub trait Registration {
         &self,
         app_name: &str,
         configuration: &mut dyn Configuration,
-        nic_setup: &mut dyn NICSetup,
+        queue_setup: &mut dyn QueueSetup,
         guard: &mut dyn Guard,
     ) -> Result<RegisterResponse>;
 }
@@ -84,7 +84,7 @@ impl Registration for Controller {
         &self,
         app_name: &str,
         configuration: &mut dyn Configuration,
-        nic_setup: &mut dyn NICSetup,
+        queue_setup: &mut dyn QueueSetup,
         guard: &mut dyn Guard,
     ) -> Result<RegisterResponse> {
         println!("Request to register {}", app_name);
@@ -104,14 +104,14 @@ impl Registration for Controller {
         println!("Fetched from configuration module: {:#?}", app_config);
 
         // Setup NIC
-        let socket_config = nic_setup
+        let socket_config = queue_setup
             .apply_config(&app_config)
-            .context("Setting up the NIC failed")
+            .context("Setting up the queues failed")
             .map_err(|e| {
                 eprintln!("{:#}", e);
                 e
             })?;
-        println!("Result of NIC Setup: {:#?}", socket_config);
+        println!("Result of queue setup: {:#?}", socket_config);
 
         // Setup BPF Hooks
         // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
@@ -143,7 +143,7 @@ mod tests {
     use super::*;
     use crate::configuration::{AppConfig, MockConfiguration};
     use crate::guard::MockGuard;
-    use crate::nic_setup::{MockNICSetup, SocketConfig};
+    use crate::queue_setup::{MockQueueSetup, SocketConfig};
     use anyhow::anyhow;
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -183,23 +183,23 @@ mod tests {
         configuration
     }
 
-    fn nic_setup_happy(priority: u8) -> MockNICSetup {
-        let mut nic_setup = MockNICSetup::new();
-        nic_setup.expect_apply_config().returning(move |config| {
+    fn queue_setup_happy(priority: u8) -> MockQueueSetup {
+        let mut queue_setup = MockQueueSetup::new();
+        queue_setup.expect_apply_config().returning(move |config| {
             Ok(SocketConfig {
                 logical_interface: config.logical_interface.clone(),
                 priority,
             })
         });
-        nic_setup
+        queue_setup
     }
 
-    fn nic_setup_failing() -> MockNICSetup {
-        let mut nic_setup = MockNICSetup::new();
-        nic_setup
+    fn queue_setup_failing() -> MockQueueSetup {
+        let mut queue_setup = MockQueueSetup::new();
+        queue_setup
             .expect_apply_config()
             .returning(|_| Err(anyhow!("failed")));
-        nic_setup
+        queue_setup
     }
 
     fn guard_happy() -> MockGuard {
@@ -222,11 +222,11 @@ mod tests {
         let vid = 43;
         let priority = 32;
         let mut configuration = configuration_happy(String::from(interface), vid);
-        let mut nic_setup = nic_setup_happy(priority);
+        let mut queue_setup = queue_setup_happy(priority);
         let mut guard = guard_happy();
         let controller = Controller::new();
         let response =
-            controller.register("app123", &mut configuration, &mut nic_setup, &mut guard)?;
+            controller.register("app123", &mut configuration, &mut queue_setup, &mut guard)?;
         assert_eq!(response.logical_interface, format!("{}.{}", interface, vid));
         assert_eq!(response.priority, priority);
         assert!(response.token > 10); // not GUARANTEED, but VERY unlikely to fail
@@ -236,33 +236,33 @@ mod tests {
     #[test]
     fn test_register_configuration_failure() {
         let mut configuration = configuration_failing();
-        let mut nic_setup = nic_setup_happy(32);
+        let mut queue_setup = queue_setup_happy(32);
         let mut guard = guard_happy();
         let controller = Controller::new();
         assert!(controller
-            .register("app123", &mut configuration, &mut nic_setup, &mut guard)
+            .register("app123", &mut configuration, &mut queue_setup, &mut guard)
             .is_err());
     }
 
     #[test]
-    fn test_register_nic_setup_failure() {
+    fn test_register_queue_setup_failure() {
         let mut configuration = configuration_happy(String::from("abc"), 4);
-        let mut nic_setup = nic_setup_failing();
+        let mut queue_setup = queue_setup_failing();
         let mut guard = guard_happy();
         let controller = Controller::new();
         assert!(controller
-            .register("app123", &mut configuration, &mut nic_setup, &mut guard)
+            .register("app123", &mut configuration, &mut queue_setup, &mut guard)
             .is_err());
     }
 
     #[test]
     fn test_register_guard_failure() {
         let mut configuration = configuration_happy(String::from("abc"), 4);
-        let mut nic_setup = nic_setup_happy(32);
+        let mut queue_setup = queue_setup_happy(32);
         let mut guard = guard_failing();
         let controller = Controller::new();
         assert!(controller
-            .register("app123", &mut configuration, &mut nic_setup, &mut guard)
+            .register("app123", &mut configuration, &mut queue_setup, &mut guard)
             .is_err());
     }
 }

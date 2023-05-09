@@ -4,7 +4,7 @@
 pub mod configuration;
 pub mod controller;
 pub mod guard;
-pub mod nic_setup;
+pub mod queue_setup;
 
 #[cfg(feature = "dbus")]
 pub mod facade;

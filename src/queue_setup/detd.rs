@@ -1,5 +1,5 @@
 use crate::configuration;
-use crate::nic_setup::{NICSetup, SocketConfig};
+use crate::queue_setup::{QueueSetup, SocketConfig};
 use anyhow::{anyhow, Context, Result};
 use prost::Message;
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ impl DetdGateway {
     }
 }
 
-impl NICSetup for DetdGateway {
+impl QueueSetup for DetdGateway {
     fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig> {
         if config.offset_ns > config.period_ns {
             return Err(anyhow!("Not possible to setup if offset > period!"));

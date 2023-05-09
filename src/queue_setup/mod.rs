@@ -1,7 +1,7 @@
 //! Setup a TSN-capable NIC and qdiscs
 //!
 //! ```no_run
-//! use detnetctl::nic_setup::{NICSetup, DetdGateway};
+//! use detnetctl::queue_setup::{QueueSetup, DetdGateway};
 //! use detnetctl::configuration::AppConfig;
 //!
 //! let app_config = AppConfig{
@@ -16,8 +16,8 @@
 //!     ip_address: Some("192.168.3.3".parse()?),
 //!     prefix_length: Some(16),
 //! };
-//! let mut nic_setup = DetdGateway::new(None, None)?;
-//! let socket_config = nic_setup.apply_config(&app_config)?;
+//! let mut queue_setup = DetdGateway::new(None, None)?;
+//! let socket_config = queue_setup.apply_config(&app_config)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 use crate::configuration;
@@ -26,7 +26,7 @@ use anyhow::Result;
 #[cfg(test)]
 use mockall::automock;
 
-/// Configuration returned from the NIC setup specifying how to setup the socket
+/// Configuration returned from the queue setup specifying how to setup the socket
 #[derive(Debug)]
 pub struct SocketConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
@@ -38,7 +38,7 @@ pub struct SocketConfig {
 
 /// Defines how to apply an Ethernet configuration
 #[cfg_attr(test, automock)]
-pub trait NICSetup {
+pub trait QueueSetup {
     /// Apply the given configuration by setting up NIC and qdiscs
     fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig>;
 }
@@ -48,26 +48,26 @@ mod detd;
 #[cfg(feature = "detd")]
 pub use detd::DetdGateway;
 
-/// A NIC setup doing nothing, but still providing the NICSetup trait
+/// A queue setup doing nothing, but still providing the QueueSetup trait
 ///
 /// Useful for testing purposes (e.g. with NICs without TSN capabilities)
-/// or if you only want to use other features without actually installing configuring the NIC.
-pub struct DummyNICSetup {
+/// or if you only want to use other features without actually configuring the NIC.
+pub struct DummyQueueSetup {
     priority: u8,
 }
 
-impl DummyNICSetup {
-    /// Create new DummyNICSetup
+impl DummyQueueSetup {
+    /// Create new DummyQueueSetup
     ///
     /// # Arguments
     ///
     /// * `priority` - Priority to return from the apply_config call
     pub fn new(priority: u8) -> Self {
-        DummyNICSetup { priority }
+        DummyQueueSetup { priority }
     }
 }
 
-impl NICSetup for DummyNICSetup {
+impl QueueSetup for DummyQueueSetup {
     fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig> {
         Ok(SocketConfig {
             logical_interface: config.logical_interface.clone(),

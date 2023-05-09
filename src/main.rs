@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use detnetctl::configuration::{Configuration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Registration};
 use detnetctl::guard::{DummyGuard, Guard};
-use detnetctl::nic_setup::{DummyNICSetup, NICSetup};
+use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -21,9 +21,9 @@ struct Cli {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Skip NIC setup and return the given PRIORITY
+    /// Skip queue setup and return the given PRIORITY
     #[arg(long, value_name = "PRIORITY")]
-    no_nic_setup: Option<u8>,
+    no_queue_setup: Option<u8>,
 
     /// Skip installing eBPFs - no interference protection!
     #[arg(long)]
@@ -49,8 +49,8 @@ pub async fn main() -> Result<()> {
         None => new_sysrepo_config()?,
     };
 
-    let mut nic_setup = match cli.no_nic_setup {
-        Some(priority) => Box::new(DummyNICSetup::new(priority)),
+    let mut queue_setup = match cli.no_queue_setup {
+        Some(priority) => Box::new(DummyQueueSetup::new(priority)),
         None => new_detd_gateway()?,
     };
 
@@ -66,12 +66,12 @@ pub async fn main() -> Result<()> {
             let response = controller.register(
                 &app_name,
                 &mut *configuration,
-                &mut *nic_setup,
+                &mut *queue_setup,
                 &mut *guard,
             )?;
             println!("Final result: {:#?}", response);
         }
-        None => spawn_dbus_service(controller, configuration, nic_setup, guard).await?,
+        None => spawn_dbus_service(controller, configuration, queue_setup, guard).await?,
     }
 
     Ok(())
@@ -92,7 +92,7 @@ use {
 async fn spawn_dbus_service(
     controller: Controller,
     mut configuration: Box<dyn Configuration + Send>,
-    mut nic_setup: Box<dyn NICSetup + Send>,
+    mut queue_setup: Box<dyn QueueSetup + Send>,
     mut guard: Box<dyn Guard + Send>,
 ) -> Result<()> {
     let shutdown = Shutdown::new();
@@ -100,7 +100,7 @@ async fn spawn_dbus_service(
 
     facade
         .setup(Box::new(move |app_name| {
-            controller.register(app_name, &mut *configuration, &mut *nic_setup, &mut *guard)
+            controller.register(app_name, &mut *configuration, &mut *queue_setup, &mut *guard)
         }))
         .await?;
 
@@ -126,7 +126,7 @@ async fn spawn_dbus_service(
 async fn spawn_dbus_service(
     _controller: Controller,
     mut _configuration: Box<dyn Configuration + Send>,
-    mut _nic_setup: Box<dyn NICSetup + Send>,
+    mut _queue_setup: Box<dyn QueueSetup + Send>,
     mut _guard: Box<dyn Guard + Send>,
 ) -> Result<()> {
     Err(feature_missing_error("dbus", "--app-name"))
@@ -157,13 +157,13 @@ fn new_sysrepo_config() -> Result<Box<dyn Configuration + Send>> {
 }
 
 #[cfg(feature = "detd")]
-use detnetctl::nic_setup::DetdGateway;
+use detnetctl::queue_setup::DetdGateway;
 #[cfg(feature = "detd")]
-fn new_detd_gateway() -> Result<Box<dyn NICSetup + Send>> {
+fn new_detd_gateway() -> Result<Box<dyn QueueSetup + Send>> {
     Ok(Box::new(DetdGateway::new(None, None)?))
 }
 
 #[cfg(not(feature = "detd"))]
-fn new_detd_gateway() -> Result<Box<dyn NICSetup + Send>> {
-    Err(feature_missing_error("detd", "--no-nic-setup"))
+fn new_detd_gateway() -> Result<Box<dyn QueueSetup + Send>> {
+    Err(feature_missing_error("detd", "--no-queue-setup"))
 }
