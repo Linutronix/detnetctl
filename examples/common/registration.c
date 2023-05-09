@@ -6,6 +6,7 @@
 
 #define DBUS_NAME_PREFIX "org.detnet.apps."
 #define MAX_TOTAL_NAME_LENGTH 100
+#define REGISTRATION_TIMEOUT 30000
 
 int register_app(const char *app_name, char *interface,
 		 int max_interface_length, int8_t *priority, uint64_t *token)
@@ -56,7 +57,7 @@ int register_app(const char *app_name, char *interface,
 	/* send message */
 	fprintf(stderr, "Registering app %s\n", app_name);
 	DBusMessage *msgReply = dbus_connection_send_with_reply_and_block(
-		connection, msgQuery, 10000, &error);
+		connection, msgQuery, REGISTRATION_TIMEOUT, &error);
 	if (dbus_error_is_set(&error)) {
 		fprintf(stderr, "Error during registration: %s\n",
 			error.message);

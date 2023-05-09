@@ -2,6 +2,7 @@ extern crate detnetctl;
 
 use anyhow::{anyhow, Error, Result};
 use clap::Parser;
+
 use futures::lock::Mutex;
 use std::fs::File;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 use detnetctl::configuration::{Configuration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Registration};
 use detnetctl::guard::{DummyGuard, Guard};
+use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
 use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
 
 #[derive(Parser, Debug)]
@@ -30,6 +32,10 @@ struct Cli {
     /// Skip installing eBPFs - no interference protection!
     #[arg(long)]
     no_guard: bool,
+
+    /// Skip setting up the link
+    #[arg(long)]
+    no_interface_setup: bool,
 
     /// Print eBPF debug output to kernel tracing
     #[arg(long)]
@@ -61,6 +67,11 @@ pub async fn main() -> Result<()> {
         false => new_bpf_guard(cli.bpf_debug_output)?,
     };
 
+    let interface_setup = match cli.no_interface_setup {
+        true => Arc::new(Mutex::new(DummyInterfaceSetup::new())),
+        false => new_netinterface_setup()?,
+    };
+
     let controller = Controller::new();
 
     match cli.app_name {
@@ -71,6 +82,7 @@ pub async fn main() -> Result<()> {
                     configuration,
                     queue_setup,
                     guard,
+                    interface_setup,
                 )
                 .await?;
             println!("Final result: {:#?}", response);
@@ -81,6 +93,7 @@ pub async fn main() -> Result<()> {
                 configuration,
                 queue_setup,
                 guard,
+                interface_setup,
             )
             .await?
         }
@@ -106,6 +119,7 @@ async fn spawn_dbus_service(
     configuration: Arc<Mutex<dyn Configuration + Send>>,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     guard: Arc<Mutex<dyn Guard + Send>>,
+    interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
 ) -> Result<()> {
     let shutdown = Shutdown::new();
     let mut facade = Facade::new(shutdown.clone())?;
@@ -117,6 +131,7 @@ async fn spawn_dbus_service(
             let cloned_configuration = configuration.clone();
             let cloned_queue_setup = queue_setup.clone();
             let cloned_guard = guard.clone();
+            let cloned_interface_setup = interface_setup.clone();
             Box::pin(async move {
                 cloned_controller
                     .lock()
@@ -126,6 +141,7 @@ async fn spawn_dbus_service(
                         cloned_configuration,
                         cloned_queue_setup,
                         cloned_guard,
+                        cloned_interface_setup,
                     )
                     .await
             })
@@ -194,4 +210,16 @@ fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
 #[cfg(not(feature = "detd"))]
 fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
     Err(feature_missing_error("detd", "--no-queue-setup"))
+}
+
+#[cfg(feature = "netlink")]
+use detnetctl::interface_setup::NetlinkSetup;
+#[cfg(feature = "netlink")]
+fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send>>> {
+    Ok(Arc::new(Mutex::new(NetlinkSetup::new()?)))
+}
+
+#[cfg(not(feature = "netlink"))]
+fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send>>> {
+    Err(feature_missing_error("netlink", "--no-interface-setup"))
 }

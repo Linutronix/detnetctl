@@ -89,7 +89,11 @@ impl DBus {
                 )
                 .await
                 {
-                    Ok(()) => register(&cmd.app_name).await,
+                    Ok(()) => register(&cmd.app_name).await.map_err(|e| {
+                        // print here and forward, otherwise the error would only be sent back to the application
+                        eprintln!("{:#}", e);
+                        e
+                    }),
                     Err(e) => Err(e),
                 };
 

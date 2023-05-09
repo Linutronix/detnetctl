@@ -6,6 +6,7 @@
 //! use detnetctl::facade::{Facade, Setup};
 //! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
 //! use detnetctl::guard::{Guard, DummyGuard};
+//! use detnetctl::interface_setup::DummyInterfaceSetup;
 //! use async_shutdown::Shutdown;
 //! #
 //! # #[path = "../configuration/doctest.rs"]
@@ -25,6 +26,7 @@
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
 //! let mut guard = Arc::new(Mutex::new(DummyGuard::new()));
+//! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup::new()));
 //!
 //! facade.setup(Box::new(move |app_name| {
 //!     let app_name = String::from(app_name);
@@ -32,12 +34,14 @@
 //!     let cloned_configuration = configuration.clone();
 //!     let cloned_queue_setup = queue_setup.clone();
 //!     let cloned_guard = guard.clone();
+//!     let cloned_interface_setup = interface_setup.clone();
 //!     Box::pin(async move {
 //!         cloned_controller.lock().await.register(
 //!             &app_name,
 //!             cloned_configuration,
 //!             cloned_queue_setup,
-//!             cloned_guard).await
+//!             cloned_guard,
+//!             cloned_interface_setup).await
 //!     })
 //! })).await?;
 //! # Ok::<(), anyhow::Error>(())

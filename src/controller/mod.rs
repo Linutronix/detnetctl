@@ -8,6 +8,7 @@
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
 //! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
 //! use detnetctl::guard::{Guard, DummyGuard};
+//! use detnetctl::interface_setup::DummyInterfaceSetup;
 //!
 //! # #[path = "../configuration/doctest.rs"]
 //! # mod doctest;
@@ -23,20 +24,23 @@
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
 //! let mut guard = Arc::new(Mutex::new(DummyGuard::new()));
-//! let response = controller.register("app0", configuration, queue_setup, guard).await?;
+//! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup::new()));
+//! let response = controller.register("app0", configuration, queue_setup, guard, interface_setup).await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::Configuration;
+use crate::configuration::{AppConfig, Configuration};
 use crate::guard::Guard;
-use crate::queue_setup::QueueSetup;
+use crate::interface_setup::{InterfaceSetup, LinkState};
+use crate::queue_setup::{QueueSetup, SocketConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::lock::Mutex;
 use getrandom::getrandom;
 use std::sync::Arc;
+use tokio::time::Instant;
 
 /// The reponse of a registration to be passed back to the application
 /// for setting up the socket appropriately.
@@ -67,6 +71,7 @@ pub trait Registration {
         mut configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
         mut guard: Arc<Mutex<dyn Guard + Send>>,
+        mut interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<RegisterResponse>;
 }
 
@@ -96,7 +101,9 @@ impl Registration for Controller {
         configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
         guard: Arc<Mutex<dyn Guard + Send>>,
+        interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<RegisterResponse> {
+        let start = Instant::now();
         println!("Request to register {}", app_name);
 
         // Generate token
@@ -107,25 +114,66 @@ impl Registration for Controller {
             .lock()
             .await
             .get_app_config(app_name)
-            .context("Fetching the configuration failed")
-            .map_err(|e| {
-                // print here and forward, otherwise the error would only be sent back to the application
-                eprintln!("{:#}", e);
-                e
-            })?;
-        println!("Fetched from configuration module: {:#?}", app_config);
+            .context("Fetching the configuration failed")?;
+        println!("  Fetched from configuration module: {:#?}", app_config);
 
-        // Setup NIC
+        let locked_interface_setup = interface_setup.lock().await;
+
+        let setup_result = Controller::setup(
+            &app_config,
+            token,
+            queue_setup,
+            guard,
+            &*locked_interface_setup,
+        )
+        .await; // No ? since we need to ensure that the link is up again even after error
+
+        let if_up_result =
+            Controller::set_interfaces_up(&app_config, &*locked_interface_setup).await;
+
+        // The first occurred error shall be returned, but a potential second still be printed
+        if let Err(if_up_error) = if_up_result {
+            return match setup_result {
+                Ok(_) => Err(if_up_error),
+                Err(setup_error) => {
+                    eprintln!("After setup failed, interface up failed, too: {if_up_error}");
+                    Err(setup_error)
+                }
+            };
+        }
+
+        let socket_config = setup_result?;
+
+        println!("  Finished after {:.1?}", start.elapsed());
+
+        Ok(RegisterResponse {
+            logical_interface: socket_config.logical_interface,
+            priority: socket_config.priority,
+            token,
+        })
+    }
+}
+
+impl Controller {
+    async fn setup(
+        app_config: &AppConfig,
+        token: u64,
+        queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+        guard: Arc<Mutex<dyn Guard + Send>>,
+        interface_setup: &(dyn InterfaceSetup + Sync + Send),
+    ) -> Result<SocketConfig> {
+        interface_setup
+            .set_link_state(LinkState::DOWN, &app_config.physical_interface)
+            .await?;
+        println!("  Interface {} down", app_config.physical_interface);
+
+        // Setup Queue
         let socket_config = queue_setup
             .lock()
             .await
-            .apply_config(&app_config)
-            .context("Setting up the queues failed")
-            .map_err(|e| {
-                eprintln!("{:#}", e);
-                e
-            })?;
-        println!("Result of queue setup: {:#?}", socket_config);
+            .apply_config(app_config)
+            .context("Setting up the queue failed")?;
+        println!("  Result of queue setup: {:#?}", socket_config);
 
         // Setup BPF Hooks
         // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
@@ -139,17 +187,58 @@ impl Registration for Controller {
                 socket_config.priority,
                 token,
             )
-            .context("Installing protection via the guard failed. SO_TOKEN patch missing?")
-            .map_err(|e| {
-                eprintln!("{:#}", e);
-                e
-            })?;
+            .context("Installing protection via the guard failed. SO_TOKEN patch missing?")?;
+        println!(
+            "  Guard installed for priority {} on {}",
+            socket_config.priority, app_config.physical_interface
+        );
 
-        Ok(RegisterResponse {
-            logical_interface: socket_config.logical_interface,
-            priority: socket_config.priority,
-            token,
-        })
+        // Setup logical interface
+        if let Some(vid) = app_config.vid {
+            interface_setup
+                .setup_vlan_interface(
+                    &app_config.physical_interface,
+                    &app_config.logical_interface,
+                    vid,
+                )
+                .await?;
+            println!(
+                "  VLAN interface {} properly configured",
+                app_config.logical_interface
+            );
+        }
+
+        // Add address to logical interface
+        if let (Some(ip), Some(prefix_length)) = (app_config.ip_address, app_config.prefix_length) {
+            interface_setup
+                .add_address(ip, prefix_length, &app_config.logical_interface)
+                .await?;
+            println!(
+                "  Added {}/{} to {}",
+                ip, prefix_length, app_config.logical_interface
+            );
+        } else {
+            println!("  No IP address configured, since none was provided");
+        }
+
+        Ok(socket_config)
+    }
+
+    async fn set_interfaces_up(
+        app_config: &AppConfig,
+        interface_setup: &(dyn InterfaceSetup + Sync + Send),
+    ) -> Result<()> {
+        interface_setup
+            .set_link_state(LinkState::UP, &app_config.physical_interface)
+            .await?;
+        println!("  Interface {} up", app_config.physical_interface);
+
+        interface_setup
+            .set_link_state(LinkState::UP, &app_config.logical_interface)
+            .await?;
+        println!("  Interface {} up", app_config.logical_interface);
+
+        Ok(())
     }
 }
 
@@ -158,6 +247,7 @@ mod tests {
     use super::*;
     use crate::configuration::{AppConfig, MockConfiguration};
     use crate::guard::MockGuard;
+    use crate::interface_setup::MockInterfaceSetup;
     use crate::queue_setup::{MockQueueSetup, SocketConfig};
     use anyhow::anyhow;
     use std::net::{IpAddr, Ipv4Addr};
@@ -231,6 +321,34 @@ mod tests {
         guard
     }
 
+    fn interface_setup_happy() -> MockInterfaceSetup {
+        let mut interface_setup = MockInterfaceSetup::new();
+        interface_setup
+            .expect_set_link_state()
+            .returning(move |_, _| Ok(()));
+        interface_setup
+            .expect_add_address()
+            .returning(move |_, _, _| Ok(()));
+        interface_setup
+            .expect_setup_vlan_interface()
+            .returning(move |_, _, _| Ok(()));
+        interface_setup
+    }
+
+    fn interface_setup_failing() -> MockInterfaceSetup {
+        let mut interface_setup = MockInterfaceSetup::new();
+        interface_setup
+            .expect_set_link_state()
+            .returning(|_, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_add_address()
+            .returning(|_, _, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_setup_vlan_interface()
+            .returning(|_, _, _| Err(anyhow!("failed")));
+        interface_setup
+    }
+
     #[tokio::test]
     async fn test_register_happy() -> Result<()> {
         let interface = "ethxy";
@@ -242,9 +360,10 @@ mod tests {
         )));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(priority)));
         let guard = Arc::new(Mutex::new(guard_happy()));
+        let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         let response = controller
-            .register("app123", configuration, queue_setup, guard)
+            .register("app123", configuration, queue_setup, guard, interface_setup)
             .await?;
         assert_eq!(response.logical_interface, format!("{}.{}", interface, vid));
         assert_eq!(response.priority, priority);
@@ -257,9 +376,10 @@ mod tests {
         let configuration = Arc::new(Mutex::new(configuration_failing()));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let guard = Arc::new(Mutex::new(guard_happy()));
+        let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         assert!(controller
-            .register("app123", configuration, queue_setup, guard)
+            .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
             .is_err());
     }
@@ -269,9 +389,10 @@ mod tests {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
         let guard = Arc::new(Mutex::new(guard_happy()));
+        let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         assert!(controller
-            .register("app123", configuration, queue_setup, guard)
+            .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
             .is_err());
     }
@@ -281,9 +402,23 @@ mod tests {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let guard = Arc::new(Mutex::new(guard_failing()));
+        let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         assert!(controller
-            .register("app123", configuration, queue_setup, guard)
+            .register("app123", configuration, queue_setup, guard, interface_setup)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_interface_setup_failure() {
+        let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
+        let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
+        let guard = Arc::new(Mutex::new(guard_happy()));
+        let interface_setup = Arc::new(Mutex::new(interface_setup_failing()));
+        let controller = Controller::new();
+        assert!(controller
+            .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
             .is_err());
     }

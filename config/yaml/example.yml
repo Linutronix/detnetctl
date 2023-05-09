@@ -7,6 +7,8 @@ app0:
   destination_address: cb:cb:cb:cb:cb:cb
   vid: 3
   pcp: 3
+  ip_address: 10.0.52.2
+  prefix_length: 32
 app1:
   logical_interface: eth1.2
   physical_interface: eth1
