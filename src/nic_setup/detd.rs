@@ -44,7 +44,7 @@ impl DetdGateway {
 }
 
 impl NICSetup for DetdGateway {
-    fn apply_config(&self, config: &configuration::EthernetConfig) -> Result<SocketConfig> {
+    fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig> {
         if config.offset_ns > config.period_ns {
             return Err(anyhow!("Not possible to setup if offset > period!"));
         }
@@ -113,11 +113,12 @@ impl NICSetup for DetdGateway {
 mod tests {
     use super::*;
     use std::io::Error;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use std::time::Duration;
 
     fn run_test(
-        ethernet_config: configuration::EthernetConfig,
+        app_config: configuration::AppConfig,
         mut response: Box<
             dyn FnMut(&detdipc::StreamQosRequest) -> detdipc::StreamQosResponse + Send,
         >,
@@ -153,15 +154,15 @@ mod tests {
                 .unwrap();
         });
 
-        let result = gateway.as_file().apply_config(&ethernet_config);
+        let result = gateway.as_file().apply_config(&app_config);
 
         let _ = detddummy.join();
 
         Ok(result?)
     }
 
-    fn generate_ethernet_config(offset: u32) -> configuration::EthernetConfig {
-        configuration::EthernetConfig {
+    fn generate_app_config(offset: u32) -> configuration::AppConfig {
+        configuration::AppConfig {
             logical_interface: String::from("eth0.3"),
             physical_interface: String::from("eth0"),
             period_ns: Some(1000 * 100),
@@ -170,13 +171,15 @@ mod tests {
             destination_address: Some("8a:de:82:a1:59:5a".parse().unwrap()),
             vid: Some(3),
             pcp: Some(4),
+            ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3))),
+            prefix_length: Some(16),
         }
     }
 
     #[test]
     fn test_happy() -> Result<()> {
         let socket_config = run_test(
-            generate_ethernet_config(0),
+            generate_app_config(0),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
@@ -193,7 +196,7 @@ mod tests {
     #[test]
     fn test_invalid_offset() -> Result<()> {
         let socket_config = run_test(
-            generate_ethernet_config(1000 * 1000),
+            generate_app_config(1000 * 1000),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
@@ -209,7 +212,7 @@ mod tests {
     #[test]
     fn test_response_not_ok() -> Result<()> {
         let socket_config = run_test(
-            generate_ethernet_config(0),
+            generate_app_config(0),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: false,
                 socket_priority: 5,
@@ -225,7 +228,7 @@ mod tests {
     #[test]
     fn test_not_matching_vlan_interface() -> Result<()> {
         let socket_config = run_test(
-            generate_ethernet_config(0),
+            generate_app_config(0),
             Box::new(|_| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,

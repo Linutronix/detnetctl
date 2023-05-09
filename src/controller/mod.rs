@@ -93,19 +93,19 @@ impl Registration for Controller {
         let token = self.generate_token()?;
 
         // Fetch configuration for app
-        let ethernet_config = configuration
-            .get_ethernet_config(app_name)
+        let app_config = configuration
+            .get_app_config(app_name)
             .context("Fetching the configuration failed")
             .map_err(|e| {
                 // print here and forward, otherwise the error would only be sent back to the application
                 eprintln!("{:#}", e);
                 e
             })?;
-        println!("Fetched from configuration module: {:#?}", ethernet_config);
+        println!("Fetched from configuration module: {:#?}", app_config);
 
         // Setup NIC
         let socket_config = nic_setup
-            .apply_config(&ethernet_config)
+            .apply_config(&app_config)
             .context("Setting up the NIC failed")
             .map_err(|e| {
                 eprintln!("{:#}", e);
@@ -120,7 +120,7 @@ impl Registration for Controller {
         // same VLAN it could still block the time slot!
         guard
             .protect_priority(
-                &ethernet_config.physical_interface,
+                &app_config.physical_interface,
                 socket_config.priority,
                 token,
             )
@@ -141,10 +141,11 @@ impl Registration for Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{EthernetConfig, MockConfiguration};
+    use crate::configuration::{AppConfig, MockConfiguration};
     use crate::guard::MockGuard;
     use crate::nic_setup::{MockNICSetup, SocketConfig};
     use anyhow::anyhow;
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn test_token_unique() -> Result<()> {
@@ -157,27 +158,27 @@ mod tests {
 
     fn configuration_happy(interface: String, vid: u16) -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
-        configuration
-            .expect_get_ethernet_config()
-            .returning(move |_| {
-                Ok(EthernetConfig {
-                    logical_interface: format!("{}.{}", interface, vid),
-                    physical_interface: interface.clone(),
-                    period_ns: Some(0),
-                    offset_ns: Some(0),
-                    size_bytes: Some(0),
-                    destination_address: Some("8b:de:82:a1:59:5a".parse()?),
-                    vid: Some(vid),
-                    pcp: Some(4),
-                })
-            });
+        configuration.expect_get_app_config().returning(move |_| {
+            Ok(AppConfig {
+                logical_interface: format!("{}.{}", interface, vid),
+                physical_interface: interface.clone(),
+                period_ns: Some(0),
+                offset_ns: Some(0),
+                size_bytes: Some(0),
+                destination_address: Some("8b:de:82:a1:59:5a".parse()?),
+                vid: Some(vid),
+                pcp: Some(4),
+                ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3))),
+                prefix_length: Some(16),
+            })
+        });
         configuration
     }
 
     fn configuration_failing() -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
         configuration
-            .expect_get_ethernet_config()
+            .expect_get_app_config()
             .returning(|_| Err(anyhow!("failed")));
         configuration
     }

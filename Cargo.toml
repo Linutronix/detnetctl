@@ -10,7 +10,7 @@ default = ["dbus", "bpf", "detd", "sysrepo"]
 dbus = ["dep:dbus", "dep:dbus-crossroads", "dep:dbus-tokio", "dep:async-shutdown", "dep:async-trait"]
 bpf = ["dep:libbpf-rs", "dep:libbpf-cargo", "dep:log", "dep:nix"]
 detd = ["dep:bytes", "dep:prost"]
-sysrepo = ["dep:sysrepo", "dep:yang2"]
+sysrepo = ["dep:sysrepo", "dep:yang2", "dep:ipnet"]
 libbpf_with_sotoken = []
 
 [dependencies]
@@ -46,7 +46,8 @@ prost = { version = "0.11.6", optional = true }
 ### sysrepo feature
 # sysrepo changes still need to be upstreamed
 sysrepo = { git = "https://github.com/koalo/sysrepo-rs", branch = "poc/yang2-rs-integration", optional = true }
-yang2 = { version = "0.4.0", optional = true }
+yang2 = { version = "0.5.1", optional = true }
+ipnet = { version = "2.7.2", optional = true }
 
 [build-dependencies]
 ### bpf feature

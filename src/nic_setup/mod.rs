@@ -2,9 +2,9 @@
 //!
 //! ```no_run
 //! use detnetctl::nic_setup::{NICSetup, DetdGateway};
-//! use detnetctl::configuration::EthernetConfig;
+//! use detnetctl::configuration::AppConfig;
 //!
-//! let ethernet_config = EthernetConfig{
+//! let app_config = AppConfig{
 //!     logical_interface: String::from("eth0.3"),
 //!     physical_interface: String::from("eth0"),
 //!     period_ns: Some(1000*100),
@@ -13,9 +13,11 @@
 //!     destination_address: Some("8a:de:82:a1:59:5a".parse()?),
 //!     vid: Some(3),
 //!     pcp: Some(4),
+//!     ip_address: Some("192.168.3.3".parse()?),
+//!     prefix_length: Some(16),
 //! };
 //! let mut nic_setup = DetdGateway::new(None, None)?;
-//! let socket_config = nic_setup.apply_config(&ethernet_config)?;
+//! let socket_config = nic_setup.apply_config(&app_config)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 use crate::configuration;
@@ -38,7 +40,7 @@ pub struct SocketConfig {
 #[cfg_attr(test, automock)]
 pub trait NICSetup {
     /// Apply the given configuration by setting up NIC and qdiscs
-    fn apply_config(&self, config: &configuration::EthernetConfig) -> Result<SocketConfig>;
+    fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig>;
 }
 
 #[cfg(feature = "detd")]
@@ -66,7 +68,7 @@ impl DummyNICSetup {
 }
 
 impl NICSetup for DummyNICSetup {
-    fn apply_config(&self, config: &configuration::EthernetConfig) -> Result<SocketConfig> {
+    fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig> {
         Ok(SocketConfig {
             logical_interface: config.logical_interface.clone(),
             priority: self.priority,

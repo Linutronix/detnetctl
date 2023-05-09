@@ -12,7 +12,7 @@
 //!
 //! let mut yaml_config = YAMLConfiguration::new();
 //! yaml_config.read(File::open(filepath)?)?;
-//! let config = yaml_config.get_ethernet_config("app0")?;
+//! let config = yaml_config.get_app_config("app0")?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 //!
@@ -21,19 +21,20 @@
 //! ```no_run
 //! use detnetctl::configuration::{Configuration, SysrepoConfiguration};
 //! let mut sysrepo_config = SysrepoConfiguration::new()?;
-//! let config = sysrepo_config.get_ethernet_config("app0");
+//! let config = sysrepo_config.get_app_config("app0");
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 use anyhow::Result;
 use eui48::MacAddress;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 
 #[cfg(test)]
 use mockall::automock;
 
-/// Contains the configuration for a TSN-capable Ethernet layer
+/// Contains the configuration for a TSN/DetNet application
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct EthernetConfig {
+pub struct AppConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
     pub logical_interface: String,
 
@@ -67,6 +68,12 @@ pub struct EthernetConfig {
     /// Priority Code Point
     #[serde(default)]
     pub pcp: Option<u8>, // actually 3 bit
+
+    /// IP address of the logical interface
+    pub ip_address: Option<IpAddr>,
+
+    /// IP network prefix length of the logical interface
+    pub prefix_length: Option<u8>,
 }
 
 mod serialize_mac_address {
@@ -102,7 +109,7 @@ mod serialize_mac_address {
 #[cfg_attr(test, automock)]
 pub trait Configuration {
     /// Get the configuration for a given app_name
-    fn get_ethernet_config(&mut self, app_name: &str) -> Result<EthernetConfig>;
+    fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig>;
 }
 
 mod yaml;

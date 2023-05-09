@@ -7,13 +7,13 @@ use std::io::Read;
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
 pub struct YAMLConfiguration {
-    configs: EthernetConfigurations,
+    configs: AppConfigurations,
 }
 
-type EthernetConfigurations = HashMap<String, configuration::EthernetConfig>;
+type AppConfigurations = HashMap<String, configuration::AppConfig>;
 
 impl configuration::Configuration for YAMLConfiguration {
-    fn get_ethernet_config(&mut self, app_name: &str) -> Result<configuration::EthernetConfig> {
+    fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
         self.configs
             .get(app_name)
             .cloned()
@@ -50,9 +50,10 @@ impl YAMLConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::Configuration;
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
-    fn test_get_ethernet_config_happy() -> Result<()> {
+    fn test_get_app_config_happy() -> Result<()> {
         let yaml = concat!(
             "app0:\n",
             "  logical_interface: eth0.1\n",
@@ -63,6 +64,8 @@ mod tests {
             "  destination_address: cb:cb:cb:cb:cb:cb\n",
             "  vid: 1\n",
             "  pcp: 2\n",
+            "  ip_address: 192.168.0.3\n",
+            "  prefix_length: 16\n",
             "app1:\n",
             "  logical_interface: eth3.1\n",
             "  physical_interface: eth3\n",
@@ -71,21 +74,23 @@ mod tests {
             "  size_bytes: 2000\n",
             "  destination_address: AB:cb:cb:cb:cb:cb\n",
             "  vid: 1\n",
-            "  pcp: 2\n"
+            "  pcp: 2\n",
+            "  ip_address: 192.168.0.7\n",
+            "  prefix_length: 32\n",
         );
 
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;
 
-        let plain_config: EthernetConfigurations = serde_yaml::from_str(yaml)?;
-        assert_eq!(config.get_ethernet_config("app0")?, plain_config["app0"]);
-        assert_eq!(config.get_ethernet_config("app1")?, plain_config["app1"]);
+        let plain_config: AppConfigurations = serde_yaml::from_str(yaml)?;
+        assert_eq!(config.get_app_config("app0")?, plain_config["app0"]);
+        assert_eq!(config.get_app_config("app1")?, plain_config["app1"]);
 
         Ok(())
     }
 
     #[test]
-    fn test_get_ethernet_config_minimal_happy() -> Result<()> {
+    fn test_get_app_config_minimal_happy() -> Result<()> {
         let yaml = concat!(
             "app0:\n",
             "  logical_interface: eth0\n",
@@ -95,15 +100,15 @@ mod tests {
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;
 
-        let plain_config: EthernetConfigurations = serde_yaml::from_str(yaml)?;
-        assert_eq!(config.get_ethernet_config("app0")?, plain_config["app0"]);
+        let plain_config: AppConfigurations = serde_yaml::from_str(yaml)?;
+        assert_eq!(config.get_app_config("app0")?, plain_config["app0"]);
 
         Ok(())
     }
 
     #[test]
-    fn test_get_ethernet_config_happy_with_serialization() -> Result<()> {
-        let app0 = configuration::EthernetConfig {
+    fn test_get_app_config_happy_with_serialization() -> Result<()> {
+        let app0 = configuration::AppConfig {
             logical_interface: "eth0.1".to_string(),
             physical_interface: "eth0".to_string(),
             period_ns: Some(1000 * 100),
@@ -112,9 +117,11 @@ mod tests {
             destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
             vid: Some(1),
             pcp: Some(2),
+            ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3))),
+            prefix_length: Some(16),
         };
 
-        let app1 = configuration::EthernetConfig {
+        let app1 = configuration::AppConfig {
             logical_interface: "eth1.2".to_string(),
             physical_interface: "eth1".to_string(),
             period_ns: Some(1000 * 120),
@@ -123,9 +130,11 @@ mod tests {
             destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
             vid: Some(2),
             pcp: Some(3),
+            ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2))),
+            prefix_length: Some(32),
         };
 
-        let mut configs = EthernetConfigurations::default();
+        let mut configs = AppConfigurations::default();
         configs.insert("app0".to_string(), app0.clone());
         configs.insert("app1".to_string(), app1.clone());
 
@@ -134,16 +143,16 @@ mod tests {
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;
 
-        assert_eq!(config.get_ethernet_config("app0")?, app0);
-        assert_eq!(config.get_ethernet_config("app1")?, app1);
+        assert_eq!(config.get_app_config("app0")?, app0);
+        assert_eq!(config.get_app_config("app1")?, app1);
 
         Ok(())
     }
 
     #[test]
-    fn test_get_ethernet_config_not_found() {
+    fn test_get_app_config_not_found() {
         let mut config = YAMLConfiguration::default();
-        assert!(config.get_ethernet_config("app0").is_err());
+        assert!(config.get_app_config("app0").is_err());
     }
 
     #[test]

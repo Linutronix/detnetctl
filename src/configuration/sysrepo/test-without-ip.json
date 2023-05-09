@@ -16,10 +16,7 @@
           "name": "app0",
           "traffic-profile": "pf-1",
           "ingress": {
-            "interface": "enp1s0.5",
-            "ip-app-flow": {
-              "src-ip-prefix": "10.0.52.1/32"
-            }
+            "interface": "enp1s0.5"
           }
         }
       ]

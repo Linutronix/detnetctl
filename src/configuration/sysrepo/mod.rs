@@ -13,6 +13,8 @@ use yang2::context::{Context, ContextFlags};
 
 use crate::configuration;
 use eui48::MacAddress;
+use ipnet::IpNet;
+use std::net::IpAddr;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use yang2::data::{Data, DataTree};
@@ -36,6 +38,8 @@ unsafe impl Send for SysrepoConfiguration {} // should be taken care of by sysre
 struct AppFlow {
     interface: String,
     traffic_profile: String,
+    source_address: Option<IpAddr>,
+    source_address_prefix_length: Option<u8>,
 }
 
 struct TSNInterfaceConfig {
@@ -90,14 +94,14 @@ impl configuration::Configuration for SysrepoConfiguration {
     /// to set up the NIC. This is currently done via the parent-interface specified by
     /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
-    fn get_ethernet_config(&mut self, app_name: &str) -> Result<configuration::EthernetConfig> {
+    fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
         let cfg = self.get_detnet_and_tsn_config()?;
         let app_flow = self.get_app_flow(cfg.tree(), app_name)?;
         let traffic_profile = self.get_traffic_profile(cfg.tree(), &app_flow.traffic_profile)?;
         let tsn_interface_cfg = self.get_tsn_interface_config(cfg.tree(), &app_flow.interface)?;
         let logical_interface = self.get_logical_interface(cfg.tree(), &app_flow.interface)?;
 
-        Ok(configuration::EthernetConfig {
+        Ok(configuration::AppConfig {
             logical_interface: logical_interface.name,
             physical_interface: logical_interface.physical_interface,
             period_ns: Some(traffic_profile.period_ns),
@@ -106,6 +110,8 @@ impl configuration::Configuration for SysrepoConfiguration {
             destination_address: Some(tsn_interface_cfg.destination_address),
             vid: Some(tsn_interface_cfg.vid),
             pcp: Some(tsn_interface_cfg.pcp),
+            ip_address: app_flow.source_address,
+            prefix_length: app_flow.source_address_prefix_length,
         })
     }
 }
@@ -169,9 +175,18 @@ impl SysrepoConfiguration {
             let name: String = app_flow.get_value_for_xpath("name")?;
 
             if name == app_name {
+                let ip = match app_flow
+                    .get_value_for_xpath::<String>("ingress/ip-app-flow/src-ip-prefix")
+                {
+                    Ok(srcipprefix) => Some(srcipprefix.parse::<IpNet>()?),
+                    Err(_) => None,
+                };
+
                 return Ok(AppFlow {
                     interface: app_flow.get_value_for_xpath("ingress/interface")?,
                     traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                    source_address: ip.map(|prefix| prefix.addr()),
+                    source_address_prefix_length: ip.map(|prefix| prefix.prefix_len()),
                 });
             }
         }
@@ -259,8 +274,9 @@ impl SysrepoConfiguration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{Configuration, EthernetConfig};
+    use crate::configuration::{AppConfig, Configuration};
     use std::fs::File;
+    use std::net::{IpAddr, Ipv4Addr};
     use yang2::data::{DataFormat, DataParserFlags, DataTree, DataValidationFlags};
 
     fn create_sysrepo_config(file: &str) -> SysrepoConfiguration {
@@ -314,16 +330,16 @@ mod tests {
     }
 
     #[test]
-    fn test_get_ethernet_config_happy() -> Result<()> {
+    fn test_get_app_config_happy() -> Result<()> {
         let mut sysrepo_config =
             create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
-        let config = sysrepo_config.get_ethernet_config("app0")?;
+        let config = sysrepo_config.get_app_config("app0")?;
 
         let interface = String::from("enp1s0");
         let vid = 5;
         assert_eq!(
             config,
-            EthernetConfig {
+            AppConfig {
                 logical_interface: format!("{}.{}", interface, vid),
                 physical_interface: interface,
                 period_ns: Some(2000000),
@@ -332,25 +348,51 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
                 pcp: Some(3),
+                ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1))),
+                prefix_length: Some(32),
             }
         );
         Ok(())
     }
 
     #[test]
-    fn test_get_ethernet_config_missing() {
+    fn test_get_app_config_happy_without_ip() -> Result<()> {
         let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
-        assert!(sysrepo_config
-            .get_ethernet_config("somemissingapp")
-            .is_err());
+            create_sysrepo_config("./src/configuration/sysrepo/test-without-ip.json");
+        let config = sysrepo_config.get_app_config("app0")?;
+
+        let interface = String::from("enp1s0");
+        let vid = 5;
+        assert_eq!(
+            config,
+            AppConfig {
+                logical_interface: format!("{}.{}", interface, vid),
+                physical_interface: interface,
+                period_ns: Some(2000000),
+                offset_ns: Some(0),
+                size_bytes: Some(15000),
+                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
+                vid: Some(vid),
+                pcp: Some(3),
+                ip_address: None,
+                prefix_length: None,
+            }
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_get_ethernet_config_invalid_file() {
+    fn test_get_app_config_missing() {
+        let mut sysrepo_config =
+            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        assert!(sysrepo_config.get_app_config("somemissingapp").is_err());
+    }
+
+    #[test]
+    fn test_get_app_config_invalid_file() {
         let mut sysrepo_config = create_sysrepo_config(
             "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
         );
-        assert!(sysrepo_config.get_ethernet_config("app0").is_err());
+        assert!(sysrepo_config.get_app_config("app0").is_err());
     }
 }
