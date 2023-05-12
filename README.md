@@ -16,7 +16,8 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name`
 - [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [eBPF Guards](#ebpf-guards) - requires `bpf` feature, skip at runtime via `--no-guard`
-- [NIC setup with detd](#nic-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-nic-setup`
+- [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
+- [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
 
 ## Command Line Interface
@@ -27,12 +28,14 @@ A TSN/DetNet Node Controller with Interference Protection
 Usage: detnetctl [OPTIONS]
 
 Options:
-  -a, --app-name <APP_NAME>      Oneshot registration with the provided app name and do not spawn D-Bus service
-  -c, --config <FILE>            Use YAML configuration with the provided file. Otherwise, uses sysrepo.
-      --no-nic-setup <PRIORITY>  Skip NIC setup and return the given PRIORITY
-      --no-guard                 Skip installing eBPFs - no interference protection!
-  -h, --help                     Print help
-  -V, --version                  Print version
+  -a, --app-name <APP_NAME>        Oneshot registration with the provided app name and do not spawn D-Bus service
+  -c, --config <FILE>              Use YAML configuration with the provided file. Otherwise, uses sysrepo
+      --no-queue-setup <PRIORITY>  Skip queue setup and return the given PRIORITY
+      --no-guard                   Skip installing eBPFs - no interference protection!
+      --no-interface-setup         Skip setting up the link
+      --bpf-debug-output           Print eBPF debug output to kernel tracing
+  -h, --help                       Print help
+  -V, --version                    Print version
 ```
 
 ## Oneshot Dry-Run Registration (Minimal Feature Set)
@@ -52,7 +55,7 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl -c config/yaml/example.yml --no-nic-setup 3 --no-guard --app-name app0
+./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-guard --app-name app0
 ```
 
 This will only read the configuration matching to `app0` from the configuration file, performs a dry run and prints out for example the following output:
@@ -136,7 +139,7 @@ app0:
 
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-nic-setup 2 --no-guard
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 2 --no-guard
 ```
 
 `sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
@@ -162,7 +165,7 @@ If you have a libbpf version available that was synced with a kernel with SO_TOK
 ### Run
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-nic-setup 3
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
 ```
 Then in a second terminal start the sample application with
 ```console
@@ -172,15 +175,34 @@ and start a second sample application with
 ```console
 sudo -u app0 ./examples/simple/simple example.org --skip-registration eth0 3
 ```
-Consider to replace `eth0` with your interface. The priority 3 given here matches the 3 provided to `--no-nic-setup`.
+Consider to replace `eth0` with your interface. The priority 3 given here matches the 3 provided to `--no-queue-setup`.
 While the first application should happily connect, the second application should be blocked, that is it will not be able to establish a connection since all its traffic gets dropped. You can monitor the filter with 
 ```console
 sudo cat /sys/kernel/debug/tracing/trace_pipe
 ```
 
-## NIC setup with detd
+## Interface Setup
 
-Set up the network interface card (NIC) according to the configuration to enable TSN communication using TAPRIO Qdiscs aka Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv.
+Up to now the transmission took place directly via the physical interface. Now, change the logical interface in the configuration to a VLAN interface (e.g. `eth0.5`) and set the VLAN ID (5 in this case). The VLAN interface will be automatically added by `detnetctl`. Make sure your network is configured accordingly to forward the HTTP requests of the `simple` example to a webserver.
+
+### Build
+```console
+cargo build --no-default-features --features dbus,bpf,netlink
+```
+
+### Run
+Adapt the configuration (see `config/yaml/example.yml`) to include the required parameters and start the service with
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
+```
+And in a second terminal
+```console
+sudo -u app0 ./examples/simple/simple example.org app0
+```
+
+## Queue setup with detd
+
+Set up the queues / qdiscs according to the configuration to enable TSN communication using TAPRIO Qdiscs aka Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv.
 
 This requires a at least one network card supported by [detd](https://github.com/Avnu/detd) (e.g. Intel® Ethernet Controller I225-LM).
 
@@ -189,15 +211,16 @@ This requires a at least one network card supported by [detd](https://github.com
 1. [Install and run detd](https://github.com/Avnu/detd)
 2. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,bpf,detd
+cargo build --no-default-features --features dbus,bpf,netlink,detd
 ```
 
 ### Run
-Adapt the configuration (see `config/yaml/example.yml`) to include the required parameters and start the service with
 ```console
 sudo ./target/debug/detnetctl -c myconfig.yml
 ```
-Then start the applications as before.
+
+For the `simple` example, there should be no noticable difference when now transmitting via the TAPRIO Qdisc. For a more complex example that tracks the timestamps have a look at the [timestamp example](timestamp_example/index.html).
+
 
 ## Configuration via sysrepo (YANG/NETCONF)
 
@@ -224,7 +247,7 @@ git submodule update --init --recursive
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,bpf,detd,sysrepo
+cargo build --no-default-features --features dbus,bpf,netlink,detd,sysrepo
 ```
 or equivalent
 ```console
@@ -257,6 +280,4 @@ Then start detnetctl as
 sudo ./target/debug/detnetctl
 ```
 as well as the applications like before.
-
-For a more complex example have a look at the [timestamp example](timestamp_example/index.html).
 
