@@ -28,7 +28,7 @@
 //! let config = sysrepo_config.get_app_config("app0");
 //! # Ok::<(), anyhow::Error>(())
 //! ```
-
+use crate::ptp::PtpConfig;
 use anyhow::Result;
 use eui48::MacAddress;
 use serde::{Deserialize, Serialize};
@@ -119,6 +119,14 @@ pub trait Configuration {
     /// Will return `Err` if no configuration can be found for the given `app_name`
     /// or there is general problem reading the configuration.
     fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig>;
+
+    /// Get the PTP configuration for a given instance
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if no configuration can be found for the given PTP instance
+    /// or there is general problem reading the configuration.
+    fn get_ptp_config(&mut self, instance: u32) -> Result<PtpConfig>;
 }
 
 mod yaml;

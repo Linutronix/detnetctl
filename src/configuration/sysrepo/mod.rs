@@ -17,9 +17,11 @@ use {mocks::MockSrConn as SrConn, mocks::MockSrData as SrData, mocks::MockSrSess
 use yang2::context::{Context as YangContext, ContextFlags};
 
 use crate::configuration;
+use crate::ptp::{ClockAccuracy, ClockClass, TimeSource};
 use eui48::MacAddress;
 use ipnet::IpNet;
 use std::net::IpAddr;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use yang2::data::{Data, DataTree};
 
@@ -102,7 +104,7 @@ impl configuration::Configuration for SysrepoConfiguration {
     /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
     fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
-        let cfg = self.get_detnet_and_tsn_config()?;
+        let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         let app_flow = get_app_flow(cfg.tree(), app_name)?;
         let traffic_profile = get_traffic_profile(cfg.tree(), &app_flow.traffic_profile)?;
         let tsn_interface_cfg = get_tsn_interface_config(cfg.tree(), &app_flow.interface)?;
@@ -120,6 +122,11 @@ impl configuration::Configuration for SysrepoConfiguration {
             ip_address: app_flow.source_address,
             prefix_length: app_flow.source_address_prefix_length,
         })
+    }
+
+    fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
+        let cfg = self.get_config("/ptp")?;
+        get_ptp_instance(cfg.tree(), instance).context("Parsing of YANG PTP configuration failed")
     }
 }
 
@@ -160,8 +167,7 @@ impl SysrepoConfiguration {
         })
     }
 
-    fn get_detnet_and_tsn_config(&mut self) -> Result<SrData> {
-        const XPATH_DETNET_AND_TSN: &str = "/detnet | /tsn-interface-configuration | /interfaces";
+    fn get_config(&mut self, xpath: &str) -> Result<SrData> {
         let mut lock = self
             .ctx
             .lock()
@@ -169,7 +175,7 @@ impl SysrepoConfiguration {
         let context = &mut *lock;
         context
             .sess
-            .get_data(&context.libyang_ctx, XPATH_DETNET_AND_TSN, None, None, 0)
+            .get_data(&context.libyang_ctx, xpath, None, None, 0)
             .map_err(|e| anyhow!("Can not get sysrepo data: {e}"))
     }
 }
@@ -199,6 +205,56 @@ fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<AppFlow> {
     }
 
     Err(anyhow!("App flow not found"))
+}
+
+fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<configuration::PtpConfig> {
+    let instances = tree.find_xpath("/ptp/instances/instance")?;
+    for instance in instances {
+        let index: u32 = instance.get_value_for_xpath("instance-index")?;
+
+        if index == instance_index {
+            let clock_class: String =
+                instance.get_value_for_xpath("default-ds/clock-quality/clock-class")?;
+            let clock_accuracy: String =
+                instance.get_value_for_xpath("default-ds/clock-quality/clock-accuracy")?;
+            let time_source: String =
+                instance.get_value_for_xpath("time-properties-ds/time-source")?;
+
+            let sdo_id: u16 = instance.get_value_for_xpath("default-ds/sdo-id")?;
+            let gptp_profile = match sdo_id {
+                0x000 => false,
+                0x100 => true,
+                _ => {
+                    return Err(anyhow!(
+                        "Only sdoId 0x000 and 0x100 are supported at the moment"
+                    ))
+                }
+            };
+
+            return Ok(configuration::PtpConfig {
+                clock_class: ClockClass::from_str(&clock_class)?,
+                clock_accuracy: ClockAccuracy::from_str(&clock_accuracy)?,
+                offset_scaled_log_variance: instance
+                    .get_value_for_xpath("default-ds/clock-quality/offset-scaled-log-variance")?,
+                current_utc_offset: instance
+                    .get_value_for_xpath("time-properties-ds/current-utc-offset")?,
+                current_utc_offset_valid: instance
+                    .get_value_for_xpath("time-properties-ds/current-utc-offset-valid")?,
+                leap59: instance.get_value_for_xpath("time-properties-ds/leap59")?,
+                leap61: instance.get_value_for_xpath("time-properties-ds/leap61")?,
+                time_traceable: instance
+                    .get_value_for_xpath("time-properties-ds/time-traceable")?,
+                frequency_traceable: instance
+                    .get_value_for_xpath("time-properties-ds/frequency-traceable")?,
+                ptp_timescale: instance.get_value_for_xpath("time-properties-ds/ptp-timescale")?,
+                time_source: TimeSource::from_str(&time_source)?,
+                domain_number: instance.get_value_for_xpath("default-ds/domain-number")?,
+                gptp_profile,
+            });
+        }
+    }
+
+    Err(anyhow!("PTP instance {} not found", instance_index))
 }
 
 fn get_traffic_profile(tree: &DataTree, traffic_profile_name: &str) -> Result<TrafficProfile> {
@@ -269,6 +325,7 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<VLANIn
 mod tests {
     use super::*;
     use crate::configuration::{AppConfig, Configuration};
+    use crate::ptp::PtpConfig;
     use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr};
     use yang2::data::{DataFormat, DataParserFlags, DataTree, DataValidationFlags};
@@ -287,6 +344,7 @@ mod tests {
             ("ietf-if-extensions", vec!["sub-interfaces"]),
             ("ietf-detnet", vec![]),
             ("tsn-interface-configuration", vec![]),
+            ("ieee1588-ptp", vec![]),
         ];
 
         for (module_name, features) in modules {
@@ -390,5 +448,32 @@ mod tests {
             "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
         );
         sysrepo_config.get_app_config("app0").unwrap();
+    }
+
+    #[test]
+    fn test_get_ptp_config_happy() -> Result<()> {
+        let mut sysrepo_config =
+            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let config = sysrepo_config.get_ptp_config(1)?;
+
+        assert_eq!(
+            config,
+            PtpConfig {
+                clock_class: ClockClass::Default,
+                clock_accuracy: ClockAccuracy::TimeAccurateToGreaterThan10S,
+                offset_scaled_log_variance: 0xFFFF,
+                current_utc_offset: 37,
+                current_utc_offset_valid: true,
+                leap59: false,
+                leap61: false,
+                time_traceable: true,
+                frequency_traceable: false,
+                ptp_timescale: true,
+                time_source: TimeSource::InternalOscillator,
+                domain_number: 0,
+                gptp_profile: true,
+            }
+        );
+        Ok(())
     }
 }

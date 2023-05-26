@@ -146,9 +146,10 @@ The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, s
 
 Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
 ```yaml
-app0:
-  logical_interface: eth0
-  physical_interface: eth0
+apps:
+  app0:
+    logical_interface: eth0
+    physical_interface: eth0
 ```
 
 Start the service with
