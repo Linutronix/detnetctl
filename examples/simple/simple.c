@@ -12,6 +12,7 @@
 #include <netdb.h>
 
 #include "../common/registration.h"
+#include "../common/ptp_status.h"
 
 static volatile sig_atomic_t exiting = 0;
 
@@ -137,6 +138,7 @@ int main(int argc, char *argv[])
 		 "HEAD / HTTP/1.1\r\nHost: %s\r\n\r\n\r\n", he->h_name);
 	char response[1000];
 
+	int i = 0;
 	while (!exiting) {
 		if (write(sockfd, request, strlen(request)) >= 0) {
 			int n = read(sockfd, response, sizeof(response));
@@ -152,6 +154,13 @@ int main(int argc, char *argv[])
 		printf(".");
 		fflush(stdout);
 		sleep(1);
+
+		/* Request and print PTP Status
+		 * Will print nothing if ptp feature is not enabled
+		 */
+		if (i++ % 10 == 9) {
+			print_ptp_status(interface);
+		}
 	}
 
 	printf("\n");
