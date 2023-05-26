@@ -25,6 +25,7 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
+- [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature
 
 ## License
 
@@ -46,8 +47,9 @@ Options:
   -c, --config <FILE>              Use YAML configuration with the provided file. Otherwise, uses sysrepo
       --no-queue-setup <PRIORITY>  Skip queue setup and return the given PRIORITY
       --no-guard                   Skip installing eBPFs - no interference protection!
-      --no-interface-setup         Skip setting up the link
       --bpf-debug-output           Print eBPF debug output to kernel tracing
+      --no-interface-setup         Skip setting up the link
+  -p, --ptp-instance <INSTANCE>    Configure PTP for the given instance
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -264,10 +266,6 @@ git submodule update --init --recursive
 ```console
 cargo build --no-default-features --features dbus,bpf,netlink,detd,sysrepo
 ```
-or equivalent
-```console
-cargo build
-```
 
 ### Run
 
@@ -295,4 +293,37 @@ Then start detnetctl as
 sudo ./target/debug/detnetctl
 ```
 as well as the applications like before.
+
+## PTP Configuration and Status
+
+### Build
+
+1. Install `linuxptp`, configure and run `ptp4l` and `phc2sys`, either from your packet repository or from source as described at <https://tsn.readthedocs.io/timesync.html>.
+2. Build detnetctl
+```console
+cargo build --no-default-features --features dbus,bpf,netlink,detd,sysrepo,ptp
+```
+or equivalent
+```console
+cargo build
+```
+
+### Run
+
+Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp`, for YANG it is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `--ptp-instance` parameter. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
+
+The most important setting that ensures the configuration is applied correctly is if the gPTP profile (IEEE 802.1AS) is used. If you are unsure, have a look at the `transportSpecific` field of the `ptp4l` configuration and the `--transportSpecific` argument of `phc2sys`. If it is `1`, you should set `gptp_profile` in the YAML file to `true` and in the YANG file the `sdo-id` to `256` (i.e. `0x100`). Otherwise, set it to `false` and `0`, respectively.
+
+Then start detnetctl for YAML configuration as
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml --ptp-instance 1
+```
+or (after reloading the YANG file with `sysrepocfg`) for using the Sysrepo configuration
+```console
+sudo ./target/debug/detnetctl --ptp-instance 1
+```
+
+At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.
+
+Now start the `simple` example as before. You should see the PTP status printed every few seconds.
 
