@@ -217,7 +217,8 @@ mod tests {
     }
 
     #[test]
-    fn test_interface_not_found() -> Result<()> {
+    #[should_panic(expected = "interface not found")]
+    fn test_interface_not_found() {
         let mut guard = BPFGuard {
             interfaces: HashMap::default(),
             generate_skel: Box::new(generate_skel_builder),
@@ -228,8 +229,6 @@ mod tests {
             debug_output: false,
         };
 
-        let result = guard.protect_priority(INTERFACE, PRIORITY, TOKEN);
-        assert!(result.is_err());
-        Ok(())
+        guard.protect_priority(INTERFACE, PRIORITY, TOKEN).unwrap();
     }
 }

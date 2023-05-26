@@ -150,12 +150,14 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "App app0 not found in configuration!")]
     fn test_get_app_config_not_found() {
         let mut config = YAMLConfiguration::default();
-        assert!(config.get_app_config("app0").is_err());
+        config.get_app_config("app0").unwrap();
     }
 
     #[test]
+    #[should_panic(expected = "missing field `logical_interface`")]
     fn test_read_fails() {
         let yaml = concat!(
             "app0:\n",
@@ -170,8 +172,6 @@ mod tests {
         );
 
         let mut config = YAMLConfiguration::default();
-        let result = config.read(yaml.as_bytes());
-
-        assert!(result.is_err());
+        config.read(yaml.as_bytes()).unwrap();
     }
 }

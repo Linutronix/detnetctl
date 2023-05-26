@@ -194,50 +194,46 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_offset() -> Result<()> {
-        let socket_config = run_test(
+    #[should_panic(expected = "Not possible to setup if offset > period!")]
+    fn test_invalid_offset() {
+        run_test(
             generate_app_config(1000 * 1000),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
                 vlan_interface: request.interface.to_owned() + "." + &request.vid.to_string(),
             }),
-        );
-
-        assert!(socket_config.is_err());
-
-        Ok(())
+        )
+        .unwrap();
     }
 
     #[test]
-    fn test_response_not_ok() -> Result<()> {
-        let socket_config = run_test(
+    #[should_panic(expected = "Setup of NIC not possible!")]
+    fn test_response_not_ok() {
+        run_test(
             generate_app_config(0),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: false,
                 socket_priority: 5,
                 vlan_interface: request.interface.to_owned() + "." + &request.vid.to_string(),
             }),
-        );
-
-        assert!(socket_config.is_err());
-
-        Ok(())
+        )
+        .unwrap();
     }
 
     #[test]
-    fn test_not_matching_vlan_interface() -> Result<()> {
-        let socket_config = run_test(
+    #[should_panic(
+        expected = "Interface returned from NIC setup does not match VLAN interface in configuration!"
+    )]
+    fn test_not_matching_vlan_interface() {
+        run_test(
             generate_app_config(0),
             Box::new(|_| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
                 vlan_interface: "abc0".to_string(),
             }),
-        );
-
-        assert!(socket_config.is_err());
-
-        Ok(())
+        )
+        .unwrap();
     }
 }

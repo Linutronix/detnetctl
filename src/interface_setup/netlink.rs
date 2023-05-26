@@ -176,8 +176,9 @@ fn validate_link(link: LinkMessage, vlan_interface: &str, vid: u16) -> Result<()
         Kind(kind) => Some(kind),
         _ => None,
     });
-    if kind.is_none() || *kind.unwrap() != InfoKind::Vlan {
-        return Err(anyhow!("Data kind invalid for {}", vlan_interface));
+    match kind {
+        Some(k) if k == &InfoKind::Vlan => (),
+        _ => return Err(anyhow!("Data kind invalid for {}", vlan_interface)),
     }
 
     // Extract data
@@ -194,12 +195,15 @@ fn validate_link(link: LinkMessage, vlan_interface: &str, vid: u16) -> Result<()
         Protocol(protocol) => Some(protocol),
         _ => None,
     });
-    if protocol.is_none() || *protocol.unwrap() != ETH_P_8021Q {
-        return Err(anyhow!(
-            "VLAN protocol for {} is not 0x{:x}",
-            vlan_interface,
-            ETH_P_8021Q
-        ));
+    match protocol {
+        Some(p) if p == &ETH_P_8021Q => (),
+        _ => {
+            return Err(anyhow!(
+                "VLAN protocol for {} is not 0x{:x}",
+                vlan_interface,
+                ETH_P_8021Q
+            ))
+        }
     }
 
     // Validate VLAN ID
@@ -207,8 +211,9 @@ fn validate_link(link: LinkMessage, vlan_interface: &str, vid: u16) -> Result<()
         Id(vlan_id) => Some(vlan_id),
         _ => None,
     });
-    if vlan_id.is_none() || *vlan_id.unwrap() != vid {
-        return Err(anyhow!("VLAN ID for {} is not {}", vlan_interface, vid));
+    match vlan_id {
+        Some(id) if id == &vid => (),
+        _ => return Err(anyhow!("VLAN ID for {} is not {}", vlan_interface, vid)),
     }
 
     Ok(())

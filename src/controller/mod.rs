@@ -164,7 +164,13 @@ impl Controller {
     ) -> Result<SocketConfig> {
         interface_setup
             .set_link_state(LinkState::DOWN, &app_config.physical_interface)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Setting interface {} down failed",
+                    &app_config.physical_interface
+                )
+            })?;
         println!("  Interface {} down", app_config.physical_interface);
 
         // Setup Queue
@@ -201,7 +207,8 @@ impl Controller {
                     &app_config.logical_interface,
                     vid,
                 )
-                .await?;
+                .await
+                .context("Setting up VLAN interface failed")?;
             println!(
                 "  VLAN interface {} properly configured",
                 app_config.logical_interface
@@ -212,7 +219,8 @@ impl Controller {
         if let (Some(ip), Some(prefix_length)) = (app_config.ip_address, app_config.prefix_length) {
             interface_setup
                 .add_address(ip, prefix_length, &app_config.logical_interface)
-                .await?;
+                .await
+                .context("Adding address to VLAN interface failed")?;
             println!(
                 "  Added {}/{} to {}",
                 ip, prefix_length, app_config.logical_interface
@@ -230,12 +238,24 @@ impl Controller {
     ) -> Result<()> {
         interface_setup
             .set_link_state(LinkState::UP, &app_config.physical_interface)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Setting interface {} up failed",
+                    &app_config.physical_interface
+                )
+            })?;
         println!("  Interface {} up", app_config.physical_interface);
 
         interface_setup
             .set_link_state(LinkState::UP, &app_config.logical_interface)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Setting interface {} up failed",
+                    &app_config.logical_interface
+                )
+            })?;
         println!("  Interface {} up", app_config.logical_interface);
 
         Ok(())
@@ -372,54 +392,58 @@ mod tests {
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Fetching the configuration failed")]
     async fn test_register_configuration_failure() {
         let configuration = Arc::new(Mutex::new(configuration_failing()));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let guard = Arc::new(Mutex::new(guard_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
-        assert!(controller
+        controller
             .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
-            .is_err());
+            .unwrap();
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Setting up the queue failed")]
     async fn test_register_queue_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
         let guard = Arc::new(Mutex::new(guard_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
-        assert!(controller
+        controller
             .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
-            .is_err());
+            .unwrap();
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Installing protection via the guard failed")]
     async fn test_register_guard_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let guard = Arc::new(Mutex::new(guard_failing()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
-        assert!(controller
+        controller
             .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
-            .is_err());
+            .unwrap();
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Setting interface abc down failed")]
     async fn test_register_interface_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let guard = Arc::new(Mutex::new(guard_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_failing()));
         let controller = Controller::new();
-        assert!(controller
+        controller
             .register("app123", configuration, queue_setup, guard, interface_setup)
             .await
-            .is_err());
+            .unwrap();
     }
 }

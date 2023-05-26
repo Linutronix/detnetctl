@@ -382,17 +382,19 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "App flow not found")]
     fn test_get_app_config_missing() {
         let mut sysrepo_config =
             create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
-        assert!(sysrepo_config.get_app_config("somemissingapp").is_err());
+        sysrepo_config.get_app_config("somemissingapp").unwrap();
     }
 
     #[test]
+    #[should_panic(expected = "config-list/time-aware-offset missing")]
     fn test_get_app_config_invalid_file() {
         let mut sysrepo_config = create_sysrepo_config(
             "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
         );
-        assert!(sysrepo_config.get_app_config("app0").is_err());
+        sysrepo_config.get_app_config("app0").unwrap();
     }
 }

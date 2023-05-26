@@ -335,7 +335,7 @@ mod tests {
         dbus_names.insert(DBUS_APP_PREFIX.to_owned() + APP_NAME, String::from(SENDER));
         let result = DBusTester::perform_test(String::from(APP_NAME), dbus_names).await?;
 
-        assert_eq!(result.register_called, true);
+        assert!(result.register_called);
 
         let (interface, priority, token): (Option<String>, Option<u8>, Option<u64>) =
             result.msg.get3();
@@ -347,32 +347,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_owner_not_matching() -> Result<()> {
+    #[should_panic(
+        expected = "Owner of D-Bus name does not match sender of registration message for testapp"
+    )]
+    async fn test_owner_not_matching() {
         let mut dbus_names = HashMap::new();
         dbus_names.insert(
             DBUS_APP_PREFIX.to_owned() + APP_NAME,
             String::from(":1:123"),
         );
-        let mut result = DBusTester::perform_test(String::from(APP_NAME), dbus_names).await?;
+        let mut result = DBusTester::perform_test(String::from(APP_NAME), dbus_names)
+            .await
+            .unwrap();
 
-        assert_eq!(result.register_called, false);
-        assert!(result.msg.as_result().is_err());
-
-        Ok(())
+        assert!(!result.register_called);
+        result.msg.as_result().unwrap();
     }
 
     #[tokio::test]
-    async fn test_name_not_found() -> Result<()> {
+    #[should_panic(expected = "D-Bus error: app_name not in dbus_names")]
+    async fn test_name_not_found() {
         let mut dbus_names = HashMap::new();
         dbus_names.insert(
             DBUS_APP_PREFIX.to_owned() + "otherapp",
             String::from(SENDER),
         );
-        let mut result = DBusTester::perform_test(String::from(APP_NAME), dbus_names).await?;
+        let mut result = DBusTester::perform_test(String::from(APP_NAME), dbus_names)
+            .await
+            .unwrap();
 
-        assert_eq!(result.register_called, false);
-        assert!(result.msg.as_result().is_err());
-
-        Ok(())
+        assert!(!result.register_called);
+        result.msg.as_result().unwrap();
     }
 }
