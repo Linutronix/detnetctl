@@ -96,10 +96,10 @@ impl configuration::Configuration for SysrepoConfiguration {
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
     fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
         let cfg = self.get_detnet_and_tsn_config()?;
-        let app_flow = self.get_app_flow(cfg.tree(), app_name)?;
-        let traffic_profile = self.get_traffic_profile(cfg.tree(), &app_flow.traffic_profile)?;
-        let tsn_interface_cfg = self.get_tsn_interface_config(cfg.tree(), &app_flow.interface)?;
-        let logical_interface = self.get_logical_interface(cfg.tree(), &app_flow.interface)?;
+        let app_flow = get_app_flow(cfg.tree(), app_name)?;
+        let traffic_profile = get_traffic_profile(cfg.tree(), &app_flow.traffic_profile)?;
+        let tsn_interface_cfg = get_tsn_interface_config(cfg.tree(), &app_flow.interface)?;
+        let logical_interface = get_logical_interface(cfg.tree(), &app_flow.interface)?;
 
         Ok(configuration::AppConfig {
             logical_interface: logical_interface.name,
@@ -165,110 +165,95 @@ impl SysrepoConfiguration {
             Err(_) => Err(anyhow!("Can not get sysrepo data")),
         }
     }
+}
 
-    fn get_app_flow(&self, tree: &DataTree, app_name: &str) -> Result<AppFlow> {
-        // It would be easier to put the provided app_name inside the XPath expression,
-        // but this could lead to a potential unsafe expression
-        // (see https://owasp.org/www-community/attacks/XPATH_Injection - also for alternative implementations).
-        let app_flows = tree.find_xpath("/detnet/app-flows/app-flow")?;
-        for app_flow in app_flows {
-            let name: String = app_flow.get_value_for_xpath("name")?;
+fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<AppFlow> {
+    // It would be easier to put the provided app_name inside the XPath expression,
+    // but this could lead to a potential unsafe expression
+    // (see https://owasp.org/www-community/attacks/XPATH_Injection - also for alternative implementations).
+    let app_flows = tree.find_xpath("/detnet/app-flows/app-flow")?;
+    for app_flow in app_flows {
+        let name: String = app_flow.get_value_for_xpath("name")?;
 
-            if name == app_name {
-                let ip = match app_flow
-                    .get_value_for_xpath::<String>("ingress/ip-app-flow/src-ip-prefix")
-                {
+        if name == app_name {
+            let ip =
+                match app_flow.get_value_for_xpath::<String>("ingress/ip-app-flow/src-ip-prefix") {
                     Ok(srcipprefix) => Some(srcipprefix.parse::<IpNet>()?),
                     Err(_) => None,
                 };
 
-                return Ok(AppFlow {
-                    interface: app_flow.get_value_for_xpath("ingress/interface")?,
-                    traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
-                    source_address: ip.map(|prefix| prefix.addr()),
-                    source_address_prefix_length: ip.map(|prefix| prefix.prefix_len()),
-                });
-            }
+            return Ok(AppFlow {
+                interface: app_flow.get_value_for_xpath("ingress/interface")?,
+                traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                source_address: ip.map(|prefix| prefix.addr()),
+                source_address_prefix_length: ip.map(|prefix| prefix.prefix_len()),
+            });
         }
-
-        Err(anyhow!("App flow not found"))
     }
 
-    fn get_traffic_profile(
-        &self,
-        tree: &DataTree,
-        traffic_profile_name: &str,
-    ) -> Result<TrafficProfile> {
-        let traffic_profiles = tree.find_xpath("/detnet/traffic-profile")?;
-        for profile in traffic_profiles {
-            let name: String = profile.get_value_for_xpath("name")?;
+    Err(anyhow!("App flow not found"))
+}
 
-            if name == traffic_profile_name {
-                let max_pkts_per_interval: u32 =
-                    profile.get_value_for_xpath("traffic-spec/max-pkts-per-interval")?;
-                let max_payload_size: u32 =
-                    profile.get_value_for_xpath("traffic-spec/max-payload-size")?;
+fn get_traffic_profile(tree: &DataTree, traffic_profile_name: &str) -> Result<TrafficProfile> {
+    let traffic_profiles = tree.find_xpath("/detnet/traffic-profile")?;
+    for profile in traffic_profiles {
+        let name: String = profile.get_value_for_xpath("name")?;
 
-                return Ok(TrafficProfile {
-                    period_ns: profile.get_value_for_xpath("traffic-spec/interval")?,
+        if name == traffic_profile_name {
+            let max_pkts_per_interval: u32 =
+                profile.get_value_for_xpath("traffic-spec/max-pkts-per-interval")?;
+            let max_payload_size: u32 =
+                profile.get_value_for_xpath("traffic-spec/max-payload-size")?;
 
-                    // TODO is that sufficient or do we need to incorporate inter-frame spacing, headers etc.?
-                    size_bytes: max_pkts_per_interval * max_payload_size,
-                });
-            }
+            return Ok(TrafficProfile {
+                period_ns: profile.get_value_for_xpath("traffic-spec/interval")?,
+
+                // TODO is that sufficient or do we need to incorporate inter-frame spacing, headers etc.?
+                size_bytes: max_pkts_per_interval * max_payload_size,
+            });
         }
-
-        Err(anyhow!("Traffic profile not found"))
     }
 
-    fn get_tsn_interface_config(
-        &self,
-        tree: &DataTree,
-        interface_name: &str,
-    ) -> Result<TSNInterfaceConfig> {
-        let interface_configs = tree.find_xpath("/tsn-interface-configuration/interface-list")?;
-        for interface_config in interface_configs {
-            let name: String = interface_config.get_value_for_xpath("interface-name")?;
+    Err(anyhow!("Traffic profile not found"))
+}
 
-            if name == interface_name {
-                const DSTADDRPATH: &str =
-                    "config-list/ieee802-mac-addresses/destination-mac-address";
-                let destination_address_string: String =
-                    interface_config.get_value_for_xpath(DSTADDRPATH)?;
-                const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
-                const PCPPATH: &str = "config-list/ieee802-vlan-tag/priority-code-point";
-                return Ok(TSNInterfaceConfig {
-                    offset_ns: interface_config
-                        .get_value_for_xpath("config-list/time-aware-offset")?,
-                    destination_address: destination_address_string.parse()?,
-                    vid: interface_config.get_value_for_xpath(VLANIDPATH)?,
-                    pcp: interface_config.get_value_for_xpath(PCPPATH)?,
-                });
-            }
+fn get_tsn_interface_config(tree: &DataTree, interface_name: &str) -> Result<TSNInterfaceConfig> {
+    let interface_configs = tree.find_xpath("/tsn-interface-configuration/interface-list")?;
+    for interface_config in interface_configs {
+        let name: String = interface_config.get_value_for_xpath("interface-name")?;
+
+        if name == interface_name {
+            const DSTADDRPATH: &str = "config-list/ieee802-mac-addresses/destination-mac-address";
+            let destination_address_string: String =
+                interface_config.get_value_for_xpath(DSTADDRPATH)?;
+            const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
+            const PCPPATH: &str = "config-list/ieee802-vlan-tag/priority-code-point";
+            return Ok(TSNInterfaceConfig {
+                offset_ns: interface_config.get_value_for_xpath("config-list/time-aware-offset")?,
+                destination_address: destination_address_string.parse()?,
+                vid: interface_config.get_value_for_xpath(VLANIDPATH)?,
+                pcp: interface_config.get_value_for_xpath(PCPPATH)?,
+            });
         }
-
-        Err(anyhow!("TSN interface configuration not found"))
     }
 
-    fn get_logical_interface(
-        &self,
-        tree: &DataTree,
-        interface_name: &str,
-    ) -> Result<VLANInterface> {
-        let interfaces = tree.find_xpath("/interfaces/interface")?;
-        for interface in interfaces {
-            let name: String = interface.get_value_for_xpath("name")?;
+    Err(anyhow!("TSN interface configuration not found"))
+}
 
-            if name == interface_name {
-                return Ok(VLANInterface {
-                    name: interface_name.to_string(),
-                    physical_interface: interface.get_value_for_xpath("parent-interface")?,
-                });
-            }
+fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<VLANInterface> {
+    let interfaces = tree.find_xpath("/interfaces/interface")?;
+    for interface in interfaces {
+        let name: String = interface.get_value_for_xpath("name")?;
+
+        if name == interface_name {
+            return Ok(VLANInterface {
+                name: interface_name.to_string(),
+                physical_interface: interface.get_value_for_xpath("parent-interface")?,
+            });
         }
-
-        Err(anyhow!("VLAN interface not found in configuration"))
     }
+
+    Err(anyhow!("VLAN interface not found in configuration"))
 }
 
 #[cfg(test)]

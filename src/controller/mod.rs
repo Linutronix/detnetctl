@@ -84,13 +84,6 @@ impl Controller {
     pub fn new() -> Self {
         Self
     }
-
-    /// Securely generate a random token
-    fn generate_token(&self) -> Result<u64> {
-        let mut token_bytes = [0; 8];
-        getrandom(&mut token_bytes)?;
-        Ok(u64::from_be_bytes(token_bytes))
-    }
 }
 
 #[async_trait]
@@ -107,7 +100,7 @@ impl Registration for Controller {
         println!("Request to register {}", app_name);
 
         // Generate token
-        let token = self.generate_token()?;
+        let token = generate_token()?;
 
         // Fetch configuration for app
         let app_config = configuration
@@ -119,7 +112,7 @@ impl Registration for Controller {
 
         let locked_interface_setup = interface_setup.lock().await;
 
-        let setup_result = Controller::setup(
+        let setup_result = setup(
             &app_config,
             token,
             queue_setup,
@@ -128,8 +121,7 @@ impl Registration for Controller {
         )
         .await; // No ? since we need to ensure that the link is up again even after error
 
-        let if_up_result =
-            Controller::set_interfaces_up(&app_config, &*locked_interface_setup).await;
+        let if_up_result = set_interfaces_up(&app_config, &*locked_interface_setup).await;
 
         // The first occurred error shall be returned, but a potential second still be printed
         if let Err(if_up_error) = if_up_result {
@@ -154,112 +146,117 @@ impl Registration for Controller {
     }
 }
 
-impl Controller {
-    async fn setup(
-        app_config: &AppConfig,
-        token: u64,
-        queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
-        guard: Arc<Mutex<dyn Guard + Send>>,
-        interface_setup: &(dyn InterfaceSetup + Sync + Send),
-    ) -> Result<SocketConfig> {
-        interface_setup
-            .set_link_state(LinkState::DOWN, &app_config.physical_interface)
-            .await
-            .with_context(|| {
-                format!(
-                    "Setting interface {} down failed",
-                    &app_config.physical_interface
-                )
-            })?;
-        println!("  Interface {} down", app_config.physical_interface);
+/// Securely generate a random token
+fn generate_token() -> Result<u64> {
+    let mut token_bytes = [0; 8];
+    getrandom(&mut token_bytes)?;
+    Ok(u64::from_be_bytes(token_bytes))
+}
 
-        // Setup Queue
-        let socket_config = queue_setup
-            .lock()
-            .await
-            .apply_config(app_config)
-            .context("Setting up the queue failed")?;
-        println!("  Result of queue setup: {:#?}", socket_config);
-
-        // Setup BPF Hooks
-        // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
-        // here, because otherwise it would be possible to use a different logical interface,
-        // but same SO_PRIORITY and physical interface. Even though it would not be routed to the
-        // same VLAN it could still block the time slot!
-        let mut locked_guard = guard.lock().await;
-        locked_guard
-            .protect_priority(
-                &app_config.physical_interface,
-                socket_config.priority,
-                token,
+async fn setup(
+    app_config: &AppConfig,
+    token: u64,
+    queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+    guard: Arc<Mutex<dyn Guard + Send>>,
+    interface_setup: &(dyn InterfaceSetup + Sync + Send),
+) -> Result<SocketConfig> {
+    interface_setup
+        .set_link_state(LinkState::DOWN, &app_config.physical_interface)
+        .await
+        .with_context(|| {
+            format!(
+                "Setting interface {} down failed",
+                &app_config.physical_interface
             )
-            .context("Installing protection via the guard failed. SO_TOKEN patch missing?")?;
+        })?;
+    println!("  Interface {} down", app_config.physical_interface);
+
+    // Setup Queue
+    let socket_config = queue_setup
+        .lock()
+        .await
+        .apply_config(app_config)
+        .context("Setting up the queue failed")?;
+    println!("  Result of queue setup: {:#?}", socket_config);
+
+    // Setup BPF Hooks
+    // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
+    // here, because otherwise it would be possible to use a different logical interface,
+    // but same SO_PRIORITY and physical interface. Even though it would not be routed to the
+    // same VLAN it could still block the time slot!
+    let mut locked_guard = guard.lock().await;
+    locked_guard
+        .protect_priority(
+            &app_config.physical_interface,
+            socket_config.priority,
+            token,
+        )
+        .context("Installing protection via the guard failed. SO_TOKEN patch missing?")?;
+    println!(
+        "  Guard installed for priority {} on {}",
+        socket_config.priority, app_config.physical_interface
+    );
+
+    // Setup logical interface
+    if let Some(vid) = app_config.vid {
+        interface_setup
+            .setup_vlan_interface(
+                &app_config.physical_interface,
+                &app_config.logical_interface,
+                vid,
+            )
+            .await
+            .context("Setting up VLAN interface failed")?;
         println!(
-            "  Guard installed for priority {} on {}",
-            socket_config.priority, app_config.physical_interface
+            "  VLAN interface {} properly configured",
+            app_config.logical_interface
         );
-
-        // Setup logical interface
-        if let Some(vid) = app_config.vid {
-            interface_setup
-                .setup_vlan_interface(
-                    &app_config.physical_interface,
-                    &app_config.logical_interface,
-                    vid,
-                )
-                .await
-                .context("Setting up VLAN interface failed")?;
-            println!(
-                "  VLAN interface {} properly configured",
-                app_config.logical_interface
-            );
-        }
-
-        // Add address to logical interface
-        if let (Some(ip), Some(prefix_length)) = (app_config.ip_address, app_config.prefix_length) {
-            interface_setup
-                .add_address(ip, prefix_length, &app_config.logical_interface)
-                .await
-                .context("Adding address to VLAN interface failed")?;
-            println!(
-                "  Added {}/{} to {}",
-                ip, prefix_length, app_config.logical_interface
-            );
-        } else {
-            println!("  No IP address configured, since none was provided");
-        }
-
-        Ok(socket_config)
     }
 
-    async fn set_interfaces_up(
-        app_config: &AppConfig,
-        interface_setup: &(dyn InterfaceSetup + Sync + Send),
-    ) -> Result<()> {
+    // Add address to logical interface
+    if let (Some(ip), Some(prefix_length)) = (app_config.ip_address, app_config.prefix_length) {
         interface_setup
-            .set_link_state(LinkState::UP, &app_config.physical_interface)
+            .add_address(ip, prefix_length, &app_config.logical_interface)
             .await
-            .with_context(|| {
-                format!(
-                    "Setting interface {} up failed",
-                    &app_config.physical_interface
-                )
-            })?;
-        println!("  Interface {} up", app_config.physical_interface);
-
-        interface_setup
-            .set_link_state(LinkState::UP, &app_config.logical_interface)
-            .await
-            .with_context(|| {
-                format!(
-                    "Setting interface {} up failed",
-                    &app_config.logical_interface
-                )
-            })?;
-        println!("  Interface {} up", app_config.logical_interface);
-
-        Ok(())
+            .context("Adding address to VLAN interface failed")?;
+        println!(
+            "  Added {}/{} to {}",
+            ip, prefix_length, app_config.logical_interface
+        );
+    } else {
+        println!("  No IP address configured, since none was provided");
     }
+
+    Ok(socket_config)
+}
+
+async fn set_interfaces_up(
+    app_config: &AppConfig,
+    interface_setup: &(dyn InterfaceSetup + Sync + Send),
+) -> Result<()> {
+    interface_setup
+        .set_link_state(LinkState::UP, &app_config.physical_interface)
+        .await
+        .with_context(|| {
+            format!(
+                "Setting interface {} up failed",
+                &app_config.physical_interface
+            )
+        })?;
+    println!("  Interface {} up", app_config.physical_interface);
+
+    interface_setup
+        .set_link_state(LinkState::UP, &app_config.logical_interface)
+        .await
+        .with_context(|| {
+            format!(
+                "Setting interface {} up failed",
+                &app_config.logical_interface
+            )
+        })?;
+    println!("  Interface {} up", app_config.logical_interface);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -274,9 +271,8 @@ mod tests {
 
     #[test]
     fn test_token_unique() -> Result<()> {
-        let controller = Controller::new();
-        let first_token = controller.generate_token()?;
-        let second_token = controller.generate_token()?;
+        let first_token = generate_token()?;
+        let second_token = generate_token()?;
         assert_ne!(first_token, second_token);
         Ok(())
     }

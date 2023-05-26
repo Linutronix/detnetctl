@@ -3,6 +3,7 @@ use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
 use std::collections::HashMap;
 
 #[cfg(not(test))]
+#[allow(clippy::unused_self)]
 mod network_guard {
     include!(concat!(env!("OUT_DIR"), "/network_guard.skel.rs"));
 }
