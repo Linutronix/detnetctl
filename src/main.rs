@@ -34,6 +34,7 @@ use detnetctl::configuration::{Configuration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Registration};
 use detnetctl::guard::{DummyGuard, Guard};
 use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
+use detnetctl::ptp::Ptp;
 use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
 
 #[derive(Parser, Debug)]
@@ -55,13 +56,17 @@ struct Cli {
     #[arg(long)]
     no_guard: bool,
 
+    /// Print eBPF debug output to kernel tracing
+    #[arg(long)]
+    bpf_debug_output: bool,
+
     /// Skip setting up the link
     #[arg(long)]
     no_interface_setup: bool,
 
-    /// Print eBPF debug output to kernel tracing
-    #[arg(long)]
-    bpf_debug_output: bool,
+    /// Configure PTP for the given instance
+    #[arg(short, long, value_name = "INSTANCE")]
+    ptp_instance: Option<u32>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -90,6 +95,18 @@ pub async fn main() -> Result<()> {
         }
         None => new_sysrepo_config()?,
     };
+
+    let ptp_manager = new_ptp_manager();
+    if let Some(identity) = cli.ptp_instance {
+        if let Some(mgr) = &ptp_manager {
+            mgr.lock()
+                .await
+                .apply_config(&configuration.lock().await.get_ptp_config(identity)?)
+                .await?;
+        } else {
+            return Err(anyhow!("ptp feature not built in!"));
+        }
+    }
 
     let queue_setup = match cli.no_queue_setup {
         Some(priority) => Arc::new(Mutex::new(DummyQueueSetup::new(priority))),
@@ -130,6 +147,7 @@ pub async fn main() -> Result<()> {
                 queue_setup,
                 guard,
                 interface_setup,
+                ptp_manager,
             )
             .await?;
         }
@@ -146,7 +164,9 @@ fn feature_missing_error(feature: &str, alternative: &str) -> Error {
 #[cfg(feature = "dbus")]
 use {
     async_shutdown::Shutdown,
-    detnetctl::facade::{Facade, Setup},
+    detnetctl::facade::{
+        Facade, PtpStatusCallback, PtpStatusFuture, RegisterCallback, RegisterFuture, Setup,
+    },
     tokio::signal,
 };
 #[cfg(feature = "dbus")]
@@ -156,33 +176,50 @@ async fn spawn_dbus_service(
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     guard: Arc<Mutex<dyn Guard + Send>>,
     interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
+    ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
     let shutdown = Shutdown::new();
     let mut facade = Facade::new(shutdown.clone())?;
 
-    facade
-        .setup(Box::new(move |app_name| {
-            let app_name = String::from(app_name);
-            let cloned_controller = controller.clone();
-            let cloned_configuration = configuration.clone();
-            let cloned_queue_setup = queue_setup.clone();
-            let cloned_guard = guard.clone();
-            let cloned_interface_setup = interface_setup.clone();
-            Box::pin(async move {
-                cloned_controller
-                    .lock()
-                    .await
-                    .register(
-                        &app_name,
-                        cloned_configuration,
-                        cloned_queue_setup,
-                        cloned_guard,
-                        cloned_interface_setup,
-                    )
-                    .await
-            })
-        }))
-        .await?;
+    let register_callback: RegisterCallback = Box::new(move |app_name| -> RegisterFuture {
+        let app_name = String::from(app_name);
+        let cloned_controller = controller.clone();
+        let cloned_configuration = configuration.clone();
+        let cloned_queue_setup = queue_setup.clone();
+        let cloned_guard = guard.clone();
+        let cloned_interface_setup = interface_setup.clone();
+        Box::pin(async move {
+            cloned_controller
+                .lock()
+                .await
+                .register(
+                    &app_name,
+                    cloned_configuration,
+                    cloned_queue_setup,
+                    cloned_guard,
+                    cloned_interface_setup,
+                )
+                .await
+        })
+    });
+
+    let ptp_callback = ptp.map(|ptp_manager| -> PtpStatusCallback {
+        Box::new(
+            move |interface, max_clock_delta, max_master_offset| -> PtpStatusFuture {
+                let interface = String::from(interface);
+                let cloned_ptp = ptp_manager.clone();
+                Box::pin(async move {
+                    cloned_ptp
+                        .lock()
+                        .await
+                        .get_status(&interface, max_clock_delta, max_master_offset)
+                        .await
+                })
+            },
+        )
+    });
+
+    facade.setup(register_callback, ptp_callback).await?;
 
     println!("Started detnetctl");
 
@@ -209,6 +246,7 @@ async fn spawn_dbus_service(
     _queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     _guard: Arc<Mutex<dyn Guard + Send>>,
     _interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
+    _ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
     Err(feature_missing_error("dbus", "--app-name"))
 }
@@ -259,4 +297,16 @@ fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send
 #[cfg(not(feature = "netlink"))]
 fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send>>> {
     Err(feature_missing_error("netlink", "--no-interface-setup"))
+}
+
+#[cfg(feature = "ptp")]
+use detnetctl::ptp::PtpManager;
+#[cfg(feature = "ptp")]
+fn new_ptp_manager() -> Option<Arc<Mutex<dyn Ptp + Sync + Send>>> {
+    Some(Arc::new(Mutex::new(PtpManager::new())))
+}
+
+#[cfg(not(feature = "ptp"))]
+fn new_ptp_manager() -> Option<Arc<Mutex<dyn Ptp + Sync + Send>>> {
+    None
 }

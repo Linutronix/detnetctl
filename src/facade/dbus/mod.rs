@@ -2,18 +2,19 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::facade::RegisterCallback;
-use anyhow::{anyhow, Result};
+use crate::facade::{PtpStatusCallback, RegisterCallback};
+use anyhow::{anyhow, Context, Result};
 use async_shutdown::Shutdown;
 use async_trait::async_trait;
+use chrono::Duration;
 use dbus::channel::MatchingReceiver;
-use dbus_crossroads::Crossroads;
+use dbus_crossroads::{Crossroads, IfaceToken};
+use num_traits::ToPrimitive;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 #[cfg(not(test))]
 use {
-    core::time::Duration,
     dbus::nonblock::{Proxy, SyncConnection},
     dbus_tokio::connection,
 };
@@ -29,11 +30,21 @@ const DBUS_NAME: &str = "org.detnet.detnetctl";
 const OBJECT_NAME: &str = "/org/detnet/detnetctl";
 const DBUS_APP_PREFIX: &str = "org.detnet.apps.";
 
+type DbusPtpStatus = (u8, i64, i64, i32, u8, i64);
+
 #[derive(Debug)]
-struct RegisterCommand {
-    app_name: String,
-    sender: String,
-    responder: oneshot::Sender<Result<controller::RegisterResponse>>,
+enum Command {
+    Register {
+        sender: String,
+        app_name: String,
+        responder: oneshot::Sender<Result<controller::RegisterResponse>>,
+    },
+    GetPtpStatus {
+        interface: String,
+        max_clock_delta_ns: u64,
+        max_master_offset_ns: u64,
+        responder: oneshot::Sender<Result<DbusPtpStatus>>,
+    },
 }
 
 pub struct DBus {
@@ -62,48 +73,32 @@ impl DBus {
         })
     }
 
-    pub async fn setup(&self, mut register: RegisterCallback) -> Result<()> {
+    pub async fn setup(
+        &self,
+        register: RegisterCallback,
+        get_ptp_status: Option<PtpStatusCallback>,
+    ) -> Result<()> {
         // Request D-Bus name
         self.c.request_name(DBUS_NAME, false, true, false).await?;
 
         // Communication channel between D-Bus message handler and registration manager
-        let (tx, mut rx) = mpsc::channel::<RegisterCommand>(32);
+        let (tx, rx) = mpsc::channel::<Command>(32);
 
         // Spawn registration manager
         let manager_connection = self.c.clone();
         let resource_handle = self.resource_handle.clone();
         let manager_shutdown = self.shutdown.clone();
+        let has_ptp_status_callback = get_ptp_status.is_some();
         tokio::spawn(async move {
-            // delay token to delay shutdown until thread is finished
-            let Ok(_delay_token) = manager_shutdown.delay_shutdown_token() else {
-                resource_handle.abort();
-                return;
-            };
-
-            while let Some(Some(cmd)) = manager_shutdown.wrap_cancel(rx.recv()).await {
-                // It is important to verify the app name for making sure that
-                // the sender is actually allowed to register this app!
-                let response = match Self::verify_app_name(
-                    &cmd.app_name,
-                    &cmd.sender,
-                    manager_connection.clone(),
-                )
-                .await
-                {
-                    Ok(()) => register(&cmd.app_name).await.map_err(|e| {
-                        // print here and forward, otherwise the error would only be sent back to the application
-                        eprintln!("{e:#}");
-                        e
-                    }),
-                    Err(e) => Err(e),
-                };
-
-                // Send back the response
-                let _ = cmd.responder.send(response);
-            }
-
-            manager_shutdown.shutdown(); // make sure the program shuts down if the channel was closed due to an error, no-op for normal shutdown
-            resource_handle.abort(); // stop dbus_tokio resource handler
+            command_processor(
+                rx,
+                register,
+                get_ptp_status,
+                manager_shutdown,
+                manager_connection,
+                resource_handle,
+            )
+            .await;
         });
 
         // Setup D-Bus message handler
@@ -123,45 +118,7 @@ impl DBus {
             }),
         )));
 
-        let token = cr.register(DBUS_NAME, |b| {
-            b.method_with_cr_async(
-                "Register",
-                ("app_name",),
-                ("interface", "priority", "token"),
-                move |mut context, _, (app_name,): (String,)| {
-                    let tx_clone = tx.clone();
-
-                    async move {
-                        let Some(sender) = context.message().sender() else {
-                            return context.reply(Err(dbus::MethodErr::failed(&anyhow!(
-                                "Can not determine D-Bus sender"
-                            ))));
-                        };
-
-                        let (resp_tx, resp_rx) = oneshot::channel();
-
-                        let cmd = RegisterCommand {
-                            app_name,
-                            sender: String::from(&*sender),
-                            responder: resp_tx,
-                        };
-
-                        if let Err(e) = tx_clone.send(cmd).await {
-                            return context.reply(Err(dbus::MethodErr::failed(&e)));
-                        }
-
-                        let response = resp_rx.await;
-                        context.reply(match response {
-                            Ok(r) => match r {
-                                Ok(r) => Ok((r.logical_interface, r.priority, r.token)),
-                                Err(e) => Err(dbus::MethodErr::failed(&e)),
-                            },
-                            Err(e) => Err(dbus::MethodErr::failed(&e)),
-                        })
-                    }
-                },
-            );
-        });
+        let token = register_methods(&mut cr, tx, has_ptp_status_callback);
         cr.insert(OBJECT_NAME, &[token], ());
 
         // Interconnect connection with crossroads to handle message
@@ -177,25 +134,203 @@ impl DBus {
 
         Ok(())
     }
+}
 
-    async fn verify_app_name(
-        app_name: &str,
-        sender: &str,
-        connection: Arc<SyncConnection>,
-    ) -> Result<()> {
-        let mut full_name = String::from(DBUS_APP_PREFIX);
-        full_name.push_str(app_name);
+fn register_methods(
+    cr: &mut Crossroads,
+    tx: mpsc::Sender<Command>,
+    ptp_status: bool,
+) -> IfaceToken<()> {
+    let tx_for_register = tx.clone();
+    let tx_for_ptp_status = tx;
 
-        let owner = connection.get_owner(&full_name).await?;
+    cr.register(DBUS_NAME, |b| {
+        b.method_with_cr_async(
+            "Register",
+            ("app_name",),
+            ("interface", "priority", "token"),
+            move |mut context, _, (app_name,): (String,)| {
+                let tx_clone = tx_for_register.clone();
 
-        if sender == owner {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "Owner of D-Bus name does not match sender of registration message for {}",
-                app_name
-            ))
+                async move {
+                    let Some(sender) = context.message().sender() else {
+                            return context.reply(Err(dbus::MethodErr::failed(&anyhow!(
+                                "Can not determine D-Bus sender"
+                            ))));
+                        };
+
+                    let (resp_tx, resp_rx) = oneshot::channel();
+
+                    let cmd = Command::Register {
+                        app_name,
+                        sender: String::from(&*sender),
+                        responder: resp_tx,
+                    };
+
+                    if let Err(e) = tx_clone.send(cmd).await {
+                        return context.reply(Err(dbus::MethodErr::failed(&e)));
+                    }
+
+                    let response = resp_rx.await;
+                    context.reply(match response {
+                        Ok(r) => match r {
+                            Ok(r) => Ok((r.logical_interface, r.priority, r.token)),
+                            Err(e) => Err(dbus::MethodErr::failed(&e)),
+                        },
+                        Err(e) => Err(dbus::MethodErr::failed(&e)),
+                    })
+                }
+            },
+        );
+
+        if ptp_status {
+            b.method_with_cr_async(
+                "PtpStatus",
+                ("interface","max_clock_delta_ns","max_master_offset_ns"),
+                (
+                    "issues",
+                    "phc_rt_delta",
+                    "phc_tai_delta",
+                    "kernel_tai_offset",
+                    "port_state",
+                    "master_offset",
+                ),
+                move |mut context, _, (interface,max_clock_delta_ns,max_master_offset_ns): (String,u64,u64)| {
+                    let tx_clone = tx_for_ptp_status.clone();
+
+                    async move {
+                        let (resp_tx, resp_rx) = oneshot::channel();
+
+                        let cmd = Command::GetPtpStatus {
+                            interface,
+                            max_clock_delta_ns,
+                            max_master_offset_ns,
+                            responder: resp_tx,
+                        };
+
+                        if let Err(e) = tx_clone.send(cmd).await {
+                            return context.reply(Err(dbus::MethodErr::failed(&e)));
+                        }
+
+                        context.reply(match resp_rx.await {
+                            Ok(r) => match r {
+                                Ok(status) => Ok(status),
+                                Err(e) => Err(dbus::MethodErr::failed(&e)),
+                            },
+                            Err(e) => Err(dbus::MethodErr::failed(&e)),
+                        })
+                    }
+                },
+            );
         }
+    })
+}
+
+async fn command_processor(
+    mut command_rx: mpsc::Receiver<Command>,
+    mut register: RegisterCallback,
+    mut get_ptp_status: Option<PtpStatusCallback>,
+    shutdown: Shutdown,
+    connection: Arc<SyncConnection>,
+    resource_handle: Arc<tokio::task::JoinHandle<()>>,
+) {
+    // delay token to delay shutdown until thread is finished
+    let Ok(_delay_token) = shutdown.delay_shutdown_token() else {
+                resource_handle.abort();
+                return;
+            };
+
+    while let Some(Some(cmd)) = shutdown.wrap_cancel(command_rx.recv()).await {
+        match cmd {
+            Command::Register {
+                app_name,
+                sender,
+                responder,
+            } => {
+                // It is important to verify the app name for making sure that
+                // the sender is actually allowed to register this app!
+                let response = match verify_app_name(&app_name, &sender, connection.clone()).await {
+                    Ok(()) => register(&app_name).await.map_err(|e| {
+                        // print here and forward, otherwise the error would only be sent back to the application
+                        eprintln!("{e:#}");
+                        e
+                    }),
+                    Err(e) => Err(e),
+                };
+
+                // Send back the response
+                let _ = responder.send(response);
+            }
+
+            Command::GetPtpStatus {
+                interface,
+                max_clock_delta_ns,
+                max_master_offset_ns,
+                responder,
+            } => {
+                if let Some(ptp_status_callback) = &mut get_ptp_status {
+                    let response = ptp_status_callback(
+                        &interface,
+                        Duration::nanoseconds(max_clock_delta_ns.try_into().unwrap_or(i64::MAX)),
+                        Duration::nanoseconds(max_master_offset_ns.try_into().unwrap_or(i64::MAX)),
+                    )
+                    .await;
+                    let _ = responder.send(response.and_then(|status| {
+                        Ok((
+                            status.issues.bits(),
+                            status
+                                .times
+                                .phc_rt
+                                .num_nanoseconds()
+                                .ok_or_else(|| anyhow!("PHC RT out of range"))?,
+                            status
+                                .times
+                                .phc_tai
+                                .num_nanoseconds()
+                                .ok_or_else(|| anyhow!("PHC TAI out of range"))?,
+                            status
+                                .kernel_tai_offset
+                                .num_seconds()
+                                .try_into()
+                                .context("Converting kernel TAI offset")?,
+                            status
+                                .port_state
+                                .to_u8()
+                                .ok_or_else(|| anyhow!("Invalid port state"))?,
+                            status
+                                .master_offset
+                                .num_nanoseconds()
+                                .ok_or_else(|| anyhow!("Master offset out of range"))?,
+                        ))
+                    }));
+                } else {
+                    let _ = responder.send(Err(anyhow!("No PTP status callback registered")));
+                }
+            }
+        }
+    }
+
+    shutdown.shutdown(); // make sure the program shuts down if the channel was closed due to an error, no-op for normal shutdown
+    resource_handle.abort(); // stop dbus_tokio resource handler
+}
+
+async fn verify_app_name(
+    app_name: &str,
+    sender: &str,
+    connection: Arc<SyncConnection>,
+) -> Result<()> {
+    let mut full_name = String::from(DBUS_APP_PREFIX);
+    full_name.push_str(app_name);
+
+    let owner = connection.get_owner(&full_name).await?;
+
+    if sender == owner {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Owner of D-Bus name does not match sender of registration message for {}",
+            app_name
+        ))
     }
 }
 
@@ -208,6 +343,8 @@ trait GetOwner {
 #[cfg(not(test))]
 impl GetOwner for SyncConnection {
     async fn get_owner(&self, full_name: &str) -> Result<String> {
+        use std::time::Duration;
+
         let proxy = Proxy::new(
             "org.freedesktop.DBus",
             "/",
@@ -224,6 +361,8 @@ impl GetOwner for SyncConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ptp;
+    use chrono::{Duration, NaiveDateTime};
     use dbus::channel::Token;
     use dbus::strings::BusName;
     use dbus::Message;
@@ -304,16 +443,41 @@ mod tests {
 
             let register_called = Arc::new(AtomicBool::new(false));
             let register_called_for_setup = register_called.clone();
-            dbus.setup(Box::new(move |_| {
-                register_called_for_setup.store(true, Ordering::Relaxed);
-                Box::pin(async move {
-                    Ok(controller::RegisterResponse {
-                        logical_interface: String::from(INTERFACE),
-                        priority: PRIORITY,
-                        token: TOKEN,
+            dbus.setup(
+                Box::new(move |_| {
+                    register_called_for_setup.store(true, Ordering::Relaxed);
+                    Box::pin(async move {
+                        Ok(controller::RegisterResponse {
+                            logical_interface: String::from(INTERFACE),
+                            priority: PRIORITY,
+                            token: TOKEN,
+                        })
                     })
-                })
-            }))
+                }),
+                Some(Box::new(move |_, _, _| {
+                    Box::pin(async move {
+                        Ok(ptp::PtpStatus {
+                            times: ptp::PtpTimes {
+                                rt: NaiveDateTime::from_timestamp_millis(0)
+                                    .ok_or_else(|| anyhow!("fail"))?,
+                                tai: NaiveDateTime::from_timestamp_millis(0)
+                                    .ok_or_else(|| anyhow!("fail"))?,
+                                ptp: NaiveDateTime::from_timestamp_millis(0)
+                                    .ok_or_else(|| anyhow!("fail"))?,
+                                lat_rt: Duration::seconds(0),
+                                lat_tai: Duration::seconds(0),
+                                lat_ptp: Duration::seconds(0),
+                                phc_rt: Duration::seconds(0),
+                                phc_tai: Duration::seconds(0),
+                            },
+                            issues: None.into(),
+                            port_state: ptp::PortStates::Faulty,
+                            master_offset: Duration::seconds(0),
+                            kernel_tai_offset: Duration::seconds(0),
+                        })
+                    })
+                })),
+            )
             .await?;
 
             dbus.shutdown.wait_shutdown_complete().await;
