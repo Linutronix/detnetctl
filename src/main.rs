@@ -169,9 +169,10 @@ async fn spawn_dbus_service(
 #[cfg(not(feature = "dbus"))]
 async fn spawn_dbus_service(
     _controller: Arc<Mutex<Controller>>,
-    mut _configuration: Box<dyn Configuration + Send>,
-    mut _queue_setup: Box<dyn QueueSetup + Send>,
-    mut _guard: Box<dyn Guard + Send>,
+    _configuration: Arc<Mutex<dyn Configuration + Send>>,
+    _queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+    _guard: Arc<Mutex<dyn Guard + Send>>,
+    _interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
 ) -> Result<()> {
     Err(feature_missing_error("dbus", "--app-name"))
 }

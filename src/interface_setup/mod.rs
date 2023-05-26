@@ -1,6 +1,6 @@
 //! Setup the physical and logical network interfaces
-//!
-//! ```no_run
+#![cfg_attr(not(feature = "netlink"), doc = "```ignore")]
+#![cfg_attr(feature = "netlink", doc = "```no_run")]
 //! use detnetctl::interface_setup::{InterfaceSetup, NetlinkSetup, LinkState};
 //!
 //! # tokio_test::block_on(async {

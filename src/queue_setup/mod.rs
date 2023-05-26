@@ -1,6 +1,6 @@
 //! Setup a TSN-capable NIC and qdiscs
-//!
-//! ```no_run
+#![cfg_attr(not(feature = "detd"), doc = "```ignore")]
+#![cfg_attr(feature = "detd", doc = "```no_run")]
 //! use detnetctl::queue_setup::{QueueSetup, DetdGateway};
 //! use detnetctl::configuration::AppConfig;
 //!

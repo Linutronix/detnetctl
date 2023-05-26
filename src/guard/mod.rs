@@ -1,6 +1,6 @@
 //! Installs filters to avoid interference between applications
-//!
-//! ```no_run
+#![cfg_attr(not(feature = "bpf"), doc = "```ignore")]
+#![cfg_attr(feature = "bpf", doc = "```no_run")]
 //! use detnetctl::guard::{Guard, BPFGuard};
 //! let mut guard = BPFGuard::new(false);
 //! guard.protect_priority("eth0", 5, 0x9e25b4d41b6c390b)?;

@@ -17,8 +17,8 @@
 //! ```
 //!
 //! With sysrepo configuration (for NETCONF integration):
-//!
-//! ```no_run
+#![cfg_attr(not(feature = "sysrepo"), doc = "```ignore")]
+#![cfg_attr(feature = "sysrepo", doc = "```no_run")]
 //! use detnetctl::configuration::{Configuration, SysrepoConfiguration};
 //! let mut sysrepo_config = SysrepoConfiguration::new()?;
 //! let config = sysrepo_config.get_app_config("app0");
