@@ -22,7 +22,8 @@ impl configuration::Configuration for YAMLConfiguration {
 }
 
 impl YAMLConfiguration {
-    /// Construct a new YAMLConfiguration
+    /// Construct a new `YAMLConfiguration`
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -40,6 +41,10 @@ impl YAMLConfiguration {
     /// yaml_config.read(File::open(filepath)?)?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the configuration could not be parsed.
     pub fn read<R: Read>(&mut self, reader: R) -> Result<()> {
         self.configs = serde_yaml::from_reader(reader)?;
         Ok(())
@@ -109,8 +114,8 @@ mod tests {
     #[test]
     fn test_get_app_config_happy_with_serialization() -> Result<()> {
         let app0 = configuration::AppConfig {
-            logical_interface: "eth0.1".to_string(),
-            physical_interface: "eth0".to_string(),
+            logical_interface: "eth0.1".to_owned(),
+            physical_interface: "eth0".to_owned(),
             period_ns: Some(1000 * 100),
             offset_ns: Some(0),
             size_bytes: Some(1000),
@@ -122,8 +127,8 @@ mod tests {
         };
 
         let app1 = configuration::AppConfig {
-            logical_interface: "eth1.2".to_string(),
-            physical_interface: "eth1".to_string(),
+            logical_interface: "eth1.2".to_owned(),
+            physical_interface: "eth1".to_owned(),
             period_ns: Some(1000 * 120),
             offset_ns: Some(10),
             size_bytes: Some(2000),
@@ -135,8 +140,8 @@ mod tests {
         };
 
         let mut configs = AppConfigurations::default();
-        configs.insert("app0".to_string(), app0.clone());
-        configs.insert("app1".to_string(), app1.clone());
+        configs.insert("app0".to_owned(), app0.clone());
+        configs.insert("app1".to_owned(), app1.clone());
 
         let yaml = serde_yaml::to_string(&configs)?;
 

@@ -74,8 +74,13 @@ pub struct Facade {
 
 impl Facade {
     /// Create a new facade
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to initialize the facade,
+    /// e.g. due to problems connecting to D-Bus.
     pub fn new(shutdown: Shutdown) -> Result<Self> {
-        Ok(Facade {
+        Ok(Self {
             dbus: dbus::DBus::new(shutdown)?,
         })
     }

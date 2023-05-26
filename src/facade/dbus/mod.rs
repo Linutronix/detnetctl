@@ -47,11 +47,11 @@ impl DBus {
         let resource_handle = tokio::spawn({
             shutdown.wrap_vital(async {
                 let err = resource.await;
-                eprintln!("Lost connection to D-Bus: {}", err);
+                eprintln!("Lost connection to D-Bus: {err}");
             })
         });
 
-        Ok(DBus {
+        Ok(Self {
             c,
             resource_handle: Arc::new(resource_handle),
             shutdown,
@@ -71,12 +71,9 @@ impl DBus {
         let manager_shutdown = self.shutdown.clone();
         tokio::spawn(async move {
             // delay token to delay shutdown until thread is finished
-            let _delay_token = match manager_shutdown.delay_shutdown_token() {
-                Ok(token) => token,
-                Err(_) => {
-                    resource_handle.abort();
-                    return;
-                }
+            let Ok(_delay_token) = manager_shutdown.delay_shutdown_token() else {
+                resource_handle.abort();
+                return;
             };
 
             while let Some(Some(cmd)) = manager_shutdown.wrap_cancel(rx.recv()).await {
@@ -91,7 +88,7 @@ impl DBus {
                 {
                     Ok(()) => register(&cmd.app_name).await.map_err(|e| {
                         // print here and forward, otherwise the error would only be sent back to the application
-                        eprintln!("{:#}", e);
+                        eprintln!("{e:#}");
                         e
                     }),
                     Err(e) => Err(e),
@@ -110,13 +107,15 @@ impl DBus {
         let cr_shutdown = self.shutdown.clone();
         cr.set_async_support(Some((
             self.c.clone(),
-            Box::new(move |x| match cr_shutdown.wrap_wait(x) {
-                Ok(future) => {
-                    tokio::spawn(future);
-                }
-                Err(_) => {
-                    eprintln!("Shutdown happened, D-Bus operation aborted");
-                }
+            Box::new(move |x| {
+                cr_shutdown.wrap_wait(x).map_or_else(
+                    |_| {
+                        eprintln!("Shutdown happened, D-Bus operation aborted");
+                    },
+                    |future| {
+                        tokio::spawn(future);
+                    },
+                );
             }),
         )));
 
@@ -129,13 +128,10 @@ impl DBus {
                     let tx_clone = tx.clone();
 
                     async move {
-                        let sender = match context.message().sender() {
-                            Some(sender) => sender,
-                            None => {
-                                return context.reply(Err(dbus::MethodErr::failed(&anyhow!(
-                                    "Can not determine D-Bus sender"
-                                ))));
-                            }
+                        let Some(sender) = context.message().sender() else {
+                            return context.reply(Err(dbus::MethodErr::failed(&anyhow!(
+                                "Can not determine D-Bus sender"
+                            ))));
                         };
 
                         let (resp_tx, resp_rx) = oneshot::channel();
@@ -276,7 +272,7 @@ mod tests {
                     dbus_names
                         .get(app_name)
                         .ok_or_else(|| anyhow!("app_name not in dbus_names"))
-                        .map(|x| x.clone())
+                        .map(std::clone::Clone::clone)
                 });
 
             c.expect_start_receive()
@@ -292,8 +288,7 @@ mod tests {
                     message.set_sender(Some(BusName::from(SENDER)));
                     message.set_serial(123);
 
-                    let c = SyncConnection::default();
-                    receive_callback(message, &c);
+                    receive_callback(message, &SyncConnection::default());
                     Token(5)
                 });
 
@@ -319,14 +314,15 @@ mod tests {
 
             dbus.shutdown.wait_shutdown_complete().await;
 
-            let response_guard = catched_response.lock().unwrap();
-            let response = response_guard
+            let response = catched_response
+                .lock()
+                .unwrap()
                 .as_ref()
                 .unwrap()
                 .duplicate()
                 .map_err(|s| anyhow!(s))?;
 
-            Ok(DBusTester {
+            Ok(Self {
                 msg: response,
                 register_called: register_called.load(Ordering::Relaxed),
             })

@@ -4,10 +4,10 @@
 //! use detnetctl::interface_setup::{InterfaceSetup, NetlinkSetup, LinkState};
 //!
 //! # tokio_test::block_on(async {
-//! let mut interface_setup = NetlinkSetup::new()?;
-//! interface_setup.set_link_state(LinkState::DOWN, "eth0").await?;
+//! let mut interface_setup = NetlinkSetup::new();
+//! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
 //! interface_setup.add_address("192.168.12.3".parse()?, 32, "eth0").await?;
-//! interface_setup.set_link_state(LinkState::DOWN, "eth0").await?;
+//! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
 //! # Ok::<(), anyhow::Error>(())
@@ -23,10 +23,10 @@ use mockall::automock;
 /// State of a network link
 pub enum LinkState {
     /// Link is active
-    UP,
+    Up,
 
     /// Link is inactive
-    DOWN,
+    Down,
 }
 
 /// Defines how to setup the link
@@ -53,15 +53,16 @@ mod netlink;
 #[cfg(feature = "netlink")]
 pub use netlink::NetlinkSetup;
 
-/// A link setup doing nothing, but still providing the InterfaceSetup trait
+/// A link setup doing nothing, but still providing the `InterfaceSetup` trait
 ///
 /// Useful for testing purposes or if you only want to use other features
 #[derive(Default)]
 pub struct DummyInterfaceSetup;
 
 impl DummyInterfaceSetup {
-    /// Create new DummyInterfaceSetup
-    pub fn new() -> Self {
+    /// Create new `DummyInterfaceSetup`
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }

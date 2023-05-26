@@ -4,19 +4,19 @@
 //! to perform a complete registration of an application.
 //!
 //! ```
-//! use detnetctl::controller::{Registration, Controller};
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
-//! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
-//! use detnetctl::guard::{Guard, DummyGuard};
+//! use detnetctl::controller::{Controller, Registration};
+//! use detnetctl::guard::{DummyGuard, Guard};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
+//! use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
 //!
 //! # #[path = "../configuration/doctest.rs"]
 //! # mod doctest;
 //! # let tmpfile = doctest::generate_example_yaml();
 //! # let filepath = tmpfile.path();
+//! use futures::lock::Mutex;
 //! use std::fs::File;
 //! use std::sync::Arc;
-//! use futures::lock::Mutex;
 //!
 //! # tokio_test::block_on(async {
 //! let controller = Controller::new();
@@ -25,7 +25,9 @@
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
 //! let mut guard = Arc::new(Mutex::new(DummyGuard::new()));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup::new()));
-//! let response = controller.register("app0", configuration, queue_setup, guard, interface_setup).await?;
+//! let response = controller
+//!     .register("app0", configuration, queue_setup, guard, interface_setup)
+//!     .await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
 //! # Ok::<(), anyhow::Error>(())
@@ -64,7 +66,6 @@ pub trait Registration {
     /// 3. Set up the NIC according to the configuration
     /// 4. Set up the guard to prevent interfering messages from other applications
     /// 5. Return the appropriate socket settings for the application
-    ///
     async fn register(
         &self,
         app_name: &str,
@@ -81,7 +82,8 @@ pub struct Controller;
 
 impl Controller {
     /// Create a new controller
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -97,7 +99,7 @@ impl Registration for Controller {
         interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<RegisterResponse> {
         let start = Instant::now();
-        println!("Request to register {}", app_name);
+        println!("Request to register {app_name}");
 
         // Generate token
         let token = generate_token()?;
@@ -108,7 +110,7 @@ impl Registration for Controller {
             .await
             .get_app_config(app_name)
             .context("Fetching the configuration failed")?;
-        println!("  Fetched from configuration module: {:#?}", app_config);
+        println!("  Fetched from configuration module: {app_config:#?}");
 
         let locked_interface_setup = interface_setup.lock().await;
 
@@ -161,7 +163,7 @@ async fn setup(
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<SocketConfig> {
     interface_setup
-        .set_link_state(LinkState::DOWN, &app_config.physical_interface)
+        .set_link_state(LinkState::Down, &app_config.physical_interface)
         .await
         .with_context(|| {
             format!(
@@ -177,7 +179,7 @@ async fn setup(
         .await
         .apply_config(app_config)
         .context("Setting up the queue failed")?;
-    println!("  Result of queue setup: {:#?}", socket_config);
+    println!("  Result of queue setup: {socket_config:#?}");
 
     // Setup BPF Hooks
     // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
@@ -235,7 +237,7 @@ async fn set_interfaces_up(
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
     interface_setup
-        .set_link_state(LinkState::UP, &app_config.physical_interface)
+        .set_link_state(LinkState::Up, &app_config.physical_interface)
         .await
         .with_context(|| {
             format!(
@@ -246,7 +248,7 @@ async fn set_interfaces_up(
     println!("  Interface {} up", app_config.physical_interface);
 
     interface_setup
-        .set_link_state(LinkState::UP, &app_config.logical_interface)
+        .set_link_state(LinkState::Up, &app_config.logical_interface)
         .await
         .with_context(|| {
             format!(
@@ -281,7 +283,7 @@ mod tests {
         let mut configuration = MockConfiguration::new();
         configuration.expect_get_app_config().returning(move |_| {
             Ok(AppConfig {
-                logical_interface: format!("{}.{}", interface, vid),
+                logical_interface: format!("{interface}.{vid}"),
                 physical_interface: interface.clone(),
                 period_ns: Some(0),
                 offset_ns: Some(0),
@@ -381,7 +383,7 @@ mod tests {
         let response = controller
             .register("app123", configuration, queue_setup, guard, interface_setup)
             .await?;
-        assert_eq!(response.logical_interface, format!("{}.{}", interface, vid));
+        assert_eq!(response.logical_interface, format!("{interface}.{vid}"));
         assert_eq!(response.priority, priority);
         assert!(response.token > 10); // not GUARANTEED, but VERY unlikely to fail
         Ok(())

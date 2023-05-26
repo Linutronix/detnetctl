@@ -20,26 +20,25 @@ pub struct DetdGateway {
 }
 
 impl DetdGateway {
-    /// Create a new DetdGateway and connect to detd via UNIX socket
+    /// Create a new `DetdGateway` and connect to detd via UNIX socket
     ///
     /// # Arguments
     ///
     /// * `remote_socket_path` - Path to the detd socket,
-    ///                          /var/run/detd/detd_service.sock is used if None is provided
+    ///                          `/var/run/detd/detd_service.sock` is used if None is provided
     ///
     /// * `local_socket_path` - Path to the own socket,
     ///                         Uses an abstract socket if None is provided
-    ///
-    pub fn new(
-        remote_socket_path: Option<&Path>,
-        local_socket_path: Option<&Path>,
-    ) -> Result<Self> {
-        Ok(DetdGateway {
+    #[must_use]
+    pub fn new(remote_socket_path: Option<&Path>, local_socket_path: Option<&Path>) -> Self {
+        Self {
             remote_socket_path: remote_socket_path
-                .unwrap_or(Path::new(DETD_SOCK))
+                .unwrap_or_else(|| Path::new(DETD_SOCK))
                 .to_path_buf(),
-            local_socket_path: local_socket_path.unwrap_or(Path::new("")).to_path_buf(),
-        })
+            local_socket_path: local_socket_path
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf(),
+        }
     }
 }
 
@@ -57,25 +56,33 @@ impl QueueSetup for DetdGateway {
         let request = detdipc::StreamQosRequest {
             period: config
                 .period_ns
-                .ok_or(anyhow!("Period is required for detd!"))?,
+                .ok_or_else(|| anyhow!("Period is required for detd!"))?,
             size: config
                 .size_bytes
-                .ok_or(anyhow!("Size is required for detd!"))?,
+                .ok_or_else(|| anyhow!("Size is required for detd!"))?,
             interface: config.physical_interface.clone(),
             dmac: config
                 .destination_address
-                .ok_or(anyhow!("Destination address is required for detd!"))?
+                .ok_or_else(|| anyhow!("Destination address is required for detd!"))?
                 .to_hex_string(),
-            vid: u32::from(config.vid.ok_or(anyhow!("VLAN ID is required for detd!"))?),
-            pcp: u32::from(config.pcp.ok_or(anyhow!("PCP is required for detd!"))?),
+            vid: u32::from(
+                config
+                    .vid
+                    .ok_or_else(|| anyhow!("VLAN ID is required for detd!"))?,
+            ),
+            pcp: u32::from(
+                config
+                    .pcp
+                    .ok_or_else(|| anyhow!("PCP is required for detd!"))?,
+            ),
             txmin: config
                 .offset_ns
-                .ok_or(anyhow!("Offset is required for detd!"))?,
+                .ok_or_else(|| anyhow!("Offset is required for detd!"))?,
 
             // currently unused by detd (https://github.com/Avnu/detd/blob/e94346dfe9bd595f601ba02f27b12db79339bf88/detd/service.py#L228)
             txmax: config
                 .offset_ns
-                .ok_or(anyhow!("Offset is required for detd!"))?,
+                .ok_or_else(|| anyhow!("Offset is required for detd!"))?,
 
             // currently only false supported by detd (https://github.com/Avnu/detd/blob/e94346dfe9bd595f601ba02f27b12db79339bf88/detd/service.py#L301)
             setup_socket: false,
@@ -115,23 +122,20 @@ impl QueueSetup for DetdGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Error;
     use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use std::time::Duration;
 
     fn run_test(
-        app_config: configuration::AppConfig,
+        app_config: &configuration::AppConfig,
         mut response: Box<
             dyn FnMut(&detdipc::StreamQosRequest) -> detdipc::StreamQosResponse + Send,
         >,
     ) -> Result<SocketConfig> {
         let detd_socket_file = tempfile::Builder::new().make(|path| UnixDatagram::bind(path))?;
 
-        let gateway = tempfile::Builder::new().make(|path| {
-            DetdGateway::new(Some(detd_socket_file.path()), Some(path))
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, e))
-        })?;
+        let gateway = tempfile::Builder::new()
+            .make(|path| Ok(DetdGateway::new(Some(detd_socket_file.path()), Some(path))))?;
 
         let detddummy = thread::spawn(move || {
             let socket = &detd_socket_file.as_file();
@@ -140,11 +144,8 @@ mod tests {
                 .expect("set_read_timeout function failed");
 
             let mut buf = [0; 1024];
-            let (count, address) = match socket.recv_from(&mut buf) {
-                Ok(x) => x,
-                Err(_) => {
-                    return;
-                }
+            let Ok((count, address)) = socket.recv_from(&mut buf) else {
+                return;
             };
 
             let request = detdipc::StreamQosRequest::decode(&buf[..count]).unwrap();
@@ -157,11 +158,11 @@ mod tests {
                 .unwrap();
         });
 
-        let result = gateway.as_file().apply_config(&app_config);
+        let result = gateway.as_file().apply_config(app_config);
 
         let _ = detddummy.join();
 
-        Ok(result?)
+        result
     }
 
     fn generate_app_config(offset: u32) -> configuration::AppConfig {
@@ -182,11 +183,11 @@ mod tests {
     #[test]
     fn test_happy() -> Result<()> {
         let socket_config = run_test(
-            generate_app_config(0),
+            &generate_app_config(0),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
-                vlan_interface: request.interface.to_owned() + "." + &request.vid.to_string(),
+                vlan_interface: request.interface.clone() + "." + &request.vid.to_string(),
             }),
         )?;
 
@@ -200,11 +201,11 @@ mod tests {
     #[should_panic(expected = "Not possible to setup if offset > period!")]
     fn test_invalid_offset() {
         run_test(
-            generate_app_config(1000 * 1000),
+            &generate_app_config(1000 * 1000),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
-                vlan_interface: request.interface.to_owned() + "." + &request.vid.to_string(),
+                vlan_interface: request.interface.clone() + "." + &request.vid.to_string(),
             }),
         )
         .unwrap();
@@ -214,11 +215,11 @@ mod tests {
     #[should_panic(expected = "Setup of NIC not possible!")]
     fn test_response_not_ok() {
         run_test(
-            generate_app_config(0),
+            &generate_app_config(0),
             Box::new(|request| detdipc::StreamQosResponse {
                 ok: false,
                 socket_priority: 5,
-                vlan_interface: request.interface.to_owned() + "." + &request.vid.to_string(),
+                vlan_interface: request.interface.clone() + "." + &request.vid.to_string(),
             }),
         )
         .unwrap();
@@ -230,11 +231,11 @@ mod tests {
     )]
     fn test_not_matching_vlan_interface() {
         run_test(
-            generate_app_config(0),
+            &generate_app_config(0),
             Box::new(|_| detdipc::StreamQosResponse {
                 ok: true,
                 socket_priority: 5,
-                vlan_interface: "abc0".to_string(),
+                vlan_interface: "abc0".to_owned(),
             }),
         )
         .unwrap();

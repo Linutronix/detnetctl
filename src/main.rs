@@ -15,6 +15,7 @@
         clippy::unwrap_in_result,
     )
 )]
+#![allow(clippy::unnecessary_wraps)] // wraps are necessary for certain combinations of feature flags
 extern crate detnetctl;
 
 use anyhow::{anyhow, Error, Result};
@@ -91,14 +92,16 @@ pub async fn main() -> Result<()> {
         None => new_detd_gateway()?,
     };
 
-    let guard = match cli.no_guard {
-        true => Arc::new(Mutex::new(DummyGuard::new())),
-        false => new_bpf_guard(cli.bpf_debug_output)?,
+    let guard = if cli.no_guard {
+        Arc::new(Mutex::new(DummyGuard::new()))
+    } else {
+        new_bpf_guard(cli.bpf_debug_output)?
     };
 
-    let interface_setup = match cli.no_interface_setup {
-        true => Arc::new(Mutex::new(DummyInterfaceSetup::new())),
-        false => new_netinterface_setup()?,
+    let interface_setup = if cli.no_interface_setup {
+        Arc::new(Mutex::new(DummyInterfaceSetup::new()))
+    } else {
+        new_netinterface_setup()?
     };
 
     let controller = Controller::new();
@@ -114,7 +117,7 @@ pub async fn main() -> Result<()> {
                     interface_setup,
                 )
                 .await?;
-            println!("Final result: {:#?}", response);
+            println!("Final result: {response:#?}");
         }
         None => {
             spawn_dbus_service(
@@ -124,7 +127,7 @@ pub async fn main() -> Result<()> {
                 guard,
                 interface_setup,
             )
-            .await?
+            .await?;
         }
     }
 
@@ -133,7 +136,7 @@ pub async fn main() -> Result<()> {
 
 #[allow(dead_code)] // will not be used if ALL features are enabled
 fn feature_missing_error(feature: &str, alternative: &str) -> Error {
-    anyhow!("{} features is not built in!\nYou can still use {} if appropriate for your use case or rebuild with the feature enabled!", feature, alternative)
+    anyhow!("{} feature is not built in!\nYou can still use {} if appropriate for your use case or rebuild with the feature enabled!", feature, alternative)
 }
 
 #[cfg(feature = "dbus")]
@@ -181,12 +184,11 @@ async fn spawn_dbus_service(
 
     // Wait for shutdown
     match shutdown.wrap_cancel(signal::ctrl_c()).await {
-        Some(Ok(())) => {}
+        Some(Ok(())) | None => {}
         Some(Err(err)) => {
-            eprintln!("listening to shutdown signal failed: {}", err);
+            eprintln!("listening to shutdown signal failed: {err}");
             // we also shut down in case of error
         }
-        None => {}
     }
 
     shutdown.shutdown();
@@ -196,6 +198,7 @@ async fn spawn_dbus_service(
 }
 
 #[cfg(not(feature = "dbus"))]
+#[allow(clippy::unused_async)]
 async fn spawn_dbus_service(
     _controller: Arc<Mutex<Controller>>,
     _configuration: Arc<Mutex<dyn Configuration + Send>>,
@@ -234,7 +237,7 @@ fn new_sysrepo_config() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
 use detnetctl::queue_setup::DetdGateway;
 #[cfg(feature = "detd")]
 fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
-    Ok(Arc::new(Mutex::new(DetdGateway::new(None, None)?)))
+    Ok(Arc::new(Mutex::new(DetdGateway::new(None, None))))
 }
 
 #[cfg(not(feature = "detd"))]
@@ -246,7 +249,7 @@ fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
 use detnetctl::interface_setup::NetlinkSetup;
 #[cfg(feature = "netlink")]
 fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send>>> {
-    Ok(Arc::new(Mutex::new(NetlinkSetup::new()?)))
+    Ok(Arc::new(Mutex::new(NetlinkSetup::new())))
 }
 
 #[cfg(not(feature = "netlink"))]

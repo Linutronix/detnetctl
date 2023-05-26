@@ -18,6 +18,12 @@ pub trait Guard {
     ///
     /// Messages for sockets sending to the same interface
     /// with the same priority will be dropped.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to install a guard,
+    /// e.g. if the interface does not exist or there was a conflict
+    /// creating the eBPF hook.
     fn protect_priority(&mut self, interface: &str, priority: u8, token: u64) -> Result<()>;
 }
 
@@ -28,15 +34,16 @@ pub use bpf::BPFGuard;
 
 /// A guard doing nothing, but still providing the Guard trait
 ///
-/// Useful for testing purposes (e.g. on kernels without the SO_TOKEN feature)
+/// Useful for testing purposes (e.g. on kernels without the `SO_TOKEN` feature)
 /// or if you only want to use other features without actually installing eBPFs.
 #[derive(Default)]
 pub struct DummyGuard;
 
 impl DummyGuard {
-    /// Create a new DummyGuard
+    /// Create a new `DummyGuard`
+    #[must_use]
     pub fn new() -> Self {
-        DummyGuard::default()
+        Self::default()
     }
 }
 

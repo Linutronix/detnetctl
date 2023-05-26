@@ -15,12 +15,11 @@ use crate::configuration;
 use eui48::MacAddress;
 use ipnet::IpNet;
 use std::net::IpAddr;
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use yang2::data::{Data, DataTree};
 
 mod helper;
-use crate::configuration::sysrepo::helper::*;
+use crate::configuration::sysrepo::helper::GetValueForXPath;
 
 /// Reads configuration from sysrepo
 pub struct SysrepoConfiguration {
@@ -33,7 +32,10 @@ struct SysrepoContext {
     libyang_ctx: Arc<YangContext>,
 }
 
-unsafe impl Send for SysrepoConfiguration {} // should be taken care of by sysrepo_rs in the future
+#[allow(clippy::non_send_fields_in_send_ty)]
+// SAFETY:
+// Safety should be taken care of by sysrepo_rs in the future!
+unsafe impl Send for SysrepoConfiguration {}
 
 struct AppFlow {
     interface: String,
@@ -117,22 +119,25 @@ impl configuration::Configuration for SysrepoConfiguration {
 }
 
 impl SysrepoConfiguration {
-    /// Create a new SysrepoConfiguration and connect to sysrepo
+    /// Create a new `SysrepoConfiguration` and connect to `sysrepo`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if no proper connection can be set up to Sysrepo,
+    /// usually because the service is not running.
     pub fn new() -> Result<Self> {
         let ds = sysrepo::SrDatastore::Running;
 
         sysrepo::log_stderr(sysrepo::SrLogLevel::Debug);
 
         // Connect to sysrepo
-        let mut sr = match SrConn::new(0) {
-            Ok(sr) => sr,
-            Err(_) => return Err(anyhow!("Could not connect to sysrepo")),
+        let Ok(mut sr) = SrConn::new(0) else {
+            return Err(anyhow!("Could not connect to sysrepo"))
         };
 
         // Start session
-        let sess = match sr.start_session(ds) {
-            Ok(sess) => sess,
-            Err(_) => return Err(anyhow!("Could not start sysrepo session")),
+        let Ok(sess) = sr.start_session(ds) else {
+            return Err(anyhow!("Could not start sysrepo session"));
         };
         let unowned_sess = sess.clone();
 
@@ -141,7 +146,7 @@ impl SysrepoConfiguration {
             YangContext::new(ContextFlags::NO_YANGLIBRARY).context("Failed to create context")?;
         let libyang_ctx = Arc::new(libyang_ctx);
 
-        Ok(SysrepoConfiguration {
+        Ok(Self {
             ctx: Arc::new(Mutex::new(SysrepoContext {
                 _sr: sr,
                 sess: unowned_sess,
@@ -156,14 +161,11 @@ impl SysrepoConfiguration {
             .ctx
             .lock()
             .or(Err(anyhow!("Poisoned Sysrepo Context")))?;
-        let context = lock.deref_mut();
-        match context
+        let context = &mut *lock;
+        context
             .sess
             .get_data(&context.libyang_ctx, XPATH_DETNET_AND_TSN, None, None, 0)
-        {
-            Ok(values) => Ok(values),
-            Err(_) => Err(anyhow!("Can not get sysrepo data")),
-        }
+            .map_err(|e| anyhow!("Can not get sysrepo data: {e}"))
     }
 }
 
@@ -226,10 +228,10 @@ fn get_tsn_interface_config(tree: &DataTree, interface_name: &str) -> Result<TSN
 
         if name == interface_name {
             const DSTADDRPATH: &str = "config-list/ieee802-mac-addresses/destination-mac-address";
-            let destination_address_string: String =
-                interface_config.get_value_for_xpath(DSTADDRPATH)?;
             const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
             const PCPPATH: &str = "config-list/ieee802-vlan-tag/priority-code-point";
+            let destination_address_string: String =
+                interface_config.get_value_for_xpath(DSTADDRPATH)?;
             return Ok(TSNInterfaceConfig {
                 offset_ns: interface_config.get_value_for_xpath("config-list/time-aware-offset")?,
                 destination_address: destination_address_string.parse()?,
@@ -249,7 +251,7 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<VLANIn
 
         if name == interface_name {
             return Ok(VLANInterface {
-                name: interface_name.to_string(),
+                name: interface_name.to_owned(),
                 physical_interface: interface.get_value_for_xpath("parent-interface")?,
             });
         }
@@ -327,9 +329,9 @@ mod tests {
         assert_eq!(
             config,
             AppConfig {
-                logical_interface: format!("{}.{}", interface, vid),
+                logical_interface: format!("{interface}.{vid}"),
                 physical_interface: interface,
-                period_ns: Some(2000000),
+                period_ns: Some(2_000_000),
                 offset_ns: Some(0),
                 size_bytes: Some(15000),
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
@@ -353,9 +355,9 @@ mod tests {
         assert_eq!(
             config,
             AppConfig {
-                logical_interface: format!("{}.{}", interface, vid),
+                logical_interface: format!("{interface}.{vid}"),
                 physical_interface: interface,
-                period_ns: Some(2000000),
+                period_ns: Some(2_000_000),
                 offset_ns: Some(0),
                 size_bytes: Some(15000),
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),

@@ -1,0 +1,2 @@
+doc-valid-idents = ["DetNet", "eBPF", "eBPFs", ".."]
+avoid-breaking-exported-api = false

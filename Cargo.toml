@@ -9,10 +9,10 @@ authors = ["Florian Kauer <florian.kauer@linutronix.de>"]
 default = ["dbus", "bpf", "detd", "sysrepo", "netlink"]
 dbus = ["dep:dbus", "dep:dbus-crossroads", "dep:dbus-tokio", "dep:async-shutdown"]
 bpf = ["dep:libbpf-rs", "dep:libbpf-cargo", "dep:log", "dep:nix"]
+libbpf_with_sotoken = []
 detd = ["dep:bytes", "dep:prost"]
 sysrepo = ["dep:sysrepo", "dep:yang2", "dep:ipnet"]
 netlink = ["dep:rtnetlink","dep:ethtool","dep:netlink-packet-route"]
-libbpf_with_sotoken = []
 
 [dependencies]
 anyhow = "1.0"

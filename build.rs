@@ -35,7 +35,7 @@ fn build_bpf() {
 }
 
 #[cfg(not(feature = "bpf"))]
-fn build_bpf() {}
+const fn build_bpf() {}
 
 #[cfg(feature = "detd")]
 fn build_detd() -> Result<()> {
@@ -45,6 +45,7 @@ fn build_detd() -> Result<()> {
 }
 
 #[cfg(not(feature = "detd"))]
-fn build_detd() -> Result<()> {
+#[allow(clippy::unnecessary_wraps)]
+const fn build_detd() -> Result<()> {
     Ok(())
 }

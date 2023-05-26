@@ -1,3 +1,4 @@
+#![allow(clippy::pedantic, clippy::nursery)]
 use anyhow::Result;
 use libbpf_rs::MapFlags;
 use libbpf_rs::TcAttachPoint;
@@ -55,13 +56,11 @@ mock! {
     }
 }
 
-pub struct MockTcHookBuilder {
-    // not with mock! since it does not properly support "-> &mut Self"
-}
+pub struct MockTcHookBuilder; // not with mock! since it does not properly support "-> &mut Self"
 
 impl MockTcHookBuilder {
     pub fn new() -> Self {
-        MockTcHookBuilder {}
+        Self {}
     }
 
     pub fn fd(&mut self, _fd: i32) -> &mut Self {

@@ -3,10 +3,7 @@ use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
 use std::collections::HashMap;
 
 #[cfg(not(test))]
-#[allow(
-    clippy::unused_self,
-    clippy::unwrap_used
-)]
+#[allow(clippy::pedantic, clippy::nursery, clippy::restriction)] // this is generated code
 mod network_guard {
     include!(concat!(env!("OUT_DIR"), "/network_guard.skel.rs"));
 }
@@ -45,14 +42,13 @@ pub struct BPFGuard<'a> {
 
 impl<'a> Guard for BPFGuard<'a> {
     fn protect_priority(&mut self, interface: &str, priority: u8, token: u64) -> Result<()> {
-        let interf = match self.interfaces.get_mut(interface) {
-            Some(i) => i,
-            None => {
-                self.attach_interface(interface)?;
-                self.interfaces
-                    .get_mut(interface)
-                    .ok_or_else(|| anyhow!("Interface missing even after attach"))?
-            }
+        let interf = if let Some(existing_interface) = self.interfaces.get_mut(interface) {
+            existing_interface
+        } else {
+            self.attach_interface(interface)?;
+            self.interfaces
+                .get_mut(interface)
+                .ok_or_else(|| anyhow!("Interface missing even after attach"))?
         };
 
         interf.protect_priority(priority, token)
@@ -60,7 +56,7 @@ impl<'a> Guard for BPFGuard<'a> {
 }
 
 impl<'a> BPFGuard<'a> {
-    /// Create a new BPFGuard
+    /// Create a new `BPFGuard`
     pub fn new(debug_output: bool) -> Self {
         set_print(Some((PrintLevel::Debug, print_to_log)));
         BPFGuard {
@@ -125,6 +121,7 @@ impl<'a> BPFInterface<'a> {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // interface defined by libbpf-rs
 fn print_to_log(level: PrintLevel, msg: String) {
     match level {
         PrintLevel::Debug => log::debug!("{}", msg),
@@ -145,7 +142,7 @@ mod tests {
 
     const INTERFACE: &str = "eth12";
     const PRIORITY: u8 = 6;
-    const TOKEN: u64 = 0x9876123412341298;
+    const TOKEN: u64 = 0x9876_1234_1234_1298;
 
     fn generate_skel_builder() -> NetworkGuardSkelBuilder {
         let mut builder = NetworkGuardSkelBuilder::default();
@@ -172,8 +169,8 @@ mod tests {
 
     fn generate_skel<'a>() -> NetworkGuardSkel<'a> {
         let mut skel = NetworkGuardSkel::default();
-        skel.expect_progs().times(1).returning(|| generate_progs());
-        skel.expect_maps_mut().returning(|| generate_maps_mut());
+        skel.expect_progs().times(1).returning(generate_progs);
+        skel.expect_maps_mut().returning(generate_maps_mut);
         skel
     }
 
@@ -182,7 +179,7 @@ mod tests {
         progs
             .expect_tc_egress()
             .times(1)
-            .returning(|| generate_program());
+            .returning(generate_program);
         progs
     }
 

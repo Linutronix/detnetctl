@@ -33,7 +33,7 @@ use std::net::IpAddr;
 use mockall::automock;
 
 /// Contains the configuration for a TSN/DetNet application
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
     pub logical_interface: String,
@@ -80,14 +80,12 @@ mod serialize_mac_address {
     use eui48::MacAddress;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn serialize<S>(addr: &Option<MacAddress>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let s = match addr {
-            Some(a) => a.to_hex_string(),
-            None => "".to_string(),
-        };
+        let s = addr.map_or_else(String::new, |a| a.to_hex_string());
         serializer.serialize_str(&s)
     }
 
@@ -96,11 +94,12 @@ mod serialize_mac_address {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        match s.is_empty() {
-            false => MacAddress::parse_str(&s)
+        if s.is_empty() {
+            Ok(None)
+        } else {
+            MacAddress::parse_str(&s)
                 .map(Some)
-                .map_err(serde::de::Error::custom),
-            true => Ok(None),
+                .map_err(serde::de::Error::custom)
         }
     }
 }
@@ -108,7 +107,12 @@ mod serialize_mac_address {
 /// Defines how to request the configuration
 #[cfg_attr(test, automock)]
 pub trait Configuration {
-    /// Get the configuration for a given app_name
+    /// Get the configuration for a given `app_name`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if no configuration can be found for the given `app_name`
+    /// or there is general problem reading the configuration.
     fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig>;
 }
 
