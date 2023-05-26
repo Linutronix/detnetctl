@@ -1,7 +1,7 @@
 ///! Helpers for accessing sysrepo
 ///!
 ///! These might be later integrated in the sysrepo-rs crate itself.
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use yang2::data::{Data, DataNodeRef};
 use yang2::schema::DataValue;
 
@@ -55,7 +55,7 @@ impl GetValueForXPath for DataNodeRef<'_> {
     fn get_value_for_xpath<T: FromDataValue>(&self, xpath: &str) -> Result<T> {
         let mut elements = self.find_xpath(xpath)?;
         let element = elements.next().ok_or(anyhow!("{} missing", xpath))?;
-        assert!(elements.next().is_none());
+        ensure!(elements.next().is_none(), "expecting only one element");
         let value = element.value().ok_or(anyhow!("{} has no value", xpath))?;
         T::try_from_data_value(value)
     }

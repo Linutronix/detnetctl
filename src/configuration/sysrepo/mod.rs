@@ -1,5 +1,5 @@
 //! Provides sysrepo-based network configuration (for NETCONF integration)
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 #[cfg(not(test))]
 use {sysrepo::SrConn, sysrepo::SrData, sysrepo::SrSession};
@@ -9,7 +9,7 @@ mod mocks;
 #[cfg(test)]
 use {mocks::MockSrConn as SrConn, mocks::MockSrData as SrData, mocks::MockSrSession as SrSession};
 
-use yang2::context::{Context, ContextFlags};
+use yang2::context::{Context as YangContext, ContextFlags};
 
 use crate::configuration;
 use eui48::MacAddress;
@@ -30,7 +30,7 @@ pub struct SysrepoConfiguration {
 struct SysrepoContext {
     _sr: SrConn, // never used, but referenced by sess
     sess: SrSession,
-    libyang_ctx: Arc<Context>,
+    libyang_ctx: Arc<YangContext>,
 }
 
 unsafe impl Send for SysrepoConfiguration {} // should be taken care of by sysrepo_rs in the future
@@ -138,7 +138,7 @@ impl SysrepoConfiguration {
 
         // Setup libyang context
         let libyang_ctx =
-            Context::new(ContextFlags::NO_YANGLIBRARY).expect("Failed to create context");
+            YangContext::new(ContextFlags::NO_YANGLIBRARY).context("Failed to create context")?;
         let libyang_ctx = Arc::new(libyang_ctx);
 
         Ok(SysrepoConfiguration {
@@ -209,7 +209,9 @@ fn get_traffic_profile(tree: &DataTree, traffic_profile_name: &str) -> Result<Tr
                 period_ns: profile.get_value_for_xpath("traffic-spec/interval")?,
 
                 // TODO is that sufficient or do we need to incorporate inter-frame spacing, headers etc.?
-                size_bytes: max_pkts_per_interval * max_payload_size,
+                size_bytes: max_pkts_per_interval
+                    .checked_mul(max_payload_size)
+                    .ok_or_else(|| anyhow!("overflow of slot size"))?,
             });
         }
     }
@@ -268,7 +270,7 @@ mod tests {
         let sr = SrConn::default();
         let mut sess = SrSession::default();
         let mut libyang_ctx =
-            Context::new(ContextFlags::NO_YANGLIBRARY).expect("Failed to create context");
+            YangContext::new(ContextFlags::NO_YANGLIBRARY).expect("Failed to create context");
         libyang_ctx
             .set_searchdir("./config/yang")
             .expect("Failed to set YANG search directory");

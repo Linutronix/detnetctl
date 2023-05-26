@@ -90,7 +90,10 @@ impl QueueSetup for DetdGateway {
         let mut buf = [0; 1024];
         let count = socket.recv(&mut buf)?;
 
-        let response = detdipc::StreamQosResponse::decode(&buf[..count])?;
+        let response = detdipc::StreamQosResponse::decode(
+            buf.get(..count)
+                .ok_or_else(|| anyhow!("buffer too small"))?,
+        )?;
 
         if !response.ok {
             return Err(anyhow!("Setup of NIC not possible!"));
@@ -104,7 +107,7 @@ impl QueueSetup for DetdGateway {
 
         Ok(SocketConfig {
             logical_interface: response.vlan_interface,
-            priority: response.socket_priority as u8,
+            priority: u8::try_from(response.socket_priority)?,
         })
     }
 }

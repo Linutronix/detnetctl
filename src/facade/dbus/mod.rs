@@ -146,7 +146,9 @@ impl DBus {
                             responder: resp_tx,
                         };
 
-                        tx_clone.send(cmd).await.unwrap();
+                        if let Err(e) = tx_clone.send(cmd).await {
+                            return context.reply(Err(dbus::MethodErr::failed(&e)));
+                        }
 
                         let response = resp_rx.await;
                         context.reply(match response {
@@ -166,7 +168,9 @@ impl DBus {
         self.c.start_receive(
             dbus::message::MatchRule::new_method_call(),
             Box::new(move |msg, conn| {
-                cr.handle_message(msg, conn).unwrap();
+                if cr.handle_message(msg, conn).is_err() {
+                    eprintln!("Invalid message can not be processed");
+                }
                 true
             }),
         );

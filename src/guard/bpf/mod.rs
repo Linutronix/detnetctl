@@ -1,9 +1,12 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
 use std::collections::HashMap;
 
 #[cfg(not(test))]
-#[allow(clippy::unused_self)]
+#[allow(
+    clippy::unused_self,
+    clippy::unwrap_used
+)]
 mod network_guard {
     include!(concat!(env!("OUT_DIR"), "/network_guard.skel.rs"));
 }
@@ -46,7 +49,9 @@ impl<'a> Guard for BPFGuard<'a> {
             Some(i) => i,
             None => {
                 self.attach_interface(interface)?;
-                self.interfaces.get_mut(interface).unwrap()
+                self.interfaces
+                    .get_mut(interface)
+                    .ok_or_else(|| anyhow!("Interface missing even after attach"))?
             }
         };
 
@@ -61,7 +66,9 @@ impl<'a> BPFGuard<'a> {
         BPFGuard {
             interfaces: HashMap::default(),
             generate_skel: Box::new(NetworkGuardSkelBuilder::default),
-            nametoindex: Box::new(|interface| Ok(nix::net::if_::if_nametoindex(interface)? as i32)),
+            nametoindex: Box::new(|interface| {
+                Ok(i32::try_from(nix::net::if_::if_nametoindex(interface)?)?)
+            }),
             debug_output,
         }
     }

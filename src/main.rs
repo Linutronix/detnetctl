@@ -1,3 +1,20 @@
+// Main executable of detnetctl
+// we do not want to panic or exit, see explanation in main()
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        clippy::expect_used,
+        clippy::exit,
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        clippy::modulo_arithmetic, // % 0 panics - use checked_rem
+        clippy::integer_division,  // / 0 panics - use checked_div
+        clippy::unreachable,
+        clippy::unwrap_in_result,
+    )
+)]
 extern crate detnetctl;
 
 use anyhow::{anyhow, Error, Result};
@@ -43,6 +60,18 @@ struct Cli {
 }
 
 #[tokio::main(flavor = "current_thread")]
+/// Main function of `detnetctl`
+///
+/// # Errors
+/// Will return `Err` if any error occurs that can not be handled.
+/// Usually this should only happen during initialization, but
+/// not when errors occur handling a certain request. In that case,
+/// the error is printed and returned to the caller, but the program
+/// does not crash to stay responsive and in a consistent state.
+/// For the same reason, panic! is disencouraged in this codebase,
+/// but still stopping of the execution in rare cases can not be
+/// excluded (e.g. due to external crates). Therefore, make sure
+/// a proper restart is configured (e.g. `Restart=` for `systemd`).
 pub async fn main() -> Result<()> {
     env_logger::init();
 
