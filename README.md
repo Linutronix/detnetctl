@@ -140,6 +140,7 @@ cargo build --no-default-features --features dbus
 ```
 6. Build the example application
 ```console
+sudo apt install libxdp-dev
 SETCAPS=1 make -C examples
 ```
 The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, so you might get a password prompt.
@@ -173,6 +174,11 @@ Install an eBPF at tc egress that after an application has registered, only that
 This requires the support of the SO_TOKEN socket option. You can skip this feature if you do not have a matching kernel available.
 
 ### Build
+1. Install the build dependencies for eBPF applications, i.e.
+```console
+sudo apt install libelf-dev clang
+```
+2. Build detnetctl
 ```console
 cargo build --no-default-features --features dbus,bpf
 ```
@@ -226,7 +232,11 @@ This requires a at least one network card supported by [detd](https://github.com
 ### Build
 
 1. [Install and run detd](https://github.com/Avnu/detd)
-2. Build detnetctl
+2. Install build dependencies
+```console
+sudo apt install protobuf-compiler
+```
+3. Build detnetctl
 ```console
 cargo build --no-default-features --features dbus,bpf,netlink,detd
 ```
