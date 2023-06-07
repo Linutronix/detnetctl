@@ -3,6 +3,63 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 //! Facade (currently via D-Bus) enabling secure access from application side
+//!
+//! ## D-Bus Interface
+//!
+//! ### org.detnet.detnetctl.Register
+//!
+//! ```markdown
+//! Register(app_name: string) -> (interface: string, priority: u8, token: u64)
+//! ```
+//!
+//! The caller needs to be owner of `org.detnet.apps.{app_name}`. Otherwise, the method call is
+//! rejected. Together with a corresponding D-Bus policy, this only allows the correct application
+//! to register itself.
+//!
+//! #### Parameters
+//! * **app_name**: The name of the app to register. Matches the app name in the configuration.
+//!
+//! #### Returns
+//! * **interface**: The name of the (virtual) interface to use for setting up the socket.
+//! * **priority**: The SO_PRIORITY to set for the socket.
+//! * **token**: The SO_TOKEN to set for the socket.
+//!
+//! ### org.detnet.detnetctl.PtpStatus
+//!
+//! ```markdown
+//! PtpStatus(interface: string, max_clock_delta_ns: u64, max_master_offset_ns: u64)
+//! -> (issues: u8, phc_rt: int64, phc_tai: int64, kernel_tai_offset: int32, port_state: u8, master_offset: int64)
+//! ```
+//!
+//! #### Parameters
+//! * **interface**: Network interface to request the status for (e.g. eth0)
+//! * **max_clock_delta_ns**: A larger clock delta in nanoseconds will indicate an issue (a common value is 50000)
+//! * **max_master_offset_ns**: A larger master clock offset in nanoseconds will indicate an issue (a common value is 100)
+//!
+//! #### Returns
+//! * **issues**: Bitfield covering various possible PTP issues.
+//!     + 0b00000001 - phc-rt delta is not near to the UTC offset (more than +-max_clock_delta_ns off)
+//!     + 0b00000010 - phc-tai is too large (more than +-max_clock_delta_ns)
+//!     + 0b00000100 - UTC-TAI offset configured in the kernel does not match
+//!     + 0b00001000 - Port state is not master, slave or grand master
+//!     + 0b00010000 - Master offset too large (more than max_master_offset_ns)
+//! * **phc_rt**: PTP Clock minus CLOCK_REALTIME
+//! * **phc_tai**: PTP Clock minus CLOCK_TAI
+//! * **kernel_tai_offset**: UTC-TAI offset configured in the kernel
+//! * **port_state**: State of the PTP port
+//!     + 1 - Initializing
+//!     + 2 - Faulty
+//!     + 3 - Disabled
+//!     + 4 - Listening
+//!     + 5 - PreMaster
+//!     + 6 - Master
+//!     + 7 - Passive
+//!     + 8 - Uncalibrated
+//!     + 9 - Slave
+//!     + 10 - GrandMaster
+//! * **master_offset**: PTP master offset
+//!
+//! ## Usage Example of the Facade Module within detnetctl
 #![cfg_attr(not(feature = "ptp"), doc = "```ignore")]
 #![cfg_attr(feature = "ptp", doc = "```")]
 //! use detnetctl::controller::{Registration, Controller};

@@ -113,7 +113,7 @@ Final result: RegisterResponse {
 
 ## Registration via D-Bus Interface
 
-Allows for applications to register themselves via D-Bus.
+Allows for applications to register themselves via D-Bus. For the interface description see [facade].
 
 ### Build
 
