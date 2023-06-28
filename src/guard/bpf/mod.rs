@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use anyhow::{anyhow, Result};
 use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
 use std::collections::HashMap;

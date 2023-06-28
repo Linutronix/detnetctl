@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: 0BSD
+
 # Watch the status of the qdiscs (queue lengths etc.)
 # Run as root (or adequate priviliges to run tc)
 

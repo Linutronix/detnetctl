@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: 0BSD
+
 CPPFLAGS += -MMD -MP -Wall -Wextra -Wfatal-errors
 
 ifdef SETCAPS

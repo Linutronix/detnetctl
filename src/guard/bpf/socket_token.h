@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef SOCKET_TOKEN_H
 #define SOCKET_TOKEN_H
 

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: 0BSD
+
 app0:
   logical_interface: enp1s0.3
   physical_interface: enp1s0

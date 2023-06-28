@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 //! Installs filters to avoid interference between applications
 #![cfg_attr(not(feature = "bpf"), doc = "```ignore")]
 #![cfg_attr(feature = "bpf", doc = "```no_run")]
@@ -6,6 +10,7 @@
 //! guard.protect_priority("eth0", 5, 0x9e25b4d41b6c390b)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
+
 use anyhow::Result;
 
 #[cfg(test)]

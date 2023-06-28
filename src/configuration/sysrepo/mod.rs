@@ -1,4 +1,9 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 //! Provides sysrepo-based network configuration (for NETCONF integration)
+
 use anyhow::{anyhow, Context, Result};
 
 #[cfg(not(test))]

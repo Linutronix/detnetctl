@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: 0BSD
+
 #define _GNU_SOURCE /*for CPU_SET*/
 
 #include "realtime.h"

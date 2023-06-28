@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 //! Core component of the node controller
 //!
 //! The controller is combining the configuration, the NIC setup and the guard

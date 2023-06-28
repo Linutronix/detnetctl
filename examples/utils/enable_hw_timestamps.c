@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: 0BSD
+
 #include <sys/ioctl.h>
 #include <linux/sockios.h>
 #include <string.h>

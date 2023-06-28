@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: 0BSD
+
 #ifndef CLIENT_LOOP_H
 #define CLIENT_LOOP_H
 

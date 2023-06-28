@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![allow(clippy::pedantic, clippy::nursery)]
 use anyhow::Result;
 use libbpf_rs::MapFlags;

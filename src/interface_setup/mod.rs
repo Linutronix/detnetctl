@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 //! Setup the physical and logical network interfaces
 #![cfg_attr(not(feature = "netlink"), doc = "```ignore")]
 #![cfg_attr(feature = "netlink", doc = "```no_run")]

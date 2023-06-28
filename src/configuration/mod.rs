@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 //! Provides the network configuration
 //!
 //! With YAML configuration:
@@ -24,6 +28,7 @@
 //! let config = sysrepo_config.get_app_config("app0");
 //! # Ok::<(), anyhow::Error>(())
 //! ```
+
 use anyhow::Result;
 use eui48::MacAddress;
 use serde::{Deserialize, Serialize};

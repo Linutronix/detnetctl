@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use anyhow::Result;
 use mockall::mock;
 use std::sync::Arc;

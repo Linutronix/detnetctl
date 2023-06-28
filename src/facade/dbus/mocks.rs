@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::facade::dbus::GetOwner;
 use anyhow::Result;
 use async_trait::async_trait;

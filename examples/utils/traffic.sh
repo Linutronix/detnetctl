@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: 0BSD
+
 # Generate traffic to fill up the network queue
 # Run as root (or adequate priviliges to run trafgen)
 

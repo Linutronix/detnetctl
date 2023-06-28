@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // we do not want to panic or exit, see explanation in main()

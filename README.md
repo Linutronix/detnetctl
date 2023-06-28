@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2023 Linutronix GmbH
+
+SPDX-License-Identifier: 0BSD
+-->
+
 # detnetctl - A TSN/DetNet Node Controller with Interference Protection
 
 The purpose of detnetctl is to coordinate different applications requiring real-time communication (in the sense of TSN or DetNet) running on the same Linux system.
@@ -19,6 +25,14 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
+
+## License
+
+detnetctl itself (i.e. everything under the `src` directory) is published under the terms of the [GNU General Public License v3.0 or later](https://spdx.org/licenses/GPL-3.0-or-later.html). We are happy about every contribution to the main repository to improve detnetctl for everyone!
+
+However, just interfacing with detnetctl via the D-Bus interface does not count as a derived work, so there is no need to publish your proprietary application that just uses detnetctl. In order to support that, the examples are licensed under the terms of the ["BSD Zero Clause License"](https://spdx.org/licenses/0BSD.html) and thus can be easily used as starting point for your integration. We still encourage you to share examples and use cases with us if they could be interesting for the community. However, pay attention that the examples focus on clarity so you need to extend the code to match the requirements for error handling and resilience of your application.
+
+Please note that `detnetctl` has several dependencies with their own licenses. The `cargo-license` tool can give you an overview. Also note that `config/yang/schemas` is a Git submodule referring to the [Github YANG collection](https://github.com/YangModels/yang/) and for using its YANG models you need to conform to their respective licenses.
 
 ## Command Line Interface
 

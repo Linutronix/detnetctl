@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: 0BSD
+
 import argparse
 import pandas as pd
 import matplotlib.pyplot as plt

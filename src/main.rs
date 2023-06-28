@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // Main executable of detnetctl
 // we do not want to panic or exit, see explanation in main()
 #![cfg_attr(

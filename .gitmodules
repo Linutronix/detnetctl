@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: 0BSD
+
 [submodule "config/yang/schemas"]
 	path = config/yang/schemas
 	url = https://github.com/YangModels/yang.git

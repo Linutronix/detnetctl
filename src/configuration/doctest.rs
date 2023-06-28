@@ -1,4 +1,9 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // Only for writing convenient doctests
+
 use tempfile::NamedTempFile;
 pub fn generate_example_yaml() -> NamedTempFile {
     use std::io::BufWriter;

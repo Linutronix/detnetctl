@@ -1,9 +1,14 @@
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 [package]
 name = "detnetctl"
 description = "A TSN/DetNet Node Controller with Interference Protection"
 version = "0.1.0"
 edition = "2021"
 authors = ["Florian Kauer <florian.kauer@linutronix.de>"]
+license = "GPL-3.0-or-later"
 
 [features]
 default = ["dbus", "bpf", "detd", "sysrepo", "netlink"]

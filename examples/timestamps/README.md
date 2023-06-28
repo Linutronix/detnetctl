@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2023 Linutronix GmbH
+
+SPDX-License-Identifier: 0BSD
+-->
+
 # Latency Demonstrator (C Example)
 
 This demonstrator can be used to analyze the effects of different techniques, such as RT scheduling, TAPRIO Qdiscs, socket types etc. on the latencies of a UDP packet transmission.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 //! Setup a TSN-capable NIC and qdiscs
 #![cfg_attr(not(feature = "detd"), doc = "```ignore")]
 #![cfg_attr(feature = "detd", doc = "```no_run")]
@@ -20,6 +24,7 @@
 //! let socket_config = queue_setup.apply_config(&app_config)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
+
 use crate::configuration;
 use anyhow::Result;
 

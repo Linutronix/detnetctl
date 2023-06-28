@@ -1,6 +1,10 @@
-///! Helpers for accessing sysrepo
-///!
-///! These might be later integrated in the sysrepo-rs crate itself.
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+//! Helpers for accessing sysrepo
+//!
+//! These might be later integrated in the sysrepo-rs crate itself.
 use anyhow::{anyhow, ensure, Result};
 use yang2::data::{Data, DataNodeRef};
 use yang2::schema::DataValue;

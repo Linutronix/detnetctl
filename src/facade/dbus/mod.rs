@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Linutronix GmbH
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::facade::RegisterCallback;
 use anyhow::{anyhow, Result};
 use async_shutdown::Shutdown;
