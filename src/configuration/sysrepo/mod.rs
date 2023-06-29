@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use yang2::data::{Data, DataTree};
 
 mod helper;
-use crate::configuration::sysrepo::helper::GetValueForXPath;
+use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath};
 
 /// Reads configuration from sysrepo
 pub struct SysrepoConfiguration {
@@ -44,8 +44,15 @@ struct SysrepoContext {
 unsafe impl Send for SysrepoConfiguration {}
 
 struct AppFlow {
-    interface: String,
     traffic_profile: String,
+}
+
+struct ServiceSublayer {
+    outgoing_forwarding_sublayer: String,
+}
+
+struct ForwardingSublayer {
+    outgoing_interface: String,
 }
 
 struct TSNInterfaceConfig {
@@ -104,9 +111,14 @@ impl configuration::Configuration for SysrepoConfiguration {
     fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
         let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         let app_flow = get_app_flow(&cfg, app_name)?;
+        let service_sublayer = get_service_sublayer(&cfg, app_name)?;
+        let forwarding_sublayer =
+            get_forwarding_sublayer(&cfg, &service_sublayer.outgoing_forwarding_sublayer)?;
         let traffic_profile = get_traffic_profile(&cfg, &app_flow.traffic_profile)?;
-        let tsn_interface_cfg = get_tsn_interface_config(&cfg, &app_flow.interface)?;
-        let logical_interface = get_logical_interface(&cfg, &app_flow.interface)?;
+        let tsn_interface_cfg =
+            get_tsn_interface_config(&cfg, &forwarding_sublayer.outgoing_interface)?;
+        let logical_interface =
+            get_logical_interface(&cfg, &forwarding_sublayer.outgoing_interface)?;
 
         Ok(configuration::AppConfig {
             logical_interface: logical_interface.name,
@@ -187,13 +199,74 @@ fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<AppFlow> {
 
         if name == app_name {
             return Ok(AppFlow {
-                interface: app_flow.get_value_for_xpath("ingress/interface")?,
                 traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
             });
         }
     }
 
     Err(anyhow!("App flow not found"))
+}
+
+fn get_service_sublayer(tree: &DataTree, incoming_app_flow: &str) -> Result<ServiceSublayer> {
+    let service_sublayers = tree.find_xpath("/detnet/service/sub-layer")?;
+    for service_sublayer in service_sublayers {
+        let incoming_app_flows = service_sublayer.find_xpath("incoming/app-flow/flow")?;
+
+        for app_flow in incoming_app_flows {
+            let app_flow_name = String::try_from_data_value(
+                app_flow
+                    .value()
+                    .ok_or_else(|| anyhow!("Missing app_flow value"))?,
+            )?;
+
+            if app_flow_name == incoming_app_flow {
+                // TODO The service sublayer can in principle link to more than one outgoing
+                // forwarding sublayer. It is currently unclear how to handle that properly.
+                // For the moment we just reject that situation.
+
+                let mut outgoing_forwarding_sublayers = service_sublayer
+                    .find_xpath("outgoing/forwarding-sub-layer/service-outgoing/sub-layer")?;
+
+                let outgoing_forwarding_sublayer = String::try_from_data_value(
+                    outgoing_forwarding_sublayers
+                        .next()
+                        .and_then(|v| v.value())
+                        .ok_or_else(|| {
+                            anyhow!("No associated outgoing forwarding sublayer found")
+                        })?,
+                )?;
+
+                if outgoing_forwarding_sublayers.next().is_some() {
+                    return Err(anyhow!("Currently only exactly one outgoing forwarding sublayer per service sublayer is supported!"));
+                }
+
+                return Ok(ServiceSublayer {
+                    outgoing_forwarding_sublayer,
+                });
+            }
+        }
+    }
+
+    Err(anyhow!("No matching service sublayer found"))
+}
+
+fn get_forwarding_sublayer(
+    tree: &DataTree,
+    forwarding_sublayer_name: &str,
+) -> Result<ForwardingSublayer> {
+    let forwarding_sublayers = tree.find_xpath("/detnet/forwarding/sub-layer")?;
+    for forwarding_sublayer in forwarding_sublayers {
+        let name: String = forwarding_sublayer.get_value_for_xpath("name")?;
+
+        if name == forwarding_sublayer_name {
+            return Ok(ForwardingSublayer {
+                outgoing_interface: forwarding_sublayer
+                    .get_value_for_xpath("outgoing/interface/outgoing-interface")?,
+            });
+        }
+    }
+
+    Err(anyhow!("No matching forwarding sublayer found"))
 }
 
 fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<configuration::PtpConfig> {
@@ -392,7 +465,7 @@ mod tests {
             create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
         let config = sysrepo_config.get_app_config("app0")?;
 
-        let interface = String::from("enp1s0");
+        let interface = String::from("enp86s0");
         let vid = 5;
         assert_eq!(
             config,
@@ -423,7 +496,7 @@ mod tests {
             create_sysrepo_config("./src/configuration/sysrepo/test-without-ip.json");
         let config = sysrepo_config.get_app_config("app0")?;
 
-        let interface = String::from("enp1s0");
+        let interface = String::from("enp86s0");
         let vid = 5;
         assert_eq!(
             config,

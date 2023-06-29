@@ -14,9 +14,44 @@
       "app-flow": [
         {
           "name": "app0",
-          "traffic-profile": "pf-1",
-          "ingress": {
-            "interface": "enp1s0.5"
+          "traffic-profile": "pf-1"
+        }
+      ]
+    },
+    "service": {
+      "sub-layer": [
+        {
+          "name": "ssl-1",
+          "incoming": {
+            "app-flow": {
+              "flow": [
+                "app0"
+              ]
+            }
+          },
+          "outgoing": {
+            "forwarding-sub-layer": {
+              "service-outgoing": [
+                {
+                  "index": 0,
+                  "sub-layer": [
+                    "fsl-1"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "forwarding": {
+      "sub-layer": [
+        {
+          "name": "fsl-1",
+          "outgoing": {
+            "interface": {
+              "outgoing-interface": "enp86s0.5"
+            }
           }
         }
       ]
@@ -25,13 +60,29 @@
   "ietf-interfaces:interfaces": {
     "interface": [
       {
-        "name": "enp1s0",
+        "name": "enp86s0",
         "type": "iana-if-type:ethernetCsmacd"
       },
       {
-        "name": "enp1s0.5",
+        "name": "enp86s0.5",
         "type": "iana-if-type:l2vlan",
-        "ietf-if-extensions:parent-interface": "enp1s0"
+        "ietf-if-extensions:parent-interface": "enp86s0",
+	"ietf-ip:ipv4": {
+	  "address": [
+	    {
+	      "ip": "192.168.2.1",
+	      "prefix-length": 24
+	    }
+	  ]
+	},
+	"ietf-ip:ipv6": {
+	  "address": [
+	    {
+	      "ip": "fd2a:bc93:8476:634::",
+	      "prefix-length": 64
+	    }
+	  ]
+	}
       }
     ]
   },
@@ -39,7 +90,7 @@
     "interface-list": [
       {
         "mac-address": "AB-AB-AB-AB-AB-AB",
-        "interface-name": "enp1s0.5",
+        "interface-name": "enp86s0.5",
         "config-list": [
           {
             "index": 0,
