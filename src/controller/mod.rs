@@ -220,15 +220,17 @@ async fn setup(
     }
 
     // Add address to logical interface
-    if let (Some(ip), Some(prefix_length)) = (app_config.ip_address, app_config.prefix_length) {
-        interface_setup
-            .add_address(ip, prefix_length, &app_config.logical_interface)
-            .await
-            .context("Adding address to VLAN interface failed")?;
-        println!(
-            "  Added {}/{} to {}",
-            ip, prefix_length, app_config.logical_interface
-        );
+    if let Some(addresses) = &app_config.addresses {
+        for (ip, prefix_length) in addresses {
+            interface_setup
+                .add_address(*ip, *prefix_length, &app_config.logical_interface)
+                .await
+                .context("Adding address to VLAN interface failed")?;
+            println!(
+                "  Added {}/{} to {}",
+                ip, prefix_length, app_config.logical_interface
+            );
+        }
     } else {
         println!("  No IP address configured, since none was provided");
     }
@@ -295,8 +297,7 @@ mod tests {
                 destination_address: Some("8b:de:82:a1:59:5a".parse()?),
                 vid: Some(vid),
                 pcp: Some(4),
-                ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3))),
-                prefix_length: Some(16),
+                addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
             })
         });
         configuration

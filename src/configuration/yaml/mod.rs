@@ -98,8 +98,7 @@ mod tests {
             "    destination_address: cb:cb:cb:cb:cb:cb\n",
             "    vid: 1\n",
             "    pcp: 2\n",
-            "    ip_address: 192.168.0.3\n",
-            "    prefix_length: 16\n",
+            "    addresses: [[192.168.0.3, 16]]\n",
             "  app1:\n",
             "    logical_interface: eth3.1\n",
             "    physical_interface: eth3\n",
@@ -109,8 +108,7 @@ mod tests {
             "    destination_address: AB:cb:cb:cb:cb:cb\n",
             "    vid: 1\n",
             "    pcp: 2\n",
-            "    ip_address: 192.168.0.7\n",
-            "    prefix_length: 32\n",
+            "    addresses: [[192.168.0.7, 32]]\n",
         );
 
         let mut config = YAMLConfiguration::default();
@@ -161,8 +159,7 @@ mod tests {
             destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
             vid: Some(1),
             pcp: Some(2),
-            ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3))),
-            prefix_length: Some(16),
+            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
         };
 
         let app_1 = configuration::AppConfig {
@@ -174,8 +171,7 @@ mod tests {
             destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
             vid: Some(2),
             pcp: Some(3),
-            ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2))),
-            prefix_length: Some(32),
+            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2)), 32)]),
         };
 
         let mut apps = AppConfigurations::default();

@@ -74,11 +74,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub pcp: Option<u8>, // actually 3 bit
 
-    /// IP address of the logical interface
-    pub ip_address: Option<IpAddr>,
-
-    /// IP network prefix length of the logical interface
-    pub prefix_length: Option<u8>,
+    /// IP addresses and prefix lengths of the logical interface
+    pub addresses: Option<Vec<(IpAddr, u8)>>,
 }
 
 mod serialize_mac_address {

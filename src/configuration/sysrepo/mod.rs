@@ -19,7 +19,6 @@ use yang2::context::{Context as YangContext, ContextFlags};
 use crate::configuration;
 use crate::ptp::{ClockAccuracy, ClockClass, TimeSource};
 use eui48::MacAddress;
-use ipnet::IpNet;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -47,8 +46,6 @@ unsafe impl Send for SysrepoConfiguration {}
 struct AppFlow {
     interface: String,
     traffic_profile: String,
-    source_address: Option<IpAddr>,
-    source_address_prefix_length: Option<u8>,
 }
 
 struct TSNInterfaceConfig {
@@ -66,6 +63,7 @@ struct TrafficProfile {
 struct VLANInterface {
     name: String,
     physical_interface: String,
+    addresses: Option<Vec<(IpAddr, u8)>>,
 }
 
 impl configuration::Configuration for SysrepoConfiguration {
@@ -119,8 +117,7 @@ impl configuration::Configuration for SysrepoConfiguration {
             destination_address: Some(tsn_interface_cfg.destination_address),
             vid: Some(tsn_interface_cfg.vid),
             pcp: Some(tsn_interface_cfg.pcp),
-            ip_address: app_flow.source_address,
-            prefix_length: app_flow.source_address_prefix_length,
+            addresses: logical_interface.addresses,
         })
     }
 
@@ -189,17 +186,9 @@ fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<AppFlow> {
         let name: String = app_flow.get_value_for_xpath("name")?;
 
         if name == app_name {
-            let ip =
-                match app_flow.get_value_for_xpath::<String>("ingress/ip-app-flow/src-ip-prefix") {
-                    Ok(srcipprefix) => Some(srcipprefix.parse::<IpNet>()?),
-                    Err(_) => None,
-                };
-
             return Ok(AppFlow {
                 interface: app_flow.get_value_for_xpath("ingress/interface")?,
                 traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
-                source_address: ip.map(|prefix| prefix.addr()),
-                source_address_prefix_length: ip.map(|prefix| prefix.prefix_len()),
             });
         }
     }
@@ -311,9 +300,26 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<VLANIn
         let name: String = interface.get_value_for_xpath("name")?;
 
         if name == interface_name {
+            let addresses = interface
+                .find_xpath("ipv4/address | ipv6/address")
+                .ok()
+                .map(|addrs| {
+                    addrs
+                        .map(|address| -> Result<(IpAddr, u8)> {
+                            let ip = address
+                                .get_value_for_xpath::<String>("ip")?
+                                .parse::<IpAddr>()?;
+                            let prefix_length: u8 = address.get_value_for_xpath("prefix-length")?;
+                            Ok((ip, prefix_length))
+                        })
+                        .collect::<Result<Vec<(IpAddr, u8)>>>()
+                })
+                .transpose()?;
+
             return Ok(VLANInterface {
                 name: interface_name.to_owned(),
                 physical_interface: interface.get_value_for_xpath("parent-interface")?,
+                addresses,
             });
         }
     }
@@ -327,7 +333,7 @@ mod tests {
     use crate::configuration::{AppConfig, Configuration};
     use crate::ptp::PtpConfig;
     use std::fs::File;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use yang2::data::{DataFormat, DataParserFlags, DataTree, DataValidationFlags};
 
     fn create_sysrepo_config(file: &str) -> SysrepoConfiguration {
@@ -341,6 +347,7 @@ mod tests {
 
         let modules = &[
             ("iana-if-type", vec![]),
+            ("ietf-ip", vec![]),
             ("ietf-if-extensions", vec!["sub-interfaces"]),
             ("ietf-detnet", vec![]),
             ("tsn-interface-configuration", vec![]),
@@ -398,8 +405,13 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
                 pcp: Some(3),
-                ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1))),
-                prefix_length: Some(32),
+                addresses: Some(vec![
+                    (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
+                    (
+                        IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
+                        64
+                    )
+                ])
             }
         );
         Ok(())
@@ -424,8 +436,7 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
                 pcp: Some(3),
-                ip_address: None,
-                prefix_length: None,
+                addresses: Some(vec![])
             }
         );
         Ok(())
@@ -473,5 +484,12 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn validate_example_yang() {
+        create_sysrepo_config("./config/yang/example.json")
+            .get_config("")
+            .unwrap();
     }
 }

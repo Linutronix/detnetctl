@@ -71,16 +71,17 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-guard --app-name app0
+./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-guard --no-interface-setup --app-name app0
 ```
 
 This will only read the configuration matching to `app0` from the configuration file, performs a dry run and prints out for example the following output:
 
+
 ```console
 Request to register app0
-Fetched from configuration module: EthernetConfig {
-    logical_interface: "enp1s0.3",
-    physical_interface: "enp1s0",
+  Fetched from configuration module: AppConfig {
+    logical_interface: "enp86s0.5",
+    physical_interface: "enp86s0",
     period_ns: Some(
         100000,
     ),
@@ -90,24 +91,37 @@ Fetched from configuration module: EthernetConfig {
     size_bytes: Some(
         1000,
     ),
-    destination_address: Some(
-        MacAddress("cb:cb:cb:cb:cb:cb"),
-    ),
+    destination_address: None,
     vid: Some(
-        3,
+        5,
     ),
     pcp: Some(
         3,
     ),
+    addresses: Some(
+        [
+            (
+                10.5.1.1,
+                24,
+            ),
+        ],
+    ),
 }
-Result of NIC Setup: SocketConfig {
-    logical_interface: "enp1s0.3",
+  Interface enp86s0 down
+  Result of queue setup: SocketConfig {
+    logical_interface: "enp86s0.5",
     priority: 3,
 }
+  Guard installed for priority 3 on enp86s0
+  VLAN interface enp86s0.5 properly configured
+  Added 10.5.1.1/24 to enp86s0.5
+  Interface enp86s0 up
+  Interface enp86s0.5 up
+  Finished after 119.6µs
 Final result: RegisterResponse {
-    logical_interface: "enp1s0.3",
+    logical_interface: "enp86s0.5",
     priority: 3,
-    token: 11251116261202197512,
+    token: 410227199887865206,
 }
 ```
 

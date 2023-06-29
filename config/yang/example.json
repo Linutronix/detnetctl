@@ -16,10 +16,7 @@
           "name": "app0",
           "traffic-profile": "pf-1",
           "ingress": {
-            "interface": "enp1s0.5",
-            "ip-app-flow": {
-              "src-ip-prefix": "10.0.52.1/32"
-            }
+            "interface": "enp1s0.5"
           }
         }
       ]
@@ -34,7 +31,15 @@
       {
         "name": "enp1s0.5",
         "type": "iana-if-type:l2vlan",
-        "ietf-if-extensions:parent-interface": "enp1s0"
+        "ietf-if-extensions:parent-interface": "enp1s0",
+        "ietf-ip:ipv4": {
+          "address": [
+            {
+              "ip": "10.5.1.1",
+              "prefix-length": 24
+            }
+          ]
+        }
       }
     ]
   },

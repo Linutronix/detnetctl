@@ -179,8 +179,7 @@ mod tests {
             destination_address: Some("8a:de:82:a1:59:5a".parse().unwrap()),
             vid: Some(3),
             pcp: Some(4),
-            ip_address: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3))),
-            prefix_length: Some(16),
+            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
         }
     }
 

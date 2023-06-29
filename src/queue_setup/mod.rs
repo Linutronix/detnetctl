@@ -17,8 +17,9 @@
 //!     destination_address: Some("8a:de:82:a1:59:5a".parse()?),
 //!     vid: Some(3),
 //!     pcp: Some(4),
-//!     ip_address: Some("192.168.3.3".parse()?),
-//!     prefix_length: Some(16),
+//!     addresses: Some(vec![
+//!         ("192.168.3.3".parse()?, 16)
+//!     ])
 //! };
 //! let mut queue_setup = DetdGateway::new(None, None);
 //! let socket_config = queue_setup.apply_config(&app_config)?;
