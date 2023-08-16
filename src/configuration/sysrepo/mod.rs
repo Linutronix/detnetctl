@@ -7,12 +7,12 @@
 use anyhow::{anyhow, Context, Result};
 
 #[cfg(not(test))]
-use {sysrepo::SrConn, sysrepo::SrData, sysrepo::SrSession};
+use {sysrepo::SrConn, sysrepo::SrSession};
 
 #[cfg(test)]
 mod mocks;
 #[cfg(test)]
-use {mocks::MockSrConn as SrConn, mocks::MockSrData as SrData, mocks::MockSrSession as SrSession};
+use {mocks::MockSrConn as SrConn, mocks::MockSrSession as SrSession};
 
 use yang2::context::{Context as YangContext, ContextFlags};
 
@@ -105,10 +105,10 @@ impl configuration::Configuration for SysrepoConfiguration {
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
     fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
         let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
-        let app_flow = get_app_flow(cfg.tree(), app_name)?;
-        let traffic_profile = get_traffic_profile(cfg.tree(), &app_flow.traffic_profile)?;
-        let tsn_interface_cfg = get_tsn_interface_config(cfg.tree(), &app_flow.interface)?;
-        let logical_interface = get_logical_interface(cfg.tree(), &app_flow.interface)?;
+        let app_flow = get_app_flow(&cfg, app_name)?;
+        let traffic_profile = get_traffic_profile(&cfg, &app_flow.traffic_profile)?;
+        let tsn_interface_cfg = get_tsn_interface_config(&cfg, &app_flow.interface)?;
+        let logical_interface = get_logical_interface(&cfg, &app_flow.interface)?;
 
         Ok(configuration::AppConfig {
             logical_interface: logical_interface.name,
@@ -126,7 +126,7 @@ impl configuration::Configuration for SysrepoConfiguration {
 
     fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
         let cfg = self.get_config("/ptp")?;
-        get_ptp_instance(cfg.tree(), instance).context("Parsing of YANG PTP configuration failed")
+        get_ptp_instance(&cfg, instance).context("Parsing of YANG PTP configuration failed")
     }
 }
 
@@ -167,7 +167,7 @@ impl SysrepoConfiguration {
         })
     }
 
-    fn get_config(&mut self, xpath: &str) -> Result<SrData> {
+    fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
         let mut lock = self
             .ctx
             .lock()
@@ -367,9 +367,7 @@ mod tests {
                 )
                 .expect("could not parse");
 
-                let mut data = SrData::default();
-                data.expect_tree().return_const(tree);
-                Ok(data)
+                Ok(tree)
             });
 
         SysrepoConfiguration {

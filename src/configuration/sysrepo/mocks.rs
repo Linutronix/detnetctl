@@ -26,16 +26,10 @@ mock! {
             max_depth: Option<u32>,
             timeout: Option<Duration>,
             opts: u32
-        ) -> Result<MockSrData, i32>;
+        ) -> Result<DataTree, i32>;
     }
 
     impl Clone for SrSession {
         fn clone(&self) -> Self;
-    }
-}
-
-mock! {
-    pub SrData {
-        pub fn tree(&self) -> &DataTree;
     }
 }
