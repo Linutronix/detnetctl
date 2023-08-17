@@ -58,10 +58,9 @@ yang2 = { version = "0.5.1", optional = true }
 ipnet = { version = "2.7.2", optional = true }
 
 ### netlink feature
-# TODO pull request pending https://github.com/rust-netlink/netlink-proto/pull/10
-rtnetlink = { git = "https://github.com/koalo/rtnetlink", branch = "develop/fix-dangling-connection", optional = true }
-ethtool = { git = "https://github.com/koalo/ethtool", branch = "develop/fix-dangling-connection", optional = true }
-netlink-packet-route = { version = "0.15.0", optional = true }
+rtnetlink = { version = "0.13.1", optional = true }
+ethtool = { version = "0.2.5", optional = true }
+netlink-packet-route = { version = "0.17.0", optional = true }
 
 [build-dependencies]
 ### bpf feature
