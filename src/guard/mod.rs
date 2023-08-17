@@ -44,13 +44,7 @@ pub use bpf::BPFGuard;
 #[derive(Default)]
 pub struct DummyGuard;
 
-impl DummyGuard {
-    /// Create a new `DummyGuard`
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+impl DummyGuard {}
 
 impl Guard for DummyGuard {
     fn protect_priority(&mut self, _interface: &str, _priority: u8, _token: u64) -> Result<()> {

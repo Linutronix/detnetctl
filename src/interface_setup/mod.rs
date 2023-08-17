@@ -63,13 +63,7 @@ pub use netlink::NetlinkSetup;
 #[derive(Default)]
 pub struct DummyInterfaceSetup;
 
-impl DummyInterfaceSetup {
-    /// Create new `DummyInterfaceSetup`
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
+impl DummyInterfaceSetup {}
 
 #[async_trait]
 impl InterfaceSetup for DummyInterfaceSetup {

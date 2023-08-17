@@ -27,8 +27,8 @@
 //! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
-//! let mut guard = Arc::new(Mutex::new(DummyGuard::new()));
-//! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup::new()));
+//! let mut guard = Arc::new(Mutex::new(DummyGuard));
+//! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
 //! let response = controller
 //!     .register("app0", configuration, queue_setup, guard, interface_setup)
 //!     .await?;

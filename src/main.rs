@@ -97,13 +97,13 @@ pub async fn main() -> Result<()> {
     };
 
     let guard = if cli.no_guard {
-        Arc::new(Mutex::new(DummyGuard::new()))
+        Arc::new(Mutex::new(DummyGuard))
     } else {
         new_bpf_guard(cli.bpf_debug_output)?
     };
 
     let interface_setup = if cli.no_interface_setup {
-        Arc::new(Mutex::new(DummyInterfaceSetup::new()))
+        Arc::new(Mutex::new(DummyInterfaceSetup))
     } else {
         new_netinterface_setup()?
     };
