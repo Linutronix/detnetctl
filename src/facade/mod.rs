@@ -9,7 +9,7 @@
 //! ### org.detnet.detnetctl.Register
 //!
 //! ```markdown
-//! Register(app_name: string) -> (interface: string, priority: u8, token: u64)
+//! Register(app_name: string) -> (interface: string, token: u64)
 //! ```
 //!
 //! The caller needs to be owner of `org.detnet.apps.{app_name}`. Otherwise, the method call is
@@ -21,7 +21,6 @@
 //!
 //! #### Returns
 //! * **interface**: The name of the (virtual) interface to use for setting up the socket.
-//! * **priority**: The SO_PRIORITY to set for the socket.
 //! * **token**: The SO_TOKEN to set for the socket.
 //!
 //! ### org.detnet.detnetctl.PtpStatus
@@ -66,7 +65,7 @@
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
 //! use detnetctl::facade::{Facade, Setup};
 //! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
-//! use detnetctl::guard::{Guard, DummyGuard};
+//! use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
 //! use detnetctl::ptp::{Ptp, PtpManager};
 //! use async_shutdown::Shutdown;
@@ -87,7 +86,7 @@
 //! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
-//! let mut guard = Arc::new(Mutex::new(DummyGuard));
+//! let mut dispatcher = Arc::new(Mutex::new(DummyDispatcher));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
 //! let mut ptp = Arc::new(Mutex::new(PtpManager::new()));
 //!
@@ -97,14 +96,14 @@
 //!         let cloned_controller = controller.clone();
 //!         let cloned_configuration = configuration.clone();
 //!         let cloned_queue_setup = queue_setup.clone();
-//!         let cloned_guard = guard.clone();
+//!         let cloned_dispatcher = dispatcher.clone();
 //!         let cloned_interface_setup = interface_setup.clone();
 //!         Box::pin(async move {
 //!             cloned_controller.lock().await.register(
 //!                 &app_name,
 //!                 cloned_configuration,
 //!                 cloned_queue_setup,
-//!                 cloned_guard,
+//!                 cloned_dispatcher,
 //!                 cloned_interface_setup).await
 //!         })
 //!     }),

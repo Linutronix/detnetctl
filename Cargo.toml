@@ -49,7 +49,7 @@ dbus-tokio = { git = "https://github.com/diwic/dbus-rs", branch = "master", opti
 async-shutdown = { version = "0.1.2", optional = true }
 
 ### bpf feature
-libbpf-rs = { version = "0.19", optional = true }
+libbpf-rs = { version = "0.21.2", optional = true }
 log = { version = "0.4.17", optional = true }
 nix = { version = "0.24", default-features = false, features = ["net", "user", "time", "poll"], optional = true }
 
@@ -72,7 +72,7 @@ bincode = { version = "1.3.3", optional = true }
 
 [build-dependencies]
 ### bpf feature
-libbpf-cargo = { version = "0.13", optional = true }
+libbpf-cargo = { version = "0.21.2", optional = true }
 
 ### detd feature
 prost-build = "0.11.6"

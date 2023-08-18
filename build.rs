@@ -10,7 +10,7 @@ use {
 };
 
 #[cfg(feature = "bpf")]
-const BPF_SRC: &str = "./src/guard/bpf/network_guard.bpf.c";
+const BPF_SRC: &str = "./src/dispatcher/bpf/network_dispatcher.bpf.c";
 #[cfg(feature = "detd")]
 const DETD_PROTO_SRC: &str = "./src/queue_setup/detdipc.proto";
 
@@ -29,7 +29,7 @@ const BPF_FLAGS: &str = "";
 fn build_bpf() {
     let mut out =
         PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
-    out.push("network_guard.skel.rs");
+    out.push("network_dispatcher.skel.rs");
     SkeletonBuilder::new()
         .source(BPF_SRC)
         .clang_args(BPF_FLAGS)

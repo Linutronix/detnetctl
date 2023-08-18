@@ -4,13 +4,13 @@
 //
 //! Core component of the node controller
 //!
-//! The controller is combining the configuration, the NIC setup and the guard
+//! The controller is combining the configuration, the NIC setup and the dispatcher
 //! to perform a complete registration of an application.
 //!
 //! ```
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
 //! use detnetctl::controller::{Controller, Registration};
-//! use detnetctl::guard::{DummyGuard, Guard};
+//! use detnetctl::dispatcher::{DummyDispatcher, Dispatcher};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
 //! use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
 //!
@@ -27,10 +27,10 @@
 //! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
-//! let mut guard = Arc::new(Mutex::new(DummyGuard));
+//! let mut dispatcher = Arc::new(Mutex::new(DummyDispatcher));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
 //! let response = controller
-//!     .register("app0", configuration, queue_setup, guard, interface_setup)
+//!     .register("app0", configuration, queue_setup, dispatcher, interface_setup)
 //!     .await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
@@ -38,10 +38,10 @@
 //! ```
 
 use crate::configuration::{AppConfig, Configuration};
-use crate::guard::Guard;
+use crate::dispatcher::{Dispatcher, StreamIdentification};
 use crate::interface_setup::{InterfaceSetup, LinkState};
-use crate::queue_setup::{QueueSetup, SocketConfig};
-use anyhow::{Context, Result};
+use crate::queue_setup::QueueSetup;
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::lock::Mutex;
 use getrandom::getrandom;
@@ -54,8 +54,6 @@ use tokio::time::Instant;
 pub struct RegisterResponse {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
     pub logical_interface: String,
-    /// The priority to set via SO_PRIORITY
-    pub priority: u8,
     /// The token to set via SO_TOKEN
     pub token: u64,
 }
@@ -68,14 +66,14 @@ pub trait Registration {
     /// 1. Generate a random token
     /// 2. Fetch the configuration corresponding to the `app_name`
     /// 3. Set up the NIC according to the configuration
-    /// 4. Set up the guard to prevent interfering messages from other applications
+    /// 4. Set up the dispatcher to prevent interfering messages from other applications
     /// 5. Return the appropriate socket settings for the application
     async fn register(
         &self,
         app_name: &str,
         mut configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
-        mut guard: Arc<Mutex<dyn Guard + Send>>,
+        mut dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
         mut interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<RegisterResponse>;
 }
@@ -99,7 +97,7 @@ impl Registration for Controller {
         app_name: &str,
         configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
-        guard: Arc<Mutex<dyn Guard + Send>>,
+        dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
         interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<RegisterResponse> {
         let start = Instant::now();
@@ -122,7 +120,7 @@ impl Registration for Controller {
             &app_config,
             token,
             queue_setup,
-            guard,
+            dispatcher,
             &*locked_interface_setup,
         )
         .await; // No ? since we need to ensure that the link is up again even after error
@@ -140,13 +138,12 @@ impl Registration for Controller {
             };
         }
 
-        let socket_config = setup_result?;
+        setup_result?;
 
         println!("  Finished after {:.1?}", start.elapsed());
 
         Ok(RegisterResponse {
-            logical_interface: socket_config.logical_interface,
-            priority: socket_config.priority,
+            logical_interface: app_config.logical_interface,
             token,
         })
     }
@@ -163,9 +160,9 @@ async fn setup(
     app_config: &AppConfig,
     token: u64,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
-    guard: Arc<Mutex<dyn Guard + Send>>,
+    dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
-) -> Result<SocketConfig> {
+) -> Result<()> {
     interface_setup
         .set_link_state(LinkState::Down, &app_config.physical_interface)
         .await
@@ -178,29 +175,45 @@ async fn setup(
     println!("  Interface {} down", app_config.physical_interface);
 
     // Setup Queue
-    let socket_config = queue_setup
+    let queue_setup_response = queue_setup
         .lock()
         .await
         .apply_config(app_config)
         .context("Setting up the queue failed")?;
-    println!("  Result of queue setup: {socket_config:#?}");
+    println!("  Result of queue setup: {queue_setup_response:#?}");
+
+    // Assemble stream identification
+    let stream_id = StreamIdentification {
+        destination_address: app_config.destination_address.ok_or_else(|| {
+            anyhow!("Streams without destination address can currently not be handled")
+        })?,
+        vlan_identifier: app_config
+            .vid
+            .ok_or_else(|| anyhow!("Streams without VLAN ID can currently not be handled"))?,
+    };
+
+    let pcp = app_config
+        .pcp
+        .ok_or_else(|| anyhow!("PCP configuration is missing"))?;
 
     // Setup BPF Hooks
     // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
     // here, because otherwise it would be possible to use a different logical interface,
     // but same SO_PRIORITY and physical interface. Even though it would not be routed to the
     // same VLAN it could still block the time slot!
-    let mut locked_guard = guard.lock().await;
-    locked_guard
-        .protect_priority(
+    let mut locked_dispatcher = dispatcher.lock().await;
+    locked_dispatcher
+        .configure_stream(
             &app_config.physical_interface,
-            socket_config.priority,
-            token,
+            &stream_id,
+            queue_setup_response.priority,
+            pcp,
+            Some(token),
         )
-        .context("Installing protection via the guard failed. SO_TOKEN patch missing?")?;
+        .context("Installing protection via the dispatcher failed. SO_TOKEN patch missing?")?;
     println!(
-        "  Guard installed for priority {} on {}",
-        socket_config.priority, app_config.physical_interface
+        "  Dispatcher installed for stream {:#?} with priority {} on {}",
+        stream_id, queue_setup_response.priority, app_config.physical_interface
     );
 
     // Setup logical interface
@@ -235,7 +248,7 @@ async fn setup(
         println!("  No IP address configured, since none was provided");
     }
 
-    Ok(socket_config)
+    Ok(())
 }
 
 async fn set_interfaces_up(
@@ -271,9 +284,9 @@ async fn set_interfaces_up(
 mod tests {
     use super::*;
     use crate::configuration::{AppConfig, MockConfiguration};
-    use crate::guard::MockGuard;
+    use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
-    use crate::queue_setup::{MockQueueSetup, SocketConfig};
+    use crate::queue_setup::{MockQueueSetup, QueueSetupResponse};
     use anyhow::anyhow;
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -311,10 +324,10 @@ mod tests {
         configuration
     }
 
-    fn queue_setup_happy(priority: u8) -> MockQueueSetup {
+    fn queue_setup_happy(priority: u32) -> MockQueueSetup {
         let mut queue_setup = MockQueueSetup::new();
         queue_setup.expect_apply_config().returning(move |config| {
-            Ok(SocketConfig {
+            Ok(QueueSetupResponse {
                 logical_interface: config.logical_interface.clone(),
                 priority,
             })
@@ -330,18 +343,26 @@ mod tests {
         queue_setup
     }
 
-    fn guard_happy() -> MockGuard {
-        let mut guard = MockGuard::new();
-        guard.expect_protect_priority().returning(|_, _, _| Ok(()));
-        guard
+    fn dispatcher_happy() -> MockDispatcher {
+        let mut dispatcher = MockDispatcher::new();
+        dispatcher
+            .expect_configure_stream()
+            .returning(|_, _, _, _, _| Ok(()));
+        dispatcher
+            .expect_configure_best_effort()
+            .returning(|_, _, _| Ok(()));
+        dispatcher
     }
 
-    fn guard_failing() -> MockGuard {
-        let mut guard = MockGuard::new();
-        guard
-            .expect_protect_priority()
+    fn dispatcher_failing() -> MockDispatcher {
+        let mut dispatcher = MockDispatcher::new();
+        dispatcher
+            .expect_configure_stream()
+            .returning(|_, _, _, _, _| Err(anyhow!("failed")));
+        dispatcher
+            .expect_configure_best_effort()
             .returning(|_, _, _| Err(anyhow!("failed")));
-        guard
+        dispatcher
     }
 
     fn interface_setup_happy() -> MockInterfaceSetup {
@@ -382,14 +403,19 @@ mod tests {
             vid,
         )));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(priority)));
-        let guard = Arc::new(Mutex::new(guard_happy()));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         let response = controller
-            .register("app123", configuration, queue_setup, guard, interface_setup)
+            .register(
+                "app123",
+                configuration,
+                queue_setup,
+                dispatcher,
+                interface_setup,
+            )
             .await?;
         assert_eq!(response.logical_interface, format!("{interface}.{vid}"));
-        assert_eq!(response.priority, priority);
         assert!(response.token > 10); // not GUARANTEED, but VERY unlikely to fail
         Ok(())
     }
@@ -399,11 +425,17 @@ mod tests {
     async fn test_register_configuration_failure() {
         let configuration = Arc::new(Mutex::new(configuration_failing()));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
-        let guard = Arc::new(Mutex::new(guard_happy()));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .register("app123", configuration, queue_setup, guard, interface_setup)
+            .register(
+                "app123",
+                configuration,
+                queue_setup,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
@@ -413,25 +445,37 @@ mod tests {
     async fn test_register_queue_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
-        let guard = Arc::new(Mutex::new(guard_happy()));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .register("app123", configuration, queue_setup, guard, interface_setup)
+            .register(
+                "app123",
+                configuration,
+                queue_setup,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Installing protection via the guard failed")]
-    async fn test_register_guard_failure() {
+    #[should_panic(expected = "Installing protection via the dispatcher failed")]
+    async fn test_register_dispatcher_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
-        let guard = Arc::new(Mutex::new(guard_failing()));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_failing()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .register("app123", configuration, queue_setup, guard, interface_setup)
+            .register(
+                "app123",
+                configuration,
+                queue_setup,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
@@ -441,11 +485,17 @@ mod tests {
     async fn test_register_interface_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
-        let guard = Arc::new(Mutex::new(guard_happy()));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_failing()));
         let controller = Controller::new();
         controller
-            .register("app123", configuration, queue_setup, guard, interface_setup)
+            .register(
+                "app123",
+                configuration,
+                queue_setup,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }

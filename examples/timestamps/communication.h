@@ -66,8 +66,8 @@ struct Addresses {
 };
 
 enum SockTypes parse_sock_type(const char *str);
-int setup_socket(const char *interface, int priority, int port,
-		 struct Addresses *src_addr, enum SockTypes sock_type);
+int setup_socket(const char *interface, int port, struct Addresses *src_addr,
+		 enum SockTypes sock_type);
 int prepare_headers(const struct Addresses *src_addr,
 		    const struct Addresses *dest_addr, struct Headers *hdr,
 		    size_t payload_size, enum SockTypes sock_type);

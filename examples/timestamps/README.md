@@ -19,7 +19,7 @@ Usage: ./client [options] server_ip
 
 with the following options:
   -a, --app  [app_name]        Register at the node controller with the provided app_name.
-                               Can not be combined with --interface and --priority, because they will be
+                               Can not be combined with --interface, because that will be
                                provided automatically during registration!
                                If not provided, no registration at the node controller takes place!
   -s, --socktype  [socktype]   One of
@@ -41,7 +41,6 @@ with the following options:
                                                       MAC address needs to be provided via --mac!
   -i, --interface [interface]  Interface to bind to / to use.
                                Do not explicitly bind to interface if not provided as CLI and not via detnetctl registration.
-  -P, --priority  [priority]   SO_PRIORITY to use (default: do not set SO_PRIORITY)
   -p, --port      [port]       Source and destination port (default: 4321)
   -m, --mac       [macaddress] Destination MAC address (required for PACKET_DGRAM, PACKET_RAW and XDP, ignored for all others).
                                Format as 01:23:45:67:89:AB

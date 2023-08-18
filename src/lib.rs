@@ -79,7 +79,7 @@
 
 pub mod configuration;
 pub mod controller;
-pub mod guard;
+pub mod dispatcher;
 pub mod interface_setup;
 pub mod ptp;
 pub mod queue_setup;

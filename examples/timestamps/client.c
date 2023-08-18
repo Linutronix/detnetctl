@@ -26,7 +26,7 @@ static void print_usage(const char *filepath)
 		"\nUsage: %s [options] server_ip\n"
 		"\nwith the following options:\n"
 		"  -a, --app  [app_name]        Register at the node controller with the provided app_name.\n"
-		"                               Can not be combined with --interface and --priority, because they will be\n"
+		"                               Can not be combined with --interface, because that will be\n"
 		"                               provided automatically during registration!\n"
 		"                               If not provided, no registration at the node controller takes place!\n"
 		"  -s, --socktype  [socktype]   One of\n"
@@ -48,7 +48,6 @@ static void print_usage(const char *filepath)
 		"                                                      MAC address needs to be provided via --mac!\n"
 		"  -i, --interface [interface]  Interface to bind to / to use.\n"
 		"                               Do not explicitly bind to interface if not provided as CLI and not via detnetctl registration.\n"
-		"  -P, --priority  [priority]   SO_PRIORITY to use (default: do not set SO_PRIORITY)\n"
 		"  -p, --port      [port]       Source and destination port (default: " STR(
 			DEFAULT_PORT) ")\n"
 				      "  -m, --mac       [macaddress] Destination MAC address (required for PACKET_DGRAM, PACKET_RAW and XDP, ignored for all others).\n"
@@ -64,7 +63,6 @@ int main(int argc, char *argv[])
 	bool do_registration = false;
 	char app_name[MAX_APPNAME_SIZE + 1] = { 0 };
 	char interface[IF_NAMESIZE] = { 0 };
-	int8_t priority = -1;
 	uint16_t port = DEFAULT_PORT;
 	enum SockTypes sock_type = SOCK_TYPE_INET_DGRAM;
 	uint8_t dest_mac_addr[ETHER_ADDR_LEN] = { 0 };
@@ -81,7 +79,6 @@ int main(int argc, char *argv[])
 		static struct option long_options[] = {
 			{ "app", required_argument, 0, 'a' },
 			{ "interface", required_argument, 0, 'i' },
-			{ "priority", required_argument, 0, 'P' },
 			{ "port", required_argument, 0, 'p' },
 			{ "mac", required_argument, 0, 'm' },
 			{ "socktype", required_argument, 0, 's' },
@@ -120,18 +117,6 @@ int main(int argc, char *argv[])
 			}
 			strncpy(interface, optarg, sizeof(interface));
 			break;
-		case 'P': {
-			long int l = strtol(optarg, NULL, 10);
-			if (l < 0 || l > INT8_MAX) {
-				fprintf(stderr,
-					"Invalid priority %s provided!\n",
-					optarg);
-				print_usage(argv[0]);
-				return 1;
-			}
-			priority = (int8_t)l;
-			break;
-		}
 		case 'p': {
 			long int l = strtol(optarg, NULL, 10);
 			if (l < 0 || l > UINT16_MAX) {
@@ -257,7 +242,7 @@ int main(int argc, char *argv[])
 	uint64_t token = 0;
 	if (do_registration) {
 		int result = register_app(app_name, interface,
-					  sizeof(interface), &priority, &token);
+					  sizeof(interface), &token);
 		if (result != 0) {
 			return result;
 		}
@@ -266,8 +251,7 @@ int main(int argc, char *argv[])
 	// Setup socket
 	struct Addresses src_addr = {};
 	struct Addresses dest_addr = {};
-	int sockfd =
-		setup_socket(interface, priority, port, &src_addr, sock_type);
+	int sockfd = setup_socket(interface, port, &src_addr, sock_type);
 	if (sockfd == -1) {
 		return 1;
 	}

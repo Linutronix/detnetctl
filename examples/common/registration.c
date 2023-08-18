@@ -13,7 +13,7 @@
 #define REGISTRATION_TIMEOUT 30000
 
 int register_app(const char *app_name, char *interface,
-		 int max_interface_length, int8_t *priority, uint64_t *token)
+		 int max_interface_length, uint64_t *token)
 {
 	/* setup DBus connection */
 	DBusConnection *connection = NULL;
@@ -74,8 +74,7 @@ int register_app(const char *app_name, char *interface,
 	/* get result */
 	const char *interface_response = NULL;
 	if (!dbus_message_get_args(msgReply, &error, DBUS_TYPE_STRING,
-				   &interface_response, DBUS_TYPE_BYTE,
-				   priority, DBUS_TYPE_UINT64, token,
+				   &interface_response, DBUS_TYPE_UINT64, token,
 				   DBUS_TYPE_INVALID) ||
 	    dbus_error_is_set(&error)) {
 		fprintf(stderr, "Error parsing DBus response: %s\n",
@@ -91,9 +90,9 @@ int register_app(const char *app_name, char *interface,
 	dbus_message_unref(msgReply);
 
 	fprintf(stderr,
-		"Registration successful with interface %s, priority %i and token %" PRIu64
+		"Registration successful with interface %s and token %" PRIu64
 		"\n",
-		interface, *priority, *token);
+		interface, *token);
 
 	return 0;
 }

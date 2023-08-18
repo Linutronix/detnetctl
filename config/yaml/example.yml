@@ -9,6 +9,7 @@ apps:
     period_ns: 100000
     offset_ns: 0
     size_bytes: 1000
+    destination_address: 48:21:0b:56:db:da
     vid: 5
     pcp: 3
     addresses: [[10.5.1.1, 24]]
@@ -18,6 +19,7 @@ apps:
     period_ns: 200000
     offset_ns: 0
     size_bytes: 2000
+    destination_address: 48:21:0b:56:db:da
     vid: 3
     pcp: 2
 ptp:

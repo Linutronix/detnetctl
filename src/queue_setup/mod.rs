@@ -22,7 +22,7 @@
 //!     ])
 //! };
 //! let mut queue_setup = DetdGateway::new(None, None);
-//! let socket_config = queue_setup.apply_config(&app_config)?;
+//! let response = queue_setup.apply_config(&app_config)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -34,12 +34,12 @@ use mockall::automock;
 
 /// Configuration returned from the queue setup specifying how to setup the socket
 #[derive(Debug)]
-pub struct SocketConfig {
+pub struct QueueSetupResponse {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
     pub logical_interface: String,
 
     /// Priority that will be routed to the appropriate qdisc
-    pub priority: u8,
+    pub priority: u32,
 }
 
 /// Defines how to apply an Ethernet configuration
@@ -53,7 +53,7 @@ pub trait QueueSetup {
     /// e.g. because no connection to `detd` was possible, the
     /// configuration itself is invalid or `detd` is in a state that
     /// does not allow applying this configuration.
-    fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig>;
+    fn apply_config(&self, config: &configuration::AppConfig) -> Result<QueueSetupResponse>;
 }
 
 #[cfg(feature = "detd")]
@@ -66,7 +66,7 @@ pub use detd::DetdGateway;
 /// Useful for testing purposes (e.g. with NICs without TSN capabilities)
 /// or if you only want to use other features without actually configuring the NIC.
 pub struct DummyQueueSetup {
-    priority: u8,
+    priority: u32,
 }
 
 impl DummyQueueSetup {
@@ -76,14 +76,14 @@ impl DummyQueueSetup {
     ///
     /// * `priority` - Priority to return from the `apply_config` call
     #[must_use]
-    pub const fn new(priority: u8) -> Self {
+    pub const fn new(priority: u32) -> Self {
         Self { priority }
     }
 }
 
 impl QueueSetup for DummyQueueSetup {
-    fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig> {
-        Ok(SocketConfig {
+    fn apply_config(&self, config: &configuration::AppConfig) -> Result<QueueSetupResponse> {
+        Ok(QueueSetupResponse {
             logical_interface: config.logical_interface.clone(),
             priority: self.priority,
         })

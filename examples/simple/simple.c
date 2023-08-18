@@ -26,8 +26,7 @@ int print_usage(char *name)
 	fprintf(stderr, "In order to register via D-Bus call as\n");
 	fprintf(stderr, "%s <hostname> <app_name>\n\n", name);
 	fprintf(stderr, "Otherwise, call as\n");
-	fprintf(stderr,
-		"%s <hostname> --skip-registration <interface> <priority>\n\n",
+	fprintf(stderr, "%s <hostname> --skip-registration <interface>\n\n",
 		name);
 	return 1;
 }
@@ -35,7 +34,6 @@ int print_usage(char *name)
 int main(int argc, char *argv[])
 {
 	char interface[IF_NAMESIZE] = { 0 };
-	int priority = 0;
 	uint64_t token = 0;
 
 	/* Parse command line arguments */
@@ -44,25 +42,22 @@ int main(int argc, char *argv[])
 	}
 
 	if (strcmp(argv[2], "--skip-registration") == 0) {
-		if (argc != 5) {
+		if (argc != 4) {
 			return print_usage(argv[0]);
 		}
 
 		strncpy(interface, argv[3], IF_NAMESIZE - 1);
-		priority = atoi(argv[4]);
 	} else {
 		if (argc != 3) {
 			return print_usage(argv[0]);
 		}
 
 		/* Register via D-Bus */
-		int8_t reg_priority = 0;
 		int result = register_app(argv[2], interface, sizeof(interface),
-					  &reg_priority, &token);
+					  &token);
 		if (result != 0) {
 			return result;
 		}
-		priority = reg_priority;
 	}
 
 	/* Resolve hostname */
@@ -86,14 +81,6 @@ int main(int argc, char *argv[])
 		int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 		if (sockfd == -1) {
 			fprintf(stderr, "Could not create socket\n");
-			return 1;
-		}
-
-		/* Setup socket priority */
-		if (setsockopt(sockfd, SOL_SOCKET, SO_PRIORITY, &priority,
-			       sizeof(priority)) < 0) {
-			fprintf(stderr, "Setting SO_PRIORITY failed\n");
-			close(sockfd);
 			return 1;
 		}
 

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::configuration;
-use crate::queue_setup::{QueueSetup, SocketConfig};
+use crate::queue_setup::{QueueSetup, QueueSetupResponse};
 use anyhow::{anyhow, Context, Result};
 use prost::Message;
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ impl DetdGateway {
 }
 
 impl QueueSetup for DetdGateway {
-    fn apply_config(&self, config: &configuration::AppConfig) -> Result<SocketConfig> {
+    fn apply_config(&self, config: &configuration::AppConfig) -> Result<QueueSetupResponse> {
         if config.offset_ns > config.period_ns {
             return Err(anyhow!("Not possible to setup if offset > period!"));
         }
@@ -116,9 +116,9 @@ impl QueueSetup for DetdGateway {
             ));
         }
 
-        Ok(SocketConfig {
+        Ok(QueueSetupResponse {
             logical_interface: response.vlan_interface,
-            priority: u8::try_from(response.socket_priority)?,
+            priority: response.socket_priority,
         })
     }
 }
@@ -135,7 +135,7 @@ mod tests {
         mut response: Box<
             dyn FnMut(&detdipc::StreamQosRequest) -> detdipc::StreamQosResponse + Send,
         >,
-    ) -> Result<SocketConfig> {
+    ) -> Result<QueueSetupResponse> {
         let detd_socket_file = tempfile::Builder::new().make(|path| UnixDatagram::bind(path))?;
 
         let gateway = tempfile::Builder::new()

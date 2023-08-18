@@ -8,7 +8,7 @@ SPDX-License-Identifier: 0BSD
 
 The purpose of detnetctl is to coordinate different applications requiring real-time communication (in the sense of TSN or DetNet) running on the same Linux system.
 The main focus is to avoid interference between different networking applications, even if they can not be fully trusted to be cooperative.
-For example, this prevents the situation that two applications send with the same `SO_PRIORITY` due to misconfiguration, bugs or security issues
+For example, this prevents the situation that two applications send to the same TSN stream due to misconfiguration, bugs or security issues
 and thus might sent their traffic in the same time slot leading to missed deadlines.
 
 In its current status, this software should be classified as demonstrator or research prototype intended for collecting experience with the requirements.
@@ -21,7 +21,7 @@ The features are introduced one by one below, but you should be able to mix and 
 
 - [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name`
 - [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
-- [eBPF Guards](#ebpf-guards) - requires `bpf` feature, skip at runtime via `--no-guard`
+- [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
@@ -45,8 +45,8 @@ Usage: detnetctl [OPTIONS]
 Options:
   -a, --app-name <APP_NAME>        Oneshot registration with the provided app name and do not spawn D-Bus service
   -c, --config <FILE>              Use YAML configuration with the provided file. Otherwise, uses sysrepo
-      --no-queue-setup <PRIORITY>  Skip queue setup and return the given PRIORITY
-      --no-guard                   Skip installing eBPFs - no interference protection!
+      --no-queue-setup <PRIORITY>  Skip queue setup and use the given priority for all streams
+      --no-dispatcher              Skip installing eBPFs - no interference protection!
       --bpf-debug-output           Print eBPF debug output to kernel tracing
       --no-interface-setup         Skip setting up the link
   -p, --ptp-instance <INSTANCE>    Configure PTP for the given instance
@@ -71,11 +71,10 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-guard --no-interface-setup --app-name app0
+./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-dispatcher --no-interface-setup --app-name app0
 ```
 
 This will only read the configuration matching to `app0` from the configuration file, performs a dry run and prints out for example the following output:
-
 
 ```console
 Request to register app0
@@ -91,7 +90,9 @@ Request to register app0
     size_bytes: Some(
         1000,
     ),
-    destination_address: None,
+    destination_address: Some(
+        MacAddress("48:21:0b:56:db:da"),
+    ),
     vid: Some(
         5,
     ),
@@ -108,20 +109,22 @@ Request to register app0
     ),
 }
   Interface enp86s0 down
-  Result of queue setup: SocketConfig {
+  Result of queue setup: QueueSetupResponse {
     logical_interface: "enp86s0.5",
     priority: 3,
 }
-  Guard installed for priority 3 on enp86s0
+  Dispatcher installed for stream StreamIdentification {
+    destination_address: MacAddress("48:21:0b:56:db:da"),
+    vlan_identifier: 5,
+} with priority 3 on enp86s0
   VLAN interface enp86s0.5 properly configured
   Added 10.5.1.1/24 to enp86s0.5
   Interface enp86s0 up
   Interface enp86s0.5 up
-  Finished after 119.6µs
+  Finished after 137.8µs
 Final result: RegisterResponse {
     logical_interface: "enp86s0.5",
-    priority: 3,
-    token: 410227199887865206,
+    token: 4366212982257606631,
 }
 ```
 
@@ -171,7 +174,7 @@ apps:
 
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 2 --no-guard
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 2 --no-dispatcher
 ```
 
 `sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
@@ -181,9 +184,46 @@ Then in a second terminal start the sample application with
 sudo -u app0 ./examples/simple/simple example.org app0
 ```
 
-## eBPF Guards
+## Interface Setup
 
-Install an eBPF at tc egress that after an application has registered, only that application (in possession of a dedicated token) can transmit for the given priority.
+Up to now the transmission took place directly via the physical interface. Now, change the logical interface in the configuration to a VLAN interface (e.g. `eth0.5`) and set the VLAN ID (5 in this case). The VLAN interface will be automatically added by `detnetctl`.
+
+### Prepare second computer
+In order to run the simple example, you also need to make sure that a webserver can be reached via this VLAN. For this, you can configure a VLAN interface on a second computer (referred to with hostname `webserver` and IP address `10.5.1.2` in the following) with e.g.
+
+```console
+webserver:~$ sudo ip link add link enp86s0 name enp86s0.5 type vlan id 5
+webserver:~$ sudo ip address add 10.5.1.2/24 dev enp86s0.5
+webserver:~$ sudo ip link set dev enp86s0.5 up
+```
+
+and install a webserver (like lighttpd) or just run one temporarily with
+
+```console
+webserver:~$ sudo python3 -m http.server 80
+```
+
+### Build
+Again at the first computer start the build:
+```console
+cargo build --no-default-features --features dbus,netlink
+```
+
+### Run
+Adapt the configuration (see `config/yaml/example.yml`) to include the required parameters and start the service with
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
+```
+And in a second terminal
+```console
+sudo -u app0 ./examples/simple/simple webserver app0
+```
+
+
+
+## eBPF Dispatcher
+
+Install an eBPF at tc egress that after an application has registered, only that application (in possession of a dedicated token) can transmit for the given TSN stream.
 
 This requires the support of the SO_TOKEN socket option. You can skip this feature if you do not have a matching kernel available.
 
@@ -194,7 +234,7 @@ sudo apt install libelf-dev clang
 ```
 2. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,bpf
+cargo build --no-default-features --features dbus,netlink,bpf
 ```
 
 If you have a libbpf version available that was synced with a kernel with SO_TOKEN patch, add the feature `libbpf_with_sotoken`.
@@ -206,35 +246,15 @@ sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
 ```
 Then in a second terminal start the sample application with
 ```console
-sudo -u app0 ./examples/simple/simple example.org app0
+sudo -u app0 ./examples/simple/simple webserver app0
 ```
 and start a second sample application with
 ```console
-sudo -u app0 ./examples/simple/simple example.org --skip-registration eth0 3
+sudo -u app0 ./examples/simple/simple webserver --skip-registration eth0.5
 ```
-Consider to replace `eth0` with your interface. The priority 3 given here matches the 3 provided to `--no-queue-setup`.
 While the first application should happily connect, the second application should be blocked, that is it will not be able to establish a connection since all its traffic gets dropped. You can monitor the filter with 
 ```console
 sudo cat /sys/kernel/debug/tracing/trace_pipe
-```
-
-## Interface Setup
-
-Up to now the transmission took place directly via the physical interface. Now, change the logical interface in the configuration to a VLAN interface (e.g. `eth0.5`) and set the VLAN ID (5 in this case). The VLAN interface will be automatically added by `detnetctl`. Make sure your network is configured accordingly to forward the HTTP requests of the `simple` example to a webserver.
-
-### Build
-```console
-cargo build --no-default-features --features dbus,bpf,netlink
-```
-
-### Run
-Adapt the configuration (see `config/yaml/example.yml`) to include the required parameters and start the service with
-```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
-```
-And in a second terminal
-```console
-sudo -u app0 ./examples/simple/simple example.org app0
 ```
 
 ## Queue setup with detd
@@ -252,7 +272,7 @@ sudo apt install protobuf-compiler
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,bpf,netlink,detd
+cargo build --no-default-features --features dbus,netlink,bpf,detd
 ```
 
 ### Run
@@ -288,7 +308,7 @@ git submodule update --init --recursive
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,bpf,netlink,detd,sysrepo
+cargo build --no-default-features --features dbus,netlink,bpf,detd,sysrepo
 ```
 
 ### Run
@@ -325,7 +345,7 @@ as well as the applications like before.
 1. Install `linuxptp`, configure and run `ptp4l` and `phc2sys`, either from your packet repository or from source as described at <https://tsn.readthedocs.io/timesync.html>.
 2. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,bpf,netlink,detd,sysrepo,ptp
+cargo build --no-default-features --features dbus,netlink,bpf,detd,sysrepo,ptp
 ```
 or equivalent
 ```console

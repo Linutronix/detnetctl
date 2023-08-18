@@ -159,7 +159,7 @@ int main(int argc, char *argv[])
 	struct Addresses src_addr = { 0 };
 
 	// Setup and bind to socket
-	int sockfd = setup_socket(interface, 0, port, &src_addr, sock_type);
+	int sockfd = setup_socket(interface, port, &src_addr, sock_type);
 	if (sockfd == -1) {
 		return 1;
 	}

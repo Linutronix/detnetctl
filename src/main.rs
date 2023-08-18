@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use detnetctl::configuration::{Configuration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Registration};
-use detnetctl::guard::{DummyGuard, Guard};
+use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
 use detnetctl::ptp::Ptp;
 use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
@@ -48,13 +48,13 @@ struct Cli {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Skip queue setup and return the given PRIORITY
+    /// Skip queue setup and use the given priority for all streams
     #[arg(long, value_name = "PRIORITY")]
-    no_queue_setup: Option<u8>,
+    no_queue_setup: Option<u32>,
 
     /// Skip installing eBPFs - no interference protection!
     #[arg(long)]
-    no_guard: bool,
+    no_dispatcher: bool,
 
     /// Print eBPF debug output to kernel tracing
     #[arg(long)]
@@ -113,10 +113,10 @@ pub async fn main() -> Result<()> {
         None => new_detd_gateway()?,
     };
 
-    let guard = if cli.no_guard {
-        Arc::new(Mutex::new(DummyGuard))
+    let dispatcher = if cli.no_dispatcher {
+        Arc::new(Mutex::new(DummyDispatcher))
     } else {
-        new_bpf_guard(cli.bpf_debug_output)?
+        new_bpf_dispatcher(cli.bpf_debug_output)?
     };
 
     let interface_setup = if cli.no_interface_setup {
@@ -134,7 +134,7 @@ pub async fn main() -> Result<()> {
                     &app_name,
                     configuration,
                     queue_setup,
-                    guard,
+                    dispatcher,
                     interface_setup,
                 )
                 .await?;
@@ -145,7 +145,7 @@ pub async fn main() -> Result<()> {
                 Arc::new(Mutex::new(controller)),
                 configuration,
                 queue_setup,
-                guard,
+                dispatcher,
                 interface_setup,
                 ptp_manager,
             )
@@ -174,7 +174,7 @@ async fn spawn_dbus_service(
     controller: Arc<Mutex<Controller>>,
     configuration: Arc<Mutex<dyn Configuration + Send>>,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
-    guard: Arc<Mutex<dyn Guard + Send>>,
+    dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
@@ -186,7 +186,7 @@ async fn spawn_dbus_service(
         let cloned_controller = controller.clone();
         let cloned_configuration = configuration.clone();
         let cloned_queue_setup = queue_setup.clone();
-        let cloned_guard = guard.clone();
+        let cloned_dispatcher = dispatcher.clone();
         let cloned_interface_setup = interface_setup.clone();
         Box::pin(async move {
             cloned_controller
@@ -196,7 +196,7 @@ async fn spawn_dbus_service(
                     &app_name,
                     cloned_configuration,
                     cloned_queue_setup,
-                    cloned_guard,
+                    cloned_dispatcher,
                     cloned_interface_setup,
                 )
                 .await
@@ -244,7 +244,7 @@ async fn spawn_dbus_service(
     _controller: Arc<Mutex<Controller>>,
     _configuration: Arc<Mutex<dyn Configuration + Send>>,
     _queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
-    _guard: Arc<Mutex<dyn Guard + Send>>,
+    _dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     _interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     _ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
@@ -252,15 +252,15 @@ async fn spawn_dbus_service(
 }
 
 #[cfg(feature = "bpf")]
-use detnetctl::guard::BPFGuard;
+use detnetctl::dispatcher::BPFDispatcher;
 #[cfg(feature = "bpf")]
-fn new_bpf_guard(debug_output: bool) -> Result<Arc<Mutex<dyn Guard + Send>>> {
-    Ok(Arc::new(Mutex::new(BPFGuard::new(debug_output))))
+fn new_bpf_dispatcher(debug_output: bool) -> Result<Arc<Mutex<dyn Dispatcher + Send>>> {
+    Ok(Arc::new(Mutex::new(BPFDispatcher::new(debug_output))))
 }
 
 #[cfg(not(feature = "bpf"))]
-fn new_bpf_guard(_debug_output: bool) -> Result<Arc<Mutex<dyn Guard + Send>>> {
-    Err(feature_missing_error("bpf", "--no-guard"))
+fn new_bpf_dispatcher(_debug_output: bool) -> Result<Arc<Mutex<dyn Dispatcher + Send>>> {
+    Err(feature_missing_error("bpf", "--no-dispatcher"))
 }
 
 #[cfg(feature = "sysrepo")]

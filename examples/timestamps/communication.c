@@ -33,8 +33,8 @@ enum SockTypes parse_sock_type(const char *str)
 	}
 }
 
-int setup_socket(const char *interface, int priority, int port,
-		 struct Addresses *src_addr, enum SockTypes sock_type)
+int setup_socket(const char *interface, int port, struct Addresses *src_addr,
+		 enum SockTypes sock_type)
 {
 	int sockfd = -1;
 
@@ -128,16 +128,6 @@ int setup_socket(const char *interface, int priority, int port,
 			       sizeof(int)) < 0) {
 			fprintf(stderr,
 				"Could not set IP_RECVERR for socket\n");
-			close(sockfd);
-			return -1;
-		}
-	}
-
-	// Setup socket priority
-	if (priority >= 0) {
-		if (setsockopt(sockfd, SOL_SOCKET, SO_PRIORITY, &priority,
-			       sizeof(priority)) < 0) {
-			fprintf(stderr, "Setting SO_PRIORITY failed\n");
 			close(sockfd);
 			return -1;
 		}

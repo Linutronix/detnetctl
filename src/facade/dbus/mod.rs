@@ -154,7 +154,7 @@ fn register_methods(
         b.method_with_cr_async(
             "Register",
             ("app_name",),
-            ("interface", "priority", "token"),
+            ("interface", "token"),
             move |mut context, _, (app_name,): (String,)| {
                 let tx_clone = tx_for_register.clone();
 
@@ -180,7 +180,7 @@ fn register_methods(
                     let response = resp_rx.await;
                     context.reply(match response {
                         Ok(r) => match r {
-                            Ok(r) => Ok((r.logical_interface, r.priority, r.token)),
+                            Ok(r) => Ok((r.logical_interface, r.token)),
                             Err(e) => Err(dbus::MethodErr::failed(&e)),
                         },
                         Err(e) => Err(dbus::MethodErr::failed(&e)),
@@ -380,7 +380,6 @@ mod tests {
     const APP_NAME: &str = "testapp";
     const SENDER: &str = ":1.5";
     const INTERFACE: &str = "eth0.5";
-    const PRIORITY: u8 = 3;
     const TOKEN: u64 = 12345;
 
     type CatchedResponse = Arc<Mutex<Option<Message>>>;
@@ -455,7 +454,6 @@ mod tests {
                     Box::pin(async move {
                         Ok(controller::RegisterResponse {
                             logical_interface: String::from(INTERFACE),
-                            priority: PRIORITY,
                             token: TOKEN,
                         })
                     })
@@ -511,10 +509,8 @@ mod tests {
 
         assert!(result.register_called);
 
-        let (interface, priority, token): (Option<String>, Option<u8>, Option<u64>) =
-            result.msg.get3();
+        let (interface, token): (Option<String>, Option<u64>) = result.msg.get2();
         assert_eq!(interface, Some(String::from(INTERFACE)));
-        assert_eq!(priority, Some(PRIORITY));
         assert_eq!(token, Some(TOKEN));
 
         Ok(())
