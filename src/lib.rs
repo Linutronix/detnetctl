@@ -74,6 +74,8 @@
 #![warn(clippy::verbose_file_reads)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::let_underscore_untyped)]
+#![allow(clippy::arc_with_non_send_sync)] // false positive (https://github.com/rust-lang/rust-clippy/issues/11382)
+#![allow(clippy::significant_drop_tightening)] // false positive (https://github.com/rust-lang/rust-clippy/issues/11279)
 
 pub mod configuration;
 pub mod controller;

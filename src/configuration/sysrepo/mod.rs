@@ -144,7 +144,7 @@ impl SysrepoConfiguration {
 
         // Connect to sysrepo
         let Ok(mut sr) = SrConn::new(0) else {
-            return Err(anyhow!("Could not connect to sysrepo"))
+            return Err(anyhow!("Could not connect to sysrepo"));
         };
 
         // Start session

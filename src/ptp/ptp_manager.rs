@@ -335,7 +335,7 @@ impl Ptp for PtpManager {
         let response: GrandmasterSettingsNp = send_wait_recv(&mut uds_fd, &dest_addr, &msg)
             .with_context(|| {
                 let has_gptp = if config.gptp_profile { "" } else { "No " };
-                format!("Sending grandmaster settings failed. ({}gPTP profile configured. Does that match ptp4l?)", has_gptp)
+                format!("Sending grandmaster settings failed. ({has_gptp}gPTP profile configured. Does that match ptp4l?)")
             })?;
 
         println!("Received response {response}");

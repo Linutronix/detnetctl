@@ -41,10 +41,7 @@ pub use bpf::BPFGuard;
 ///
 /// Useful for testing purposes (e.g. on kernels without the `SO_TOKEN` feature)
 /// or if you only want to use other features without actually installing eBPFs.
-#[derive(Default)]
 pub struct DummyGuard;
-
-impl DummyGuard {}
 
 impl Guard for DummyGuard {
     fn protect_priority(&mut self, _interface: &str, _priority: u8, _token: u64) -> Result<()> {

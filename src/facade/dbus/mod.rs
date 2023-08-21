@@ -236,9 +236,9 @@ async fn command_processor(
 ) {
     // delay token to delay shutdown until thread is finished
     let Ok(_delay_token) = shutdown.delay_shutdown_token() else {
-                resource_handle.abort();
-                return;
-            };
+        resource_handle.abort();
+        return;
+    };
 
     while let Some(Some(cmd)) = shutdown.wrap_cancel(command_rx.recv()).await {
         match cmd {
