@@ -5,6 +5,10 @@
 use anyhow::{anyhow, Context, Result};
 use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
 use std::collections::HashMap;
+use std::fs::File;
+use std::os::fd::AsRawFd;
+use std::path::Path;
+use std::sync::Arc;
 
 #[cfg(not(test))]
 #[allow(clippy::pedantic, clippy::nursery, clippy::restriction)] // this is generated code
@@ -35,60 +39,63 @@ use crate::dispatcher::{Dispatcher, StreamIdentification};
 #[derive(Debug)]
 struct Stream {
     restrictions: u8,
-    socket_token: u64, // only read if indicated by restrictions
     shifted_pcp: u16,
     egress_priority: u32,
 }
 
 impl Stream {
-    fn new(priority: u32, pcp: u8, token: Option<u64>) -> Self {
-        let shifted_pcp: u16 = u16::from(pcp) << 13;
-        token.map_or(
-            Self {
-                restrictions: 0,
-                socket_token: 0,
-                shifted_pcp,
-                egress_priority: priority,
-            },
-            |socket_token| Self {
-                restrictions: 1,
-                socket_token,
-                shifted_pcp,
-                egress_priority: priority,
-            },
-        )
+    fn new(priority: u32, pcp: u8, is_protected: bool) -> Self {
+        Self {
+            restrictions: u8::from(is_protected),
+            shifted_pcp: u16::from(pcp) << 13,
+            egress_priority: priority,
+        }
     }
 
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 15] {
-        let mut result: [u8; 15] = [0; 15];
+    pub fn to_bytes(&self) -> [u8; 7] {
+        let mut result: [u8; 7] = [0; 7];
         result[0] = self.restrictions;
-        result[1..9].copy_from_slice(&self.socket_token.to_ne_bytes()[..]);
-        result[9..11].copy_from_slice(&self.shifted_pcp.to_ne_bytes()[..]);
-        result[11..15].copy_from_slice(&self.egress_priority.to_ne_bytes()[..]);
+        result[1..3].copy_from_slice(&self.shifted_pcp.to_ne_bytes()[..]);
+        result[3..7].copy_from_slice(&self.egress_priority.to_ne_bytes()[..]);
         result
     }
 
     #[cfg(test)]
-    pub fn from_bytes(bytes: [u8; 15]) -> Result<Self> {
+    pub fn from_bytes(bytes: [u8; 7]) -> Result<Self> {
         Ok(Self {
             restrictions: bytes[0],
-            socket_token: u64::from_ne_bytes(
-                bytes[1..9]
-                    .try_into()
-                    .map_err(|_e| anyhow!("Invalid byte number"))?,
-            ),
             shifted_pcp: u16::from_ne_bytes(
-                bytes[9..11]
+                bytes[1..3]
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
             egress_priority: u32::from_ne_bytes(
-                bytes[11..15]
+                bytes[3..7]
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
         })
+    }
+}
+
+impl StreamIdentification {
+    /// Convert into fixed-size array
+    ///
+    /// # Errors
+    /// Currently returns error if any of the attributes are None
+    pub fn to_bytes(&self) -> Result<[u8; 8]> {
+        let destination_address = self.destination_address.ok_or_else(|| {
+            anyhow!("Streams without destination address can currently not be handled")
+        })?;
+        let vlan_identifier = self
+            .vlan_identifier
+            .ok_or_else(|| anyhow!("Streams without VLAN ID can currently not be handled"))?;
+
+        let mut result: [u8; 8] = [0; 8];
+        result[0..6].copy_from_slice(destination_address.as_bytes());
+        result[6..8].copy_from_slice(&vlan_identifier.to_ne_bytes());
+        Ok(result)
     }
 }
 
@@ -114,12 +121,12 @@ impl<'a> Dispatcher for BPFDispatcher<'a> {
         interface: &str,
         stream_identification: &StreamIdentification,
         priority: u32,
-        pcp: u8,
-        token: Option<u64>,
+        pcp: Option<u8>,
+        cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
         self.with_interface(interface, |iface| {
             iface
-                .configure_stream(stream_identification, priority, pcp, token)
+                .configure_stream(stream_identification, priority, pcp, cgroup)
                 .context("Failed to configure stream")
         })
     }
@@ -128,11 +135,11 @@ impl<'a> Dispatcher for BPFDispatcher<'a> {
         &mut self,
         interface: &str,
         priority: u32,
-        token: Option<u64>,
+        cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
         self.with_interface(interface, |iface| {
             iface
-                .configure_best_effort(priority, token)
+                .configure_best_effort(priority, cgroup)
                 .context("Failed to configure best effort")
         })
     }
@@ -192,17 +199,19 @@ impl<'a> BPFDispatcher<'a> {
         tc_egress.attach()?;
 
         // configure default best-effort
-        skel.maps_mut().streams().update(
-            &0_u32.to_ne_bytes(),
-            &Stream::new(0, 0, None).to_bytes(),
-            MapFlags::ANY,
-        )?;
+        skel.maps_mut()
+            .streams()
+            .update(
+                &0_u32.to_ne_bytes(),
+                &Stream::new(0, 0, false).to_bytes(),
+                MapFlags::ANY,
+            )
+            .context("Failed to configure initial best-effort stream")?;
 
-        skel.maps_mut().num_streams().update(
-            &0_u32.to_ne_bytes(),
-            &1_u16.to_ne_bytes(),
-            MapFlags::ANY,
-        )?;
+        skel.maps_mut()
+            .num_streams()
+            .update(&0_u32.to_ne_bytes(), &1_u16.to_ne_bytes(), MapFlags::ANY)
+            .context("Failed to set num_streams")?;
 
         self.interfaces.insert(
             String::from(interface),
@@ -226,10 +235,10 @@ impl<'a> BPFInterface<'a> {
         &mut self,
         stream_identification: &StreamIdentification,
         priority: u32,
-        pcp: u8,
-        token: Option<u64>,
+        pcp: Option<u8>,
+        cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        let stream_id_bytes = stream_identification.to_bytes();
+        let stream_id_bytes = stream_identification.to_bytes()?;
 
         // Check if stream already exists, otherwise calculate stream_handle from number of streams
         let mut adding_new_stream = false;
@@ -268,11 +277,9 @@ impl<'a> BPFInterface<'a> {
             num_streams
         };
 
-        self.skel.maps_mut().streams().update(
-            &u32::from(stream_handle).to_ne_bytes(),
-            &Stream::new(priority, pcp, token).to_bytes(),
-            MapFlags::ANY,
-        )?;
+        let pcp = pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
+
+        self.update_stream_maps(u32::from(stream_handle), priority, pcp, cgroup)?;
 
         if adding_new_stream {
             let new_num_streams = stream_handle + 1;
@@ -293,10 +300,39 @@ impl<'a> BPFInterface<'a> {
         Ok(())
     }
 
-    pub fn configure_best_effort(&mut self, priority: u32, token: Option<u64>) -> Result<()> {
+    pub fn configure_best_effort(
+        &mut self,
+        priority: u32,
+        cgroup: Option<Arc<Path>>,
+    ) -> Result<()> {
+        self.update_stream_maps(0, priority, 0 /* best-effort PCP */, cgroup)
+    }
+
+    fn update_stream_maps(
+        &mut self,
+        stream_handle: u32,
+        priority: u32,
+        pcp: u8,
+        cgroup: Option<Arc<Path>>,
+    ) -> Result<()> {
+        let mut is_protected = false;
+        if let Some(cgroup) = cgroup {
+            is_protected = true;
+            let full_cgroup_path =
+                Path::new("/sys/fs/cgroup").join(cgroup.strip_prefix("/").unwrap_or(&cgroup));
+            let cgroup_file = File::open(full_cgroup_path)?;
+            let cgroup_fd = cgroup_file.as_raw_fd();
+
+            self.skel.maps_mut().stream_cgroups().update(
+                &stream_handle.to_ne_bytes(),
+                &cgroup_fd.to_ne_bytes(),
+                MapFlags::ANY,
+            )?;
+        }
+
         self.skel.maps_mut().streams().update(
-            &0_u32.to_ne_bytes(),
-            &Stream::new(priority, 0 /* best-effort PCP */, token).to_bytes(),
+            &stream_handle.to_ne_bytes(),
+            &Stream::new(priority, pcp, is_protected).to_bytes(),
             MapFlags::ANY,
         )?;
 
@@ -325,31 +361,37 @@ mod tests {
     use mocks::MockOpenNetworkDispatcherSkel as OpenNetworkDispatcherSkel;
     use mocks::MockProgram as Program;
     use mocks::{MockInnerMapInfo, MockMapInfo};
+    use regex::Regex;
+    use std::fs;
+    use std::io;
+    use std::io::BufRead;
+    use std::path::Path;
+    use std::process;
+    use std::sync::Arc;
 
     const INTERFACE: &str = "eth12";
     const PCP: u8 = 3;
     const PRIORITY: u32 = 6;
-    const TOKEN: u64 = 0x9876_1234_1234_1298;
     const STREAM_ID: StreamIdentification = StreamIdentification {
-        destination_address: MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]),
-        vlan_identifier: 3,
+        destination_address: Some(MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb])),
+        vlan_identifier: Some(3),
     };
 
-    fn generate_skel_builder() -> NetworkDispatcherSkelBuilder {
+    fn generate_skel_builder(cgroup: Arc<Path>) -> NetworkDispatcherSkelBuilder {
         let mut builder = NetworkDispatcherSkelBuilder::default();
         builder
             .expect_open()
             .times(1)
-            .returning(|| Ok(generate_open_skel()));
+            .returning(move || Ok(generate_open_skel(cgroup.clone())));
         builder
     }
 
-    fn generate_open_skel() -> OpenNetworkDispatcherSkel {
+    fn generate_open_skel(cgroup: Arc<Path>) -> OpenNetworkDispatcherSkel {
         let mut open_skel = OpenNetworkDispatcherSkel::default();
         open_skel
             .expect_load()
             .times(1)
-            .returning(|| Ok(generate_skel()));
+            .returning(move || Ok(generate_skel(cgroup.clone())));
         open_skel.expect_rodata().times(1).returning(|| {
             mocks::network_dispatcher_rodata_types::rodata {
                 debug_output: false,
@@ -358,10 +400,11 @@ mod tests {
         open_skel
     }
 
-    fn generate_skel<'a>() -> NetworkDispatcherSkel<'a> {
+    fn generate_skel<'a>(cgroup: Arc<Path>) -> NetworkDispatcherSkel<'a> {
         let mut skel = NetworkDispatcherSkel::default();
         skel.expect_progs().returning(generate_progs);
-        skel.expect_maps_mut().returning(generate_maps_mut);
+        skel.expect_maps_mut()
+            .returning(move || generate_maps_mut(cgroup.clone()));
         skel.expect_maps().returning(generate_maps);
         skel
     }
@@ -381,7 +424,7 @@ mod tests {
         prog
     }
 
-    fn generate_maps_mut() -> NetworkDispatcherMapsMut {
+    fn generate_maps_mut(cgroup: Arc<Path>) -> NetworkDispatcherMapsMut {
         let mut maps_mut = NetworkDispatcherMapsMut::default();
         maps_mut.expect_streams().returning(|| {
             let mut map = Map::default();
@@ -391,17 +434,38 @@ mod tests {
                     0 => {
                         assert_eq!(stream.egress_priority, 0);
                         assert_eq!(stream.shifted_pcp, 0);
-                        assert_eq!(stream.socket_token, 0);
                     }
                     1 => {
                         assert_eq!(stream.egress_priority, PRIORITY);
                         assert_eq!(stream.shifted_pcp, u16::from(PCP) << 13);
-                        assert_eq!(stream.socket_token, TOKEN);
                     }
                     _ => panic!("Invalid stream_handle"),
                 }
                 Ok(())
             });
+            map
+        });
+
+        maps_mut.expect_stream_cgroups().returning(move || {
+            let mut map = Map::default();
+            let cgroup = cgroup.clone();
+            map.expect_update()
+                .times(1)
+                .returning(move |key, value, _| {
+                    assert_eq!(key, 1_u32.to_ne_bytes());
+
+                    let raw_fd = u32::from_ne_bytes(
+                        value
+                            .try_into()
+                            .map_err(|_e| anyhow!("Invalid byte number"))?,
+                    );
+                    let captured_cgroup =
+                        Path::new(&format!("/proc/self/fd/{raw_fd}")).read_link()?;
+                    let full_cgroup_path = Path::new("/sys/fs/cgroup")
+                        .join(cgroup.strip_prefix("/").unwrap_or(&cgroup));
+                    assert_eq!(captured_cgroup, *full_cgroup_path);
+                    Ok(())
+                });
             map
         });
 
@@ -416,7 +480,7 @@ mod tests {
         maps_mut.expect_stream_handles().returning(|| {
             let mut map = Map::default();
             map.expect_update().times(1).returning(|key, value, _| {
-                let stream_id_bytes = STREAM_ID.to_bytes();
+                let stream_id_bytes = STREAM_ID.to_bytes().unwrap();
                 assert_eq!(key, stream_id_bytes);
                 assert_eq!(value, vec![1, 0]);
                 Ok(())
@@ -460,9 +524,12 @@ mod tests {
 
     #[test]
     fn test_happy() -> Result<()> {
+        let cgroup = get_cgroup(process::id())?;
+        let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
+
         let mut dispatcher = BPFDispatcher {
             interfaces: HashMap::default(),
-            generate_skel: Box::new(generate_skel_builder),
+            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
             nametoindex: Box::new(|interface| {
                 assert_eq!(interface, INTERFACE);
                 Ok(3)
@@ -470,16 +537,47 @@ mod tests {
             debug_output: false,
         };
 
-        dispatcher.configure_stream(INTERFACE, &STREAM_ID, PRIORITY, PCP, Some(TOKEN))?;
+        dispatcher.configure_stream(
+            INTERFACE,
+            &STREAM_ID,
+            PRIORITY,
+            Some(PCP),
+            Some(Path::new(&cgroup).into()),
+        )?;
         Ok(())
+    }
+
+    fn get_cgroup(pid: u32) -> Result<String> {
+        let lines = read_lines(format!("/proc/{pid}/cgroup"))?;
+        let re = Regex::new(r"0::([^ ]*)")?;
+        for line in lines.flatten() {
+            if let Some(caps) = re.captures(&line) {
+                if let Some(m) = caps.get(1) {
+                    return Ok(m.as_str().to_owned());
+                }
+            }
+        }
+
+        Err(anyhow!("cgroup not found"))
+    }
+
+    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<fs::File>>>
+    where
+        P: AsRef<Path>,
+    {
+        let file = fs::File::open(filename)?;
+        Ok(io::BufReader::new(file).lines())
     }
 
     #[test]
     #[should_panic(expected = "interface not found")]
     fn test_interface_not_found() {
+        let cgroup = get_cgroup(process::id()).unwrap();
+        let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
+
         let mut dispatcher = BPFDispatcher {
             interfaces: HashMap::default(),
-            generate_skel: Box::new(generate_skel_builder),
+            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
             nametoindex: Box::new(|interface| {
                 assert_eq!(interface, INTERFACE);
                 Err(anyhow!("interface not found"))
@@ -488,7 +586,13 @@ mod tests {
         };
 
         dispatcher
-            .configure_stream(INTERFACE, &STREAM_ID, PRIORITY, PCP, Some(TOKEN))
+            .configure_stream(
+                INTERFACE,
+                &STREAM_ID,
+                PRIORITY,
+                Some(PCP),
+                Some(Path::new(&cgroup).into()),
+            )
             .unwrap();
     }
 }

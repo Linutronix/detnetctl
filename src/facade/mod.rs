@@ -9,19 +9,21 @@
 //! ### org.detnet.detnetctl.Register
 //!
 //! ```markdown
-//! Register(app_name: string) -> (interface: string, token: u64)
+//! Register(app_name: string, cgroup: string) -> (interface: string)
 //! ```
 //!
 //! The caller needs to be owner of `org.detnet.apps.{app_name}`. Otherwise, the method call is
-//! rejected. Together with a corresponding D-Bus policy, this only allows the correct application
-//! to register itself.
+//! rejected. Together with a corresponding D-Bus policy, this only allows a permitted application
+//! to register a DetNet application.
 //!
 //! #### Parameters
 //! * **app_name**: The name of the app to register. Matches the app name in the configuration.
+//! * **cgroup**: The cgroup that should be allowed to generate traffic for this app.
+//!               Provide as path rooted in the cgroup fs as it is also provided by /proc/\<PID\>/cgroup,
+//!               e.g. /user.slice/user-1001.slice/user@1001.service/app.slice/detnetctl.app0.scope
 //!
 //! #### Returns
 //! * **interface**: The name of the (virtual) interface to use for setting up the socket.
-//! * **token**: The SO_TOKEN to set for the socket.
 //!
 //! ### org.detnet.detnetctl.PtpStatus
 //!
@@ -77,6 +79,7 @@
 //! #
 //! # tokio_test::block_on(async {
 //! use std::fs::File;
+//! use std::path::PathBuf;
 //! use std::sync::Arc;
 //! use futures::lock::Mutex;
 //!
@@ -91,8 +94,9 @@
 //! let mut ptp = Arc::new(Mutex::new(PtpManager::new()));
 //!
 //! facade.setup(
-//!     Box::new(move |app_name| {
+//!     Box::new(move |app_name,cgroup| {
 //!         let app_name = String::from(app_name);
+//!         let cgroup = PathBuf::from(cgroup);
 //!         let cloned_controller = controller.clone();
 //!         let cloned_configuration = configuration.clone();
 //!         let cloned_queue_setup = queue_setup.clone();
@@ -101,6 +105,7 @@
 //!         Box::pin(async move {
 //!             cloned_controller.lock().await.register(
 //!                 &app_name,
+//!                 &cgroup,
 //!                 cloned_configuration,
 //!                 cloned_queue_setup,
 //!                 cloned_dispatcher,
@@ -134,7 +139,7 @@ mod dbus;
 pub type RegisterFuture =
     Pin<Box<dyn Future<Output = Result<RegisterResponse, anyhow::Error>> + Send>>;
 /// Returns a future to await for registration
-pub type RegisterCallback = Box<dyn for<'a> FnMut(&'a str) -> RegisterFuture + Send>;
+pub type RegisterCallback = Box<dyn for<'a> FnMut(&'a str, &'a str) -> RegisterFuture + Send>;
 
 /// Future to await to get the PTP status
 pub type PtpStatusFuture =

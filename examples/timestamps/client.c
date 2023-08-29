@@ -4,7 +4,6 @@
 
 #include "communication.h"
 #include "client_loop.h"
-#include "../common/registration.h"
 #include "realtime.h"
 
 #include <stdio.h>
@@ -25,10 +24,6 @@ static void print_usage(const char *filepath)
 	fprintf(stderr,
 		"\nUsage: %s [options] server_ip\n"
 		"\nwith the following options:\n"
-		"  -a, --app  [app_name]        Register at the node controller with the provided app_name.\n"
-		"                               Can not be combined with --interface, because that will be\n"
-		"                               provided automatically during registration!\n"
-		"                               If not provided, no registration at the node controller takes place!\n"
 		"  -s, --socktype  [socktype]   One of\n"
 		"                                 INET_DGRAM           For socket(AF_INET, SOCK_DGRAM, 0)\n"
 		"                                 (default)            Send only application payload to kernel\n"
@@ -47,7 +42,6 @@ static void print_usage(const char *filepath)
 		"                                                      Send application payload, UDP, IP and Ethernet header to kernel\n"
 		"                                                      MAC address needs to be provided via --mac!\n"
 		"  -i, --interface [interface]  Interface to bind to / to use.\n"
-		"                               Do not explicitly bind to interface if not provided as CLI and not via detnetctl registration.\n"
 		"  -p, --port      [port]       Source and destination port (default: " STR(
 			DEFAULT_PORT) ")\n"
 				      "  -m, --mac       [macaddress] Destination MAC address (required for PACKET_DGRAM, PACKET_RAW and XDP, ignored for all others).\n"
@@ -60,8 +54,6 @@ static void print_usage(const char *filepath)
 
 int main(int argc, char *argv[])
 {
-	bool do_registration = false;
-	char app_name[MAX_APPNAME_SIZE + 1] = { 0 };
 	char interface[IF_NAMESIZE] = { 0 };
 	uint16_t port = DEFAULT_PORT;
 	enum SockTypes sock_type = SOCK_TYPE_INET_DGRAM;
@@ -77,7 +69,6 @@ int main(int argc, char *argv[])
 
 	while (1) {
 		static struct option long_options[] = {
-			{ "app", required_argument, 0, 'a' },
 			{ "interface", required_argument, 0, 'i' },
 			{ "port", required_argument, 0, 'p' },
 			{ "mac", required_argument, 0, 'm' },
@@ -96,17 +87,6 @@ int main(int argc, char *argv[])
 		}
 
 		switch (c) {
-		case 'a':
-			do_registration = true;
-			if (strlen(optarg) > sizeof(app_name) - 1) {
-				fprintf(stderr,
-					"App name %s shall not be longer than %zu characters!\n",
-					optarg, sizeof(app_name) - 1);
-				print_usage(argv[0]);
-				return 1;
-			}
-			strncpy(app_name, optarg, sizeof(app_name));
-			break;
 		case 'i':
 			if (strlen(optarg) > sizeof(interface) - 1) {
 				fprintf(stderr,
@@ -238,37 +218,12 @@ int main(int argc, char *argv[])
 
 	const char *destination_ip = argv[argc - 1];
 
-	// Perform registration (if requested)
-	uint64_t token = 0;
-	if (do_registration) {
-		int result = register_app(app_name, interface,
-					  sizeof(interface), &token);
-		if (result != 0) {
-			return result;
-		}
-	}
-
 	// Setup socket
 	struct Addresses src_addr = {};
 	struct Addresses dest_addr = {};
 	int sockfd = setup_socket(interface, port, &src_addr, sock_type);
 	if (sockfd == -1) {
 		return 1;
-	}
-
-	if (do_registration) {
-#ifdef SO_TOKEN
-		if (setsockopt(sockfd, SOL_SOCKET, SO_TOKEN, &token,
-			       sizeof(token)) < 0) {
-			fprintf(stderr, "Setting SO_TOKEN failed\n");
-			close(sockfd);
-			return -1;
-		}
-#else
-		fprintf(stderr,
-			"WARNING: SO_TOKEN not available, so token is not set!\n");
-
-#endif
 	}
 
 	// Fill destination address

@@ -6,7 +6,6 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include "socket_token.h"
 
 #define TC_ACT_OK 0
 #define TC_ACT_SHOT 2
@@ -22,7 +21,6 @@ struct null_stream_identification {
 
 struct stream {
 	u8 restrictions;
-	u64 socket_token; // only read if indicated by restrictions
 	u16 shifted_pcp;
 	u32 egress_priority;
 } __attribute__((__packed__));
@@ -51,6 +49,16 @@ struct {
 	__type(key, u32); // stream handle
 	__type(value, struct stream);
 } streams SEC(".maps");
+
+// Array of cgroups for each stream
+// Only accessed and checked if indicated
+// by stream.restrictions
+struct {
+	__uint(type, BPF_MAP_TYPE_CGROUP_ARRAY);
+	__uint(max_entries, MAX_STREAMS);
+	__type(key, u32); // stream handle
+	__type(value, u32);
+} stream_cgroups SEC(".maps");
 
 const volatile bool debug_output = false;
 
@@ -119,13 +127,21 @@ int tc_egress(struct __sk_buff *ctx)
 					stream_handle);
 			}
 		} else {
-			u64 token = bpf_get_socket_token(ctx);
-			if (stream->socket_token != token) {
+			long cgroup_check = bpf_skb_under_cgroup(
+				ctx, &stream_cgroups, stream_handle);
+			if (cgroup_check != 1) {
 				if (debug_output) {
-					bpf_printk(
-						"Dropping packet to restricted stream (required token %lu, provided token %lu)",
-						stream->socket_token, token);
+					if (cgroup_check == 0) {
+						bpf_printk(
+							"Dropping packet to restricted stream");
+					} else {
+						bpf_printk(
+							"Dropping packet due to internal error: Checking cgroup for stream %i failed: %i",
+							stream_handle,
+							cgroup_check);
+					}
 				}
+
 				return TC_ACT_SHOT;
 			}
 		}

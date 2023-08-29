@@ -19,7 +19,7 @@ For feedback or if you have a related productive use case, please contact [Linut
 The detnetctl software is split up into features that can be individually enabled to make it possible to try it out without the full set of dependencies.
 The features are introduced one by one below, but you should be able to mix and match by adapting the respective `cargo build` commands.
 
-- [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name`
+- [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name` and `--cgroup`
 - [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
@@ -44,6 +44,7 @@ Usage: detnetctl [OPTIONS]
 
 Options:
   -a, --app-name <APP_NAME>        Oneshot registration with the provided app name and do not spawn D-Bus service
+  -g, --cgroup <CGROUP>            cgroup of the app required for oneshot registration
   -c, --config <FILE>              Use YAML configuration with the provided file. Otherwise, uses sysrepo
       --no-queue-setup <PRIORITY>  Skip queue setup and use the given priority for all streams
       --no-dispatcher              Skip installing eBPFs - no interference protection!
@@ -71,7 +72,7 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-dispatcher --no-interface-setup --app-name app0
+./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-dispatcher --no-interface-setup --app-name app0 --cgroup /user.slice/
 ```
 
 This will only read the configuration matching to `app0` from the configuration file, performs a dry run and prints out for example the following output:
@@ -114,32 +115,31 @@ Request to register app0
     priority: 3,
 }
   Dispatcher installed for stream StreamIdentification {
-    destination_address: MacAddress("48:21:0b:56:db:da"),
-    vlan_identifier: 5,
+    destination_address: Some(
+        MacAddress("48:21:0b:56:db:da"),
+    ),
+    vlan_identifier: Some(
+        5,
+    ),
 } with priority 3 on enp86s0
   VLAN interface enp86s0.5 properly configured
   Added 10.5.1.1/24 to enp86s0.5
   Interface enp86s0 up
   Interface enp86s0.5 up
-  Finished after 137.8µs
+  Finished after 131.4µs
 Final result: RegisterResponse {
     logical_interface: "enp86s0.5",
-    token: 4366212982257606631,
 }
 ```
 
 ## Registration via D-Bus Interface
 
-Allows for applications to register themselves via D-Bus. For the interface description see [facade].
+Allows for registration of via D-Bus. This can be done by the application itself (for the interface description see [facade]) or via the `detnetctl-run` tool. For the former, the application needs to take care to put itself in an adequate cgroup (see [eBPF Dispatcher](#ebpf-dispatcher)), while the `detnetctl-run` tool requires a running systemd user session.
 
 ### Build
 
-1. Make sure you have D-Bus running on your system
-2. Create a user that should later run the application, e.g.
-```console
-sudo adduser app0
-```
-2. Make yourself familiar with the D-Bus policy in `config/dbus/detnetctl.conf` and install it
+1. Make sure you have D-Bus and systemd running on your system
+2. Make yourself familiar with the D-Bus policy in `config/dbus/detnetctl.conf` and change the policy user for the application to your username. Finally install it with
 ```console
 sudo cp config/dbus/detnetctl.conf /etc/dbus-1/system.d/
 ```
@@ -168,25 +168,38 @@ Copy and adapt the configuration file according to your preference, especially t
 ```yaml
 apps:
   app0:
-    logical_interface: eth0
-    physical_interface: eth0
+    logical_interface: enp86s0
+    physical_interface: enp86s0
 ```
 
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 2 --no-dispatcher
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 2 --no-dispatcher --no-interface-setup
 ```
 
 `sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
 
 Then in a second terminal start the sample application with
 ```console
-sudo -u app0 ./examples/simple/simple example.org app0
+./target/debug/detnetctl-run app0 ./examples/simple/simple example.org
 ```
+
+Here `app0` references the application in the configuration and everything else is the command and its arguments that will be started by `detnetctl-run`.
 
 ## Interface Setup
 
-Up to now the transmission took place directly via the physical interface. Now, change the logical interface in the configuration to a VLAN interface (e.g. `eth0.5`) and set the VLAN ID (5 in this case). The VLAN interface will be automatically added by `detnetctl`.
+Up to now the transmission took place directly via the physical interface. Now, change the logical interface in the configuration to a VLAN interface (e.g. `enp86s0.5`) and set the VLAN ID (5 in this case). The VLAN interface will be automatically added by `detnetctl`.
+
+### Configuration
+Adapt the configuration to include the interface configuration, e.g.
+```yaml
+apps:
+  app0:
+    logical_interface: enp86s0.5
+    physical_interface: enp86s0
+    addresses: [[10.5.1.1, 24]]
+    vid: 5
+```
 
 ### Prepare second computer
 In order to run the simple example, you also need to make sure that a webserver can be reached via this VLAN. For this, you can configure a VLAN interface on a second computer (referred to with hostname `webserver` and IP address `10.5.1.2` in the following) with e.g.
@@ -210,22 +223,39 @@ cargo build --no-default-features --features dbus,netlink
 ```
 
 ### Run
-Adapt the configuration (see `config/yaml/example.yml`) to include the required parameters and start the service with
+Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3 --no-dispatcher
 ```
 And in a second terminal
 ```console
-sudo -u app0 ./examples/simple/simple webserver app0
+./target/debug/detnetctl-run app0 ./examples/simple/simple 10.5.1.2
 ```
 
-
+The sample application will now send over the VLAN. However, if you now start a second application with 
+```console
+./examples/simple/simple 10.5.1.2
+```
+it will happily connect, too. That is normal for general networking, but in DetNet/TSN context this implies that two applications generate traffic for the same DetNet flow or TSN stream respectively. Since the realtime guarantees for a DetNet flow or TSN stream are always only provided for a given amount of traffic, this can be very problematic and thus the access will be restricted in the next section.
 
 ## eBPF Dispatcher
 
-Install an eBPF at tc egress that after an application has registered, only that application (in possession of a dedicated token) can transmit for the given TSN stream.
+Installs an eBPF at tc egress so that after an application has registered, only the application(s) in a certain cgroup can transmit for the given TSN stream. The respective cgroup will be provided during registration by the caller, so it is its responsibility to make sure that all applications within the given cgroup are permitted to send to the TSN stream. This usually means that the relevant application is isolated in its own cgroup (similar to isolating applications in cgroups for controlling CPU and memory utilization).
 
-This requires the support of the SO_TOKEN socket option. You can skip this feature if you do not have a matching kernel available.
+How the cgroups are managed is system-dependent. Today, this is usually the responsibility of a dedicated service like systemd ([reasons for this approach and how systemd handles it](https://www.freedesktop.org/wiki/Software/systemd/ControlGroupInterface/)), but there are other options like the (unfavored) option for [direct interfacing with the kernel cgroup interface](https://www.freedesktop.org/wiki/Software/systemd/PaxControlGroups/). For this documentation, we assume systemd is used, but `detnetctl` itself has no dependency on systemd (except for the `detnetctl-run` tool) and can be used with other means of managing cgroups.
+
+### Configuration
+To properly identify the TSN stream in the dispatcher and to set the PCP, we now also need to add the destination MAC address and the PCP to the configuration:
+```yaml
+apps:
+  app0:
+    logical_interface: enp86s0.5
+    physical_interface: enp86s0
+    addresses: [[10.5.1.1, 24]]
+    vid: 5
+    pcp: 3
+    destination_address: 48:21:0b:56:db:da
+```
 
 ### Build
 1. Install the build dependencies for eBPF applications, i.e.
@@ -237,20 +267,18 @@ sudo apt install libelf-dev clang
 cargo build --no-default-features --features dbus,netlink,bpf
 ```
 
-If you have a libbpf version available that was synced with a kernel with SO_TOKEN patch, add the feature `libbpf_with_sotoken`.
-
 ### Run
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3 --bpf-debug-output
 ```
 Then in a second terminal start the sample application with
 ```console
-sudo -u app0 ./examples/simple/simple webserver app0
+./target/debug/detnetctl-run app0 ./examples/simple/simple 10.5.1.2
 ```
 and start a second sample application with
 ```console
-sudo -u app0 ./examples/simple/simple webserver --skip-registration eth0.5
+./examples/simple/simple 10.5.1.2
 ```
 While the first application should happily connect, the second application should be blocked, that is it will not be able to establish a connection since all its traffic gets dropped. You can monitor the filter with 
 ```console
@@ -259,9 +287,25 @@ sudo cat /sys/kernel/debug/tracing/trace_pipe
 
 ## Queue setup with detd
 
-Set up the queues / qdiscs according to the configuration to enable TSN communication using TAPRIO Qdiscs aka Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv.
+In order to actually distribute the TSN streams into different timeslots according to Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv, detnetctl can set up the queues / qdiscs according to the configuration to enable TSN communication using TAPRIO Qdiscs.
 
 This requires a at least one network card supported by [detd](https://github.com/Avnu/detd) (e.g. Intel® Ethernet Controller I225-LM).
+
+### Configuration
+In order for detd to calculate the size and position of the timeslot, the configuration needs to be extended:
+```yaml
+apps:
+  app0:
+    logical_interface: enp86s0.5
+    physical_interface: enp86s0
+    addresses: [[10.5.1.1, 24]]
+    vid: 5
+    pcp: 3
+    destination_address: 48:21:0b:56:db:da 
+    period_ns: 100000
+    offset_ns: 0
+    size_bytes: 1000
+```
 
 ### Build
 
@@ -279,6 +323,8 @@ cargo build --no-default-features --features dbus,netlink,bpf,detd
 ```console
 sudo ./target/debug/detnetctl -c myconfig.yml
 ```
+
+Note that currently detd does not reset the TAPRIO configuration, so to retry you also have to restart detd if it would otherwise lead to conflicts.
 
 For the `simple` example, there should be no noticable difference when now transmitting via the TAPRIO Qdisc. For a more complex example that tracks the timestamps have a look at the [timestamp example](timestamp_example/index.html).
 
@@ -336,7 +382,7 @@ Then start detnetctl as
 ```console
 sudo ./target/debug/detnetctl
 ```
-as well as the applications like before.
+as well as the application like before.
 
 ## PTP Configuration and Status
 
@@ -369,5 +415,9 @@ sudo ./target/debug/detnetctl --ptp-instance 1
 
 At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.
 
-Now start the `simple` example as before. You should see the PTP status printed every few seconds.
+Since the PTP status depends on the interface to use, provide the VLAN (!) interface to the application like
+```console
+./target/debug/detnetctl-run app0 ./examples/simple/simple 10.5.1.2 enp86s0.5
+```
+You should see the PTP status printed every few seconds.
 

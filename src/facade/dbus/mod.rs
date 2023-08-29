@@ -38,6 +38,7 @@ enum Command {
     Register {
         sender: String,
         app_name: String,
+        cgroup: String,
         responder: oneshot::Sender<Result<controller::RegisterResponse>>,
     },
     GetPtpStatus {
@@ -153,9 +154,9 @@ fn register_methods(
     cr.register(DBUS_NAME, |b| {
         b.method_with_cr_async(
             "Register",
-            ("app_name",),
-            ("interface", "token"),
-            move |mut context, _, (app_name,): (String,)| {
+            ("app_name", "cgroup"),
+            ("interface",),
+            move |mut context, _, (app_name,cgroup): (String,String)| {
                 let tx_clone = tx_for_register.clone();
 
                 async move {
@@ -169,6 +170,7 @@ fn register_methods(
 
                     let cmd = Command::Register {
                         app_name,
+                        cgroup,
                         sender: String::from(&*sender),
                         responder: resp_tx,
                     };
@@ -180,7 +182,7 @@ fn register_methods(
                     let response = resp_rx.await;
                     context.reply(match response {
                         Ok(r) => match r {
-                            Ok(r) => Ok((r.logical_interface, r.token)),
+                            Ok(r) => Ok((r.logical_interface,)),
                             Err(e) => Err(dbus::MethodErr::failed(&e)),
                         },
                         Err(e) => Err(dbus::MethodErr::failed(&e)),
@@ -250,13 +252,14 @@ async fn command_processor(
         match cmd {
             Command::Register {
                 app_name,
+                cgroup,
                 sender,
                 responder,
             } => {
                 // It is important to verify the app name for making sure that
                 // the sender is actually allowed to register this app!
                 let response = match verify_app_name(&app_name, &sender, connection.clone()).await {
-                    Ok(()) => register(&app_name).await.map_err(|e| {
+                    Ok(()) => register(&app_name, &cgroup).await.map_err(|e| {
                         // print here and forward, otherwise the error would only be sent back to the application
                         eprintln!("{e:#}");
                         e
@@ -378,9 +381,9 @@ mod tests {
     use std::sync::Mutex;
 
     const APP_NAME: &str = "testapp";
+    const CGROUP: &str = "testcgroup";
     const SENDER: &str = ":1.5";
     const INTERFACE: &str = "eth0.5";
-    const TOKEN: u64 = 12345;
 
     type CatchedResponse = Arc<Mutex<Option<Message>>>;
 
@@ -392,6 +395,7 @@ mod tests {
     impl DBusTester {
         async fn perform_test(
             sent_app_name: String,
+            sent_cgroup: String,
             dbus_names: HashMap<String, String>,
         ) -> Result<Self> {
             let shutdown = Shutdown::new();
@@ -432,7 +436,7 @@ mod tests {
                         "Register",
                     )
                     .expect("method can not be created")
-                    .append1(&sent_app_name);
+                    .append2(&sent_app_name, &sent_cgroup);
                     message.set_sender(Some(BusName::from(SENDER)));
                     message.set_serial(123);
 
@@ -449,12 +453,11 @@ mod tests {
             let register_called = Arc::new(AtomicBool::new(false));
             let register_called_for_setup = register_called.clone();
             dbus.setup(
-                Box::new(move |_| {
+                Box::new(move |_, _| {
                     register_called_for_setup.store(true, Ordering::Relaxed);
                     Box::pin(async move {
                         Ok(controller::RegisterResponse {
                             logical_interface: String::from(INTERFACE),
-                            token: TOKEN,
                         })
                     })
                 }),
@@ -505,13 +508,13 @@ mod tests {
     async fn test_happy() -> Result<()> {
         let mut dbus_names = HashMap::new();
         dbus_names.insert(DBUS_APP_PREFIX.to_owned() + APP_NAME, String::from(SENDER));
-        let result = DBusTester::perform_test(String::from(APP_NAME), dbus_names).await?;
+        let result =
+            DBusTester::perform_test(APP_NAME.to_owned(), CGROUP.to_owned(), dbus_names).await?;
 
         assert!(result.register_called);
 
-        let (interface, token): (Option<String>, Option<u64>) = result.msg.get2();
+        let interface: Option<String> = result.msg.get1();
         assert_eq!(interface, Some(String::from(INTERFACE)));
-        assert_eq!(token, Some(TOKEN));
 
         Ok(())
     }
@@ -526,9 +529,10 @@ mod tests {
             DBUS_APP_PREFIX.to_owned() + APP_NAME,
             String::from(":1:123"),
         );
-        let mut result = DBusTester::perform_test(String::from(APP_NAME), dbus_names)
-            .await
-            .unwrap();
+        let mut result =
+            DBusTester::perform_test(APP_NAME.to_owned(), CGROUP.to_owned(), dbus_names)
+                .await
+                .unwrap();
 
         assert!(!result.register_called);
         result.msg.as_result().unwrap();
@@ -542,9 +546,10 @@ mod tests {
             DBUS_APP_PREFIX.to_owned() + "otherapp",
             String::from(SENDER),
         );
-        let mut result = DBusTester::perform_test(String::from(APP_NAME), dbus_names)
-            .await
-            .unwrap();
+        let mut result =
+            DBusTester::perform_test(APP_NAME.to_owned(), CGROUP.to_owned(), dbus_names)
+                .await
+                .unwrap();
 
         assert!(!result.register_called);
         result.msg.as_result().unwrap();

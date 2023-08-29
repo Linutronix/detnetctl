@@ -20,17 +20,19 @@
 //! # let filepath = tmpfile.path();
 //! use futures::lock::Mutex;
 //! use std::fs::File;
+//! use std::path::PathBuf;
 //! use std::sync::Arc;
 //!
 //! # tokio_test::block_on(async {
 //! let controller = Controller::new();
+//! let cgroup = PathBuf::from("/sys/fs/cgroup/system.slice/some.service/");
 //! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
 //! let mut dispatcher = Arc::new(Mutex::new(DummyDispatcher));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
 //! let response = controller
-//!     .register("app0", configuration, queue_setup, dispatcher, interface_setup)
+//!     .register("app0", &cgroup, configuration, queue_setup, dispatcher, interface_setup)
 //!     .await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
@@ -41,10 +43,10 @@ use crate::configuration::{AppConfig, Configuration};
 use crate::dispatcher::{Dispatcher, StreamIdentification};
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::lock::Mutex;
-use getrandom::getrandom;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::time::Instant;
 
@@ -54,8 +56,6 @@ use tokio::time::Instant;
 pub struct RegisterResponse {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
     pub logical_interface: String,
-    /// The token to set via SO_TOKEN
-    pub token: u64,
 }
 
 /// Defines a registration operation
@@ -71,6 +71,7 @@ pub trait Registration {
     async fn register(
         &self,
         app_name: &str,
+        cgroup: &Path,
         mut configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
         mut dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
@@ -95,6 +96,7 @@ impl Registration for Controller {
     async fn register(
         &self,
         app_name: &str,
+        cgroup: &Path,
         configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
         dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
@@ -102,9 +104,6 @@ impl Registration for Controller {
     ) -> Result<RegisterResponse> {
         let start = Instant::now();
         println!("Request to register {app_name}");
-
-        // Generate token
-        let token = generate_token()?;
 
         // Fetch configuration for app
         let app_config = configuration
@@ -118,7 +117,7 @@ impl Registration for Controller {
 
         let setup_result = setup(
             &app_config,
-            token,
+            cgroup,
             queue_setup,
             dispatcher,
             &*locked_interface_setup,
@@ -144,21 +143,13 @@ impl Registration for Controller {
 
         Ok(RegisterResponse {
             logical_interface: app_config.logical_interface,
-            token,
         })
     }
 }
 
-/// Securely generate a random token
-fn generate_token() -> Result<u64> {
-    let mut token_bytes = [0; 8];
-    getrandom(&mut token_bytes)?;
-    Ok(u64::from_be_bytes(token_bytes))
-}
-
 async fn setup(
     app_config: &AppConfig,
-    token: u64,
+    cgroup: &Path,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
@@ -184,17 +175,9 @@ async fn setup(
 
     // Assemble stream identification
     let stream_id = StreamIdentification {
-        destination_address: app_config.destination_address.ok_or_else(|| {
-            anyhow!("Streams without destination address can currently not be handled")
-        })?,
-        vlan_identifier: app_config
-            .vid
-            .ok_or_else(|| anyhow!("Streams without VLAN ID can currently not be handled"))?,
+        destination_address: app_config.destination_address,
+        vlan_identifier: app_config.vid,
     };
-
-    let pcp = app_config
-        .pcp
-        .ok_or_else(|| anyhow!("PCP configuration is missing"))?;
 
     // Setup BPF Hooks
     // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
@@ -207,10 +190,10 @@ async fn setup(
             &app_config.physical_interface,
             &stream_id,
             queue_setup_response.priority,
-            pcp,
-            Some(token),
+            app_config.pcp,
+            Some(cgroup.into()),
         )
-        .context("Installing protection via the dispatcher failed. SO_TOKEN patch missing?")?;
+        .context("Installing protection via the dispatcher failed")?;
     println!(
         "  Dispatcher installed for stream {:#?} with priority {} on {}",
         stream_id, queue_setup_response.priority, app_config.physical_interface
@@ -289,14 +272,7 @@ mod tests {
     use crate::queue_setup::{MockQueueSetup, QueueSetupResponse};
     use anyhow::anyhow;
     use std::net::{IpAddr, Ipv4Addr};
-
-    #[test]
-    fn test_token_unique() -> Result<()> {
-        let first_token = generate_token()?;
-        let second_token = generate_token()?;
-        assert_ne!(first_token, second_token);
-        Ok(())
-    }
+    use std::path::PathBuf;
 
     fn configuration_happy(interface: String, vid: u16) -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
@@ -409,6 +385,7 @@ mod tests {
         let response = controller
             .register(
                 "app123",
+                &PathBuf::from("cgroup"),
                 configuration,
                 queue_setup,
                 dispatcher,
@@ -416,7 +393,6 @@ mod tests {
             )
             .await?;
         assert_eq!(response.logical_interface, format!("{interface}.{vid}"));
-        assert!(response.token > 10); // not GUARANTEED, but VERY unlikely to fail
         Ok(())
     }
 
@@ -431,6 +407,7 @@ mod tests {
         controller
             .register(
                 "app123",
+                &PathBuf::from("cgroup"),
                 configuration,
                 queue_setup,
                 dispatcher,
@@ -451,6 +428,7 @@ mod tests {
         controller
             .register(
                 "app123",
+                &PathBuf::from("cgroup"),
                 configuration,
                 queue_setup,
                 dispatcher,
@@ -471,6 +449,7 @@ mod tests {
         controller
             .register(
                 "app123",
+                &PathBuf::from("cgroup"),
                 configuration,
                 queue_setup,
                 dispatcher,
@@ -491,6 +470,7 @@ mod tests {
         controller
             .register(
                 "app123",
+                &PathBuf::from("cgroup"),
                 configuration,
                 queue_setup,
                 dispatcher,

@@ -11,7 +11,6 @@
 #include <net/if.h>
 #include <netdb.h>
 
-#include "../common/registration.h"
 #include "../common/ptp_status.h"
 
 static volatile sig_atomic_t exiting = 0;
@@ -23,41 +22,22 @@ static void sig_int(__attribute__((unused)) int signo)
 
 int print_usage(char *name)
 {
-	fprintf(stderr, "In order to register via D-Bus call as\n");
-	fprintf(stderr, "%s <hostname> <app_name>\n\n", name);
-	fprintf(stderr, "Otherwise, call as\n");
-	fprintf(stderr, "%s <hostname> --skip-registration <interface>\n\n",
-		name);
+	fprintf(stderr, "Call as\n");
+	fprintf(stderr, "%s <hostname> [<interface>]\n", name);
+	fprintf(stderr,
+		"If interface is provided, SO_BINDTODEVICE will be set and the PTP status for this interface will be requested regularly.\n");
 	return 1;
 }
 
 int main(int argc, char *argv[])
 {
 	char interface[IF_NAMESIZE] = { 0 };
-	uint64_t token = 0;
 
 	/* Parse command line arguments */
-	if (argc != 3 && argc != 5) {
+	if (argc == 3) {
+		strncpy(interface, argv[2], IF_NAMESIZE - 1);
+	} else if (argc != 2) {
 		return print_usage(argv[0]);
-	}
-
-	if (strcmp(argv[2], "--skip-registration") == 0) {
-		if (argc != 4) {
-			return print_usage(argv[0]);
-		}
-
-		strncpy(interface, argv[3], IF_NAMESIZE - 1);
-	} else {
-		if (argc != 3) {
-			return print_usage(argv[0]);
-		}
-
-		/* Register via D-Bus */
-		int result = register_app(argv[2], interface, sizeof(interface),
-					  &token);
-		if (result != 0) {
-			return result;
-		}
 	}
 
 	/* Resolve hostname */
@@ -86,30 +66,17 @@ int main(int argc, char *argv[])
 
 		/* Set socket option to bind to interface */
 		size_t interface_len = strlen(interface);
-		struct ifreq ifr;
-		memcpy(ifr.ifr_name, interface, interface_len);
-		ifr.ifr_name[interface_len] = '\0';
-		if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE,
-			       (void *)&ifr, sizeof(ifr)) < 0) {
-			fprintf(stderr, "Setting SO_BINDTODEVICE failed\n");
-			close(sockfd);
-			return 1;
-		}
-
-		if (token != 0) {
-#ifdef SO_TOKEN
-			// Setup token
-			if (setsockopt(sockfd, SOL_SOCKET, SO_TOKEN, &token,
-				       sizeof(token)) < 0) {
-				fprintf(stderr, "Setting SO_TOKEN failed\n");
+		if (interface_len > 0) {
+			struct ifreq ifr;
+			memcpy(ifr.ifr_name, interface, interface_len);
+			ifr.ifr_name[interface_len] = '\0';
+			if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE,
+				       (void *)&ifr, sizeof(ifr)) < 0) {
+				fprintf(stderr,
+					"Setting SO_BINDTODEVICE failed\n");
 				close(sockfd);
 				return 1;
 			}
-#else
-#warning "Kernel does not support, SO_TOKEN, so it will not be set!\n"
-			fprintf(stderr,
-				"WARNING: SO_TOKEN not available, SO_TOKEN is not set!\n");
-#endif
 		}
 
 		/* Connect to server */
@@ -155,7 +122,7 @@ int main(int argc, char *argv[])
 			/* Request and print PTP Status
 			 * Will print nothing if ptp feature is not enabled
 			 */
-			if (i++ % 10 == 9) {
+			if (interface_len > 0 && i++ % 10 == 9) {
 				print_ptp_status(interface);
 			}
 		}

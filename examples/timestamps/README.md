@@ -18,10 +18,6 @@ This demonstrator can be used to analyze the effects of different techniques, su
 Usage: ./client [options] server_ip
 
 with the following options:
-  -a, --app  [app_name]        Register at the node controller with the provided app_name.
-                               Can not be combined with --interface, because that will be
-                               provided automatically during registration!
-                               If not provided, no registration at the node controller takes place!
   -s, --socktype  [socktype]   One of
                                  INET_DGRAM           For socket(AF_INET, SOCK_DGRAM, 0)
                                  (default)            Send only application payload to kernel
@@ -40,7 +36,6 @@ with the following options:
                                                       Send application payload, UDP, IP and Ethernet header to kernel
                                                       MAC address needs to be provided via --mac!
   -i, --interface [interface]  Interface to bind to / to use.
-                               Do not explicitly bind to interface if not provided as CLI and not via detnetctl registration.
   -p, --port      [port]       Source and destination port (default: 4321)
   -m, --mac       [macaddress] Destination MAC address (required for PACKET_DGRAM, PACKET_RAW and XDP, ignored for all others).
                                Format as 01:23:45:67:89:AB
@@ -130,7 +125,7 @@ SETCAPS=1 make -C examples
 10. Finally, use a TAPRIO Qdisc. Either setup the Qdisc manually (e.g. see <https://tsn.readthedocs.io/qdiscs.html>) or simply use on a running `detnetctl`:
 
 ```console
-sudo -u app0 ./examples/timestamps/client --app app0 -n 30 --realtime 10 --cpu 1 10.0.52.10 > timestamps_high_traffic_rt_taprio.csv
+./target/debug/detnetctl-run app0 ./examples/timestamps/client -n 30 --realtime 10 --cpu 1 10.0.48.10 > timestamps_high_traffic_rt_taprio.csv
 ```
 
 Please bear in mind that `detnetctl` (or more specifically `detd`) will setup a VLAN and lets the `client` bind to the VLAN interface. So make sure to configure the VLAN correctly on server and client side and to use the correct IP addresses.

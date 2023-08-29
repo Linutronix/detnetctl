@@ -44,6 +44,10 @@ struct Cli {
     #[arg(short, long)]
     app_name: Option<String>,
 
+    /// cgroup of the app required for oneshot registration
+    #[arg(short = 'g', long)]
+    cgroup: Option<String>,
+
     /// Use YAML configuration with the provided file. Otherwise, uses sysrepo.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
@@ -128,18 +132,26 @@ pub async fn main() -> Result<()> {
     let controller = Controller::new();
 
     match cli.app_name {
-        Some(app_name) => {
-            let response = controller
-                .register(
-                    &app_name,
-                    configuration,
-                    queue_setup,
-                    dispatcher,
-                    interface_setup,
-                )
-                .await?;
-            println!("Final result: {response:#?}");
-        }
+        Some(app_name) => match cli.cgroup {
+            Some(cgroup) => {
+                let response = controller
+                    .register(
+                        &app_name,
+                        &PathBuf::from(cgroup),
+                        configuration,
+                        queue_setup,
+                        dispatcher,
+                        interface_setup,
+                    )
+                    .await?;
+                println!("Final result: {response:#?}");
+            }
+            None => {
+                return Err(anyhow!(
+                    "If app_name is provided, cgroup needs to be provided, too!"
+                ));
+            }
+        },
         None => {
             spawn_dbus_service(
                 Arc::new(Mutex::new(controller)),
@@ -181,8 +193,9 @@ async fn spawn_dbus_service(
     let shutdown = Shutdown::new();
     let mut facade = Facade::new(shutdown.clone())?;
 
-    let register_callback: RegisterCallback = Box::new(move |app_name| -> RegisterFuture {
+    let register_callback: RegisterCallback = Box::new(move |app_name, cgroup| -> RegisterFuture {
         let app_name = String::from(app_name);
+        let cgroup = PathBuf::from(cgroup);
         let cloned_controller = controller.clone();
         let cloned_configuration = configuration.clone();
         let cloned_queue_setup = queue_setup.clone();
@@ -194,6 +207,7 @@ async fn spawn_dbus_service(
                 .await
                 .register(
                     &app_name,
+                    &cgroup,
                     cloned_configuration,
                     cloned_queue_setup,
                     cloned_dispatcher,

@@ -48,6 +48,7 @@ mock! {
         pub fn num_streams(&mut self) -> &mut MockMap;
         pub fn stream_handles(&mut self) -> &mut MockMap;
         pub fn streams(&mut self) -> &mut MockMap;
+        pub fn stream_cgroups(&mut self) -> &mut MockMap;
     }
 }
 
@@ -56,6 +57,7 @@ mock! {
         pub fn num_streams(&mut self) -> &mut MockMap;
         pub fn stream_handles(&mut self) -> &mut MockMap;
         pub fn streams(&mut self) -> &mut MockMap;
+        pub fn stream_cgroups(&mut self) -> &mut MockMap;
     }
 }
 
