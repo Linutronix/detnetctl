@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include <sys/timex.h>
 
 enum SockTypes parse_sock_type(const char *str)
 {
@@ -526,6 +527,15 @@ int receive_timestamped_message(int sockfd, uint8_t *message, size_t max_size,
 
 	if (ts_hw && (tss->ts[2].tv_sec != 0 || tss->ts[2].tv_nsec != 0)) {
 		memcpy(ts_hw, &(tss->ts[2]), sizeof(struct timespec));
+
+		// Read UTC-TAI offset
+		struct timex t = { 0 };
+		if (adjtimex(&t) == -1) {
+			fprintf(stderr, "Can't read UTC-TAI offset!");
+			return -1;
+		}
+
+		ts_hw->tv_sec -= t.tai;
 	}
 
 	if (tstype && tskey) {
