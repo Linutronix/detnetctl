@@ -8,6 +8,7 @@ use async_shutdown::Shutdown;
 use async_trait::async_trait;
 use chrono::Duration;
 use dbus::channel::MatchingReceiver;
+use dbus::nonblock::stdintf::org_freedesktop_dbus::RequestNameReply;
 use dbus_crossroads::{Crossroads, IfaceToken};
 use num_traits::ToPrimitive;
 use std::sync::Arc;
@@ -79,7 +80,12 @@ impl DBus {
         get_ptp_status: Option<PtpStatusCallback>,
     ) -> Result<()> {
         // Request D-Bus name
-        self.c.request_name(DBUS_NAME, false, true, false).await?;
+        let reply = self.c.request_name(DBUS_NAME, false, true, true).await?;
+        if reply != RequestNameReply::PrimaryOwner {
+            return Err(anyhow!(
+                "Can not request D-Bus name. Is detnetctl already running?"
+            ));
+        }
 
         // Communication channel between D-Bus message handler and registration manager
         let (tx, rx) = mpsc::channel::<Command>(32);
@@ -397,7 +403,7 @@ mod tests {
             let mut c = SyncConnection::default();
             c.expect_request_name()
                 .times(1)
-                .returning(|_, _, _, _| Ok(()));
+                .returning(|_, _, _, _| Ok(RequestNameReply::PrimaryOwner));
 
             let catched_response: CatchedResponse = Arc::new(Mutex::new(None));
             let catched_response_for_send = catched_response.clone();

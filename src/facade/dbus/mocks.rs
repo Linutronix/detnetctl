@@ -7,6 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use dbus::channel::{Channel, MatchingReceiver, Sender, Token};
 use dbus::message::MatchRule;
+use dbus::nonblock::stdintf::org_freedesktop_dbus::RequestNameReply;
 use dbus::nonblock::Process;
 use dbus::{Error, Message};
 use dbus_tokio::connection::IOResource;
@@ -21,7 +22,7 @@ mock! {
             allow_replacement: bool,
             replace_existing: bool,
             do_not_queue: bool
-        ) -> Result<(),Error>;
+        ) -> Result<RequestNameReply,Error>;
     }
 
     impl Sender for SyncConnection {
