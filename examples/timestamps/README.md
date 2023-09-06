@@ -91,44 +91,86 @@ SETCAPS=1 make -C examples
 5. Start the client on the other computer, e.g.
 
 ```console
-./examples/timestamp/client -n 30 10.0.48.10 > timestamps_low_traffic.csv
+./examples/timestamps/client -n 30 10.0.1.2 > timestamps_low_traffic.csv
 ```
 
 6. Analyze the results with
 
 ```console
-./examples/timestamp/analyze.py timestamps_low_traffic.csv
+./examples/timestamps/analyze.py timestamps_low_traffic.csv
 ```
 
-7. Generate a lot of traffic. You can e.g. use the provided `traffic.sh` using `trafgen`, e.g.
+7. Generate a lot of traffic. You can e.g. use the provided `traffic.sh` using `trafgen`, but make sure to adapt the configuration `examples/utils/traffic.cfg`, especially the MAC and IP addresses.
 
 ```console
-./examples/utils/traffic.sh enp1s0 3Gbit
+sudo ./examples/utils/traffic.sh enp86s0 3Gbit
 ```
 
    You can experiment a little bit with the send rate. You can use e.g. the provided `queues.sh` to see the effect on the packet backlog:
 
 ```console
-./examples/utils/queues.sh enp1s0
+./examples/utils/queues.sh enp86s0
 ```
 
-8. Repeat step 5 and 6 and compare the results. The latencies should be significantly higher.
+8. Repeat step 5 and 6 and compare the results. The latencies should be significantly higher. You might also see strange effects like negative values for the transmission times. In that case the traffic is too high to even allow for proper time synchronization.
 
-9. Now use RT scheduling and compare the results with high traffic. Especially the *Kernel to Userspace* latency should be much shorter now.
+9. In the next step we use detnetctl to both reduce the latency for our test application as well as ensure a proper time synchronization even with high parallel traffic. For that, we setup a configuration like
+
+```yaml
+apps:
+  measurement:
+    logical_interface: enp86s0.5
+    physical_interface: enp86s0
+    period_ns: 100000
+    offset_ns: 0
+    size_bytes: 300
+    destination_address: 48:21:0b:56:db:da
+    vid: 5
+    pcp: 3
+    addresses: [[10.5.1.1, 24]]
+  ptp4l:
+    logical_interface: enp86s0.7
+    physical_interface: enp86s0
+    period_ns: 100000
+    offset_ns: 99040
+    size_bytes: 300
+    destination_address: 01:80:c2:00:00:0e
+    vid: 7
+    pcp: 4
+ptp:
+  1:
+    clock_class: 248
+    clock_accuracy: 0x31
+    offset_scaled_log_variance: 65535
+    current_utc_offset: 37
+    current_utc_offset_valid: true
+    leap59: false
+    leap61: false
+    time_traceable: true
+    frequency_traceable: false
+    ptp_timescale: true
+    time_source: 0xA0
+    domain_number: 0
+    gptp_profile: true
+```
+
+and then apply it with
 
 ```console
-./examples/timestamps/server --realtime 10 --cpu 1   # on server side
-
-./examples/timestamp/client -n 30 --realtime 10 --cpu 1 10.0.48.10 > timestamps_high_traffic_rt.csv  # on client side
+sudo ./target/debug/detnetctl -c myconfig.yml --oneshot
 ```
-    
-10. Finally, use a TAPRIO Qdisc. Either setup the Qdisc manually (e.g. see <https://tsn.readthedocs.io/qdiscs.html>) or simply use on a running `detnetctl`:
+
+Configure `ptp4l` to use the respective VLAN interface, e.g.
 
 ```console
-./target/debug/detnetctl-run app0 ./examples/timestamps/client -n 30 --realtime 10 --cpu 1 10.0.48.10 > timestamps_high_traffic_rt_taprio.csv
+ptp4l -i enp86s0.7 -f /etc/linuxptp/gPTP.cfg --step_threshold=1
 ```
 
-Please bear in mind that `detnetctl` (or more specifically `detd`) will setup a VLAN and lets the `client` bind to the VLAN interface. So make sure to configure the VLAN correctly on server and client side and to use the correct IP addresses.
+For this demonstration, it is not essential to install interference protection, so we can just start the application as before, but make sure to use the correct destination IP address matching the VLAN and to also setup the server side accordingly.
 
-This should significantly reduce queueing delay on client side. The major latency left should be *NIC to kernel* and this could be optimized using XDP (not implemented for this example yet).
+```console
+./examples/timestamps/client -n 30 10.5.1.2 > timestamps_high_traffic_detnetctl.csv
+```
+
+This should significantly reduce in particular the queuing latencies and ensure proper operation of ptp4l. Still you will likely see further room for improvement, especially on receiver side that will be addressed in future improvements of detnetctl.
 

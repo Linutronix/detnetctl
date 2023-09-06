@@ -29,6 +29,8 @@ diff_df = pd.DataFrame(index=df.index)
 for a,b in zip(time_cols[:-1], time_cols[1:]):
     diff_df[DATA_LABELS[f"{a}_{b}"]] = (df[b]-df[a])*1000*1000
 
+print(diff_df)
+
 diff_df.plot.barh(stacked=True, cmap='rainbow', xlabel="Latency [us]", ylabel="Packet")
 plt.gca().invert_yaxis()
 plt.show()
