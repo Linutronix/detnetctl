@@ -23,9 +23,9 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
+- [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
-- [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature
 
 ## License
 
@@ -285,11 +285,63 @@ While the first application should happily connect, the second application shoul
 sudo cat /sys/kernel/debug/tracing/trace_pipe
 ```
 
+## PTP Configuration and Status
+
+### Build
+
+1. Install `linuxptp`, configure and run `ptp4l` and `phc2sys`, either from your packet repository or from source as described at <https://tsn.readthedocs.io/timesync.html>.
+2. Build detnetctl
+```console
+cargo build --no-default-features --features dbus,netlink,bpf,ptp
+```
+
+### Configuration
+
+Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp`, for YANG (see below) it is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `--ptp-instance` parameter. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
+
+```yaml
+ptp:
+  1:
+    clock_class: 248
+    clock_accuracy: 0x31
+    offset_scaled_log_variance: 65535
+    current_utc_offset: 37
+    current_utc_offset_valid: true
+    leap59: false
+    leap61: false
+    time_traceable: true
+    frequency_traceable: false
+    ptp_timescale: true
+    time_source: 0xA0
+    domain_number: 0
+    gptp_profile: true
+```
+
+The most important setting that ensures the configuration is applied correctly is if the gPTP profile (IEEE 802.1AS) is used. If you are unsure, have a look at the `transportSpecific` field of the `ptp4l` configuration and the `--transportSpecific` argument of `phc2sys`. If it is `1`, you should set `gptp_profile` in the YAML file to `true` and in the YANG file the `sdo-id` to `256` (i.e. `0x100`). Otherwise, set it to `false` and `0`, respectively.
+
+### Run
+
+Then start detnetctl for YAML configuration as
+```console
+sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3 --ptp-instance 1
+```
+
+At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.
+
+Since the PTP status depends on the interface to use, provide the VLAN (!) interface to the application like
+```console
+./target/debug/detnetctl-run app0 ./examples/simple/simple 10.5.1.2 enp86s0.5
+```
+You should see the PTP status printed every few seconds.
+
+
 ## Queue setup with detd
 
 In order to actually distribute the TSN streams into different timeslots according to Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv, detnetctl can set up the queues / qdiscs according to the configuration to enable TSN communication using TAPRIO Qdiscs.
 
 This requires a at least one network card supported by [detd](https://github.com/Avnu/detd) (e.g. Intel® Ethernet Controller I225-LM).
+
+Hint: detd requires proper time synchronization between the TAI clock and the PHC (e.g. via phc2sys), otherwise it might set the basetime in the future and lead to packet drops until that.
 
 ### Configuration
 In order for detd to calculate the size and position of the timeslot, the configuration needs to be extended:
@@ -316,7 +368,7 @@ sudo apt install protobuf-compiler
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf,detd
+cargo build --no-default-features --features dbus,netlink,bpf,ptp,detd
 ```
 
 ### Run
@@ -354,7 +406,11 @@ git submodule update --init --recursive
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf,detd,sysrepo
+cargo build --no-default-features --features dbus,netlink,bpf,ptp,detd,sysrepo
+```
+or equivalent
+```console
+cargo build
 ```
 
 ### Run
@@ -383,41 +439,4 @@ Then start detnetctl as
 sudo ./target/debug/detnetctl
 ```
 as well as the application like before.
-
-## PTP Configuration and Status
-
-### Build
-
-1. Install `linuxptp`, configure and run `ptp4l` and `phc2sys`, either from your packet repository or from source as described at <https://tsn.readthedocs.io/timesync.html>.
-2. Build detnetctl
-```console
-cargo build --no-default-features --features dbus,netlink,bpf,detd,sysrepo,ptp
-```
-or equivalent
-```console
-cargo build
-```
-
-### Run
-
-Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp`, for YANG it is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `--ptp-instance` parameter. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
-
-The most important setting that ensures the configuration is applied correctly is if the gPTP profile (IEEE 802.1AS) is used. If you are unsure, have a look at the `transportSpecific` field of the `ptp4l` configuration and the `--transportSpecific` argument of `phc2sys`. If it is `1`, you should set `gptp_profile` in the YAML file to `true` and in the YANG file the `sdo-id` to `256` (i.e. `0x100`). Otherwise, set it to `false` and `0`, respectively.
-
-Then start detnetctl for YAML configuration as
-```console
-sudo ./target/debug/detnetctl -c myconfig.yml --ptp-instance 1
-```
-or (after reloading the YANG file with `sysrepocfg`) for using the Sysrepo configuration
-```console
-sudo ./target/debug/detnetctl --ptp-instance 1
-```
-
-At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.
-
-Since the PTP status depends on the interface to use, provide the VLAN (!) interface to the application like
-```console
-./target/debug/detnetctl-run app0 ./examples/simple/simple 10.5.1.2 enp86s0.5
-```
-You should see the PTP status printed every few seconds.
 
