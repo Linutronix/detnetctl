@@ -143,19 +143,15 @@ Allows for registration of via D-Bus. This can be done by the application itself
 ```console
 sudo cp config/dbus/detnetctl.conf /etc/dbus-1/system.d/
 ```
-3. Restart the D-Bus daemon, e.g.
-```console
-sudo systemctl restart dbus
-```
-4. Install the build dependencies for D-Bus applications, e.g.
+3. Install the build dependencies for D-Bus applications, e.g.
 ```console
 sudo apt install libdbus-1-dev libdbus-1-3 build-essential pkg-config
 ```
-5. Build detnetctl
+4. Build detnetctl
 ```console
 cargo build --no-default-features --features dbus
 ```
-6. Build the example application
+5. Build the example application
 ```console
 sudo apt install libxdp-dev
 SETCAPS=1 make -C examples
