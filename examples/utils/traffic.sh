@@ -20,11 +20,11 @@ fi
 INTERFACE=$1
 
 if [ -z $2 ]; then
-	echo "Provide send interval as second parameter (e.g. 1000ns)!"
+	echo "Provide send rate as second parameter (e.g. 100pps or 1Gbit)!"
 	exit 1
 fi
-SEND_INTERVAL=$2
+SEND_RATE=$2
 SCRIPT_DIR="$( cd "$( dirname "$( readlink -f "${BASH_SOURCE[0]}" )" )" >/dev/null 2>&1 && pwd )"
 
-trafgen -i ${SCRIPT_DIR}/traffic.cfg -o $INTERFACE --cpp -n0 -q -t$SEND_INTERVAL
+trafgen -i ${SCRIPT_DIR}/traffic.cfg -o $INTERFACE --cpp -n0 -q -b$SEND_RATE
 

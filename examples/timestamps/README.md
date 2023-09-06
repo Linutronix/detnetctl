@@ -103,10 +103,10 @@ SETCAPS=1 make -C examples
 7. Generate a lot of traffic. You can e.g. use the provided `traffic.sh` using `trafgen`, e.g.
 
 ```console
-./examples/utils/traffic.sh enp1s0 1400ns
+./examples/utils/traffic.sh enp1s0 3Gbit
 ```
 
-   You can experiment a little bit with the send interval. You can use e.g. the provided `queues.sh` to see the effect on the packet backlog:
+   You can experiment a little bit with the send rate. You can use e.g. the provided `queues.sh` to see the effect on the packet backlog:
 
 ```console
 ./examples/utils/queues.sh enp1s0
