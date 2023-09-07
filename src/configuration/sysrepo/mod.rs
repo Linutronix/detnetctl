@@ -5,6 +5,7 @@
 //! Provides sysrepo-based network configuration (for NETCONF integration)
 
 use anyhow::{anyhow, Context, Result};
+use std::collections::HashMap;
 
 #[cfg(not(test))]
 use {sysrepo::SrConn, sysrepo::SrSession};
@@ -111,26 +112,20 @@ impl configuration::Configuration for SysrepoConfiguration {
     fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
         let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         let app_flow = get_app_flow(&cfg, app_name)?;
-        let service_sublayer = get_service_sublayer(&cfg, app_name)?;
-        let forwarding_sublayer =
-            get_forwarding_sublayer(&cfg, &service_sublayer.outgoing_forwarding_sublayer)?;
-        let traffic_profile = get_traffic_profile(&cfg, &app_flow.traffic_profile)?;
-        let tsn_interface_cfg =
-            get_tsn_interface_config(&cfg, &forwarding_sublayer.outgoing_interface)?;
-        let logical_interface =
-            get_logical_interface(&cfg, &forwarding_sublayer.outgoing_interface)?;
+        get_app_config_from_app_flow(&cfg, app_name, &app_flow)
+    }
 
-        Ok(configuration::AppConfig {
-            logical_interface: logical_interface.name,
-            physical_interface: logical_interface.physical_interface,
-            period_ns: Some(traffic_profile.period_ns),
-            offset_ns: Some(tsn_interface_cfg.offset_ns),
-            size_bytes: Some(traffic_profile.size_bytes),
-            destination_address: Some(tsn_interface_cfg.destination_address),
-            vid: Some(tsn_interface_cfg.vid),
-            pcp: Some(tsn_interface_cfg.pcp),
-            addresses: logical_interface.addresses,
-        })
+    fn get_app_configs(&mut self) -> Result<HashMap<String, configuration::AppConfig>> {
+        let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+        get_app_flows(&cfg)?
+            .iter()
+            .map(|(app_name, app_flow)| {
+                Ok((
+                    String::from(app_name),
+                    get_app_config_from_app_flow(&cfg, app_name, app_flow)?,
+                ))
+            })
+            .collect()
     }
 
     fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
@@ -205,6 +200,46 @@ fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<AppFlow> {
     }
 
     Err(anyhow!("App flow not found"))
+}
+
+fn get_app_flows(tree: &DataTree) -> Result<Vec<(String, AppFlow)>> {
+    tree.find_xpath("/detnet/app-flows/app-flow")?
+        .map(|app_flow| {
+            let name: String = app_flow.get_value_for_xpath("name")?;
+            Ok((
+                name,
+                AppFlow {
+                    traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn get_app_config_from_app_flow(
+    tree: &DataTree,
+    app_name: &str,
+    app_flow: &AppFlow,
+) -> Result<configuration::AppConfig> {
+    let service_sublayer = get_service_sublayer(tree, app_name)?;
+    let forwarding_sublayer =
+        get_forwarding_sublayer(tree, &service_sublayer.outgoing_forwarding_sublayer)?;
+    let traffic_profile = get_traffic_profile(tree, &app_flow.traffic_profile)?;
+    let tsn_interface_cfg =
+        get_tsn_interface_config(tree, &forwarding_sublayer.outgoing_interface)?;
+    let logical_interface = get_logical_interface(tree, &forwarding_sublayer.outgoing_interface)?;
+
+    Ok(configuration::AppConfig {
+        logical_interface: logical_interface.name,
+        physical_interface: logical_interface.physical_interface,
+        period_ns: Some(traffic_profile.period_ns),
+        offset_ns: Some(tsn_interface_cfg.offset_ns),
+        size_bytes: Some(traffic_profile.size_bytes),
+        destination_address: Some(tsn_interface_cfg.destination_address),
+        vid: Some(tsn_interface_cfg.vid),
+        pcp: Some(tsn_interface_cfg.pcp),
+        addresses: logical_interface.addresses,
+    })
 }
 
 fn get_service_sublayer(tree: &DataTree, incoming_app_flow: &str) -> Result<ServiceSublayer> {

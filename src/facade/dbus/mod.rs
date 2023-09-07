@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::facade::{PtpStatusCallback, RegisterCallback};
+use crate::facade::{ProtectCallback, PtpStatusCallback};
 use anyhow::{anyhow, Context, Result};
 use async_shutdown::Shutdown;
 use async_trait::async_trait;
@@ -25,8 +25,6 @@ mod mocks;
 #[cfg(test)]
 use {mocks::MockSyncConnection as SyncConnection, mocks::Mockconnection as connection};
 
-use crate::controller;
-
 const DBUS_NAME: &str = "org.detnet.detnetctl";
 const OBJECT_NAME: &str = "/org/detnet/detnetctl";
 const DBUS_APP_PREFIX: &str = "org.detnet.apps.";
@@ -35,11 +33,11 @@ type DbusPtpStatus = (u8, i64, i64, i32, u8, i64);
 
 #[derive(Debug)]
 enum Command {
-    Register {
+    Protect {
         sender: String,
         app_name: String,
         cgroup: String,
-        responder: oneshot::Sender<Result<controller::RegisterResponse>>,
+        responder: oneshot::Sender<Result<()>>,
     },
     GetPtpStatus {
         interface: String,
@@ -77,7 +75,7 @@ impl DBus {
 
     pub async fn setup(
         &self,
-        register: RegisterCallback,
+        protect: ProtectCallback,
         get_ptp_status: Option<PtpStatusCallback>,
     ) -> Result<()> {
         // Request D-Bus name
@@ -99,7 +97,7 @@ impl DBus {
         tokio::spawn(async move {
             command_processor(
                 rx,
-                register,
+                protect,
                 get_ptp_status,
                 manager_shutdown,
                 manager_connection,
@@ -125,7 +123,7 @@ impl DBus {
             }),
         )));
 
-        let token = register_methods(&mut cr, tx, has_ptp_status_callback);
+        let token = protect_methods(&mut cr, tx, has_ptp_status_callback);
         cr.insert(OBJECT_NAME, &[token], ());
 
         // Interconnect connection with crossroads to handle message
@@ -143,21 +141,21 @@ impl DBus {
     }
 }
 
-fn register_methods(
+fn protect_methods(
     cr: &mut Crossroads,
     tx: mpsc::Sender<Command>,
     ptp_status: bool,
 ) -> IfaceToken<()> {
-    let tx_for_register = tx.clone();
+    let tx_for_protect = tx.clone();
     let tx_for_ptp_status = tx;
 
     cr.register(DBUS_NAME, |b| {
         b.method_with_cr_async(
-            "Register",
+            "Protect",
             ("app_name", "cgroup"),
-            ("interface",),
+            (),
             move |mut context, _, (app_name,cgroup): (String,String)| {
-                let tx_clone = tx_for_register.clone();
+                let tx_clone = tx_for_protect.clone();
 
                 async move {
                     let Some(sender) = context.message().sender() else {
@@ -168,7 +166,7 @@ fn register_methods(
 
                     let (resp_tx, resp_rx) = oneshot::channel();
 
-                    let cmd = Command::Register {
+                    let cmd = Command::Protect {
                         app_name,
                         cgroup,
                         sender: String::from(&*sender),
@@ -182,7 +180,7 @@ fn register_methods(
                     let response = resp_rx.await;
                     context.reply(match response {
                         Ok(r) => match r {
-                            Ok(r) => Ok((r.logical_interface,)),
+                            Ok(_r) => Ok(()),
                             Err(e) => Err(dbus::MethodErr::failed(&e)),
                         },
                         Err(e) => Err(dbus::MethodErr::failed(&e)),
@@ -236,7 +234,7 @@ fn register_methods(
 
 async fn command_processor(
     mut command_rx: mpsc::Receiver<Command>,
-    mut register: RegisterCallback,
+    mut protect: ProtectCallback,
     mut get_ptp_status: Option<PtpStatusCallback>,
     shutdown: Shutdown,
     connection: Arc<SyncConnection>,
@@ -250,16 +248,16 @@ async fn command_processor(
 
     while let Some(Some(cmd)) = shutdown.wrap_cancel(command_rx.recv()).await {
         match cmd {
-            Command::Register {
+            Command::Protect {
                 app_name,
                 cgroup,
                 sender,
                 responder,
             } => {
                 // It is important to verify the app name for making sure that
-                // the sender is actually allowed to register this app!
+                // the sender is actually allowed to protect this app!
                 let response = match verify_app_name(&app_name, &sender, connection.clone()).await {
-                    Ok(()) => register(&app_name, &cgroup).await.map_err(|e| {
+                    Ok(()) => protect(&app_name, &cgroup).await.map_err(|e| {
                         // print here and forward, otherwise the error would only be sent back to the application
                         eprintln!("{e:#}");
                         e
@@ -313,7 +311,7 @@ async fn command_processor(
                         ))
                     }));
                 } else {
-                    let _ = responder.send(Err(anyhow!("No PTP status callback registered")));
+                    let _ = responder.send(Err(anyhow!("No PTP status callback protected")));
                 }
             }
         }
@@ -383,13 +381,12 @@ mod tests {
     const APP_NAME: &str = "testapp";
     const CGROUP: &str = "testcgroup";
     const SENDER: &str = ":1.5";
-    const INTERFACE: &str = "eth0.5";
 
     type CatchedResponse = Arc<Mutex<Option<Message>>>;
 
     struct DBusTester {
         pub msg: Message,
-        pub register_called: bool,
+        pub protect_called: bool,
     }
 
     impl DBusTester {
@@ -433,7 +430,7 @@ mod tests {
                         DBUS_NAME,
                         OBJECT_NAME,
                         DBUS_NAME,
-                        "Register",
+                        "Protect",
                     )
                     .expect("method can not be created")
                     .append2(&sent_app_name, &sent_cgroup);
@@ -450,16 +447,12 @@ mod tests {
                 shutdown: shutdown.clone(),
             };
 
-            let register_called = Arc::new(AtomicBool::new(false));
-            let register_called_for_setup = register_called.clone();
+            let protect_called = Arc::new(AtomicBool::new(false));
+            let protect_called_for_setup = protect_called.clone();
             dbus.setup(
                 Box::new(move |_, _| {
-                    register_called_for_setup.store(true, Ordering::Relaxed);
-                    Box::pin(async move {
-                        Ok(controller::RegisterResponse {
-                            logical_interface: String::from(INTERFACE),
-                        })
-                    })
+                    protect_called_for_setup.store(true, Ordering::Relaxed);
+                    Box::pin(async move { Ok(()) })
                 }),
                 Some(Box::new(move |_, _, _| {
                     Box::pin(async move {
@@ -499,7 +492,7 @@ mod tests {
 
             Ok(Self {
                 msg: response,
-                register_called: register_called.load(Ordering::Relaxed),
+                protect_called: protect_called.load(Ordering::Relaxed),
             })
         }
     }
@@ -511,10 +504,7 @@ mod tests {
         let result =
             DBusTester::perform_test(APP_NAME.to_owned(), CGROUP.to_owned(), dbus_names).await?;
 
-        assert!(result.register_called);
-
-        let interface: Option<String> = result.msg.get1();
-        assert_eq!(interface, Some(String::from(INTERFACE)));
+        assert!(result.protect_called);
 
         Ok(())
     }
@@ -534,7 +524,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert!(!result.register_called);
+        assert!(!result.protect_called);
         result.msg.as_result().unwrap();
     }
 
@@ -551,7 +541,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert!(!result.register_called);
+        assert!(!result.protect_called);
         result.msg.as_result().unwrap();
     }
 }

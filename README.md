@@ -19,10 +19,10 @@ For feedback or if you have a related productive use case, please contact [Linut
 The detnetctl software is split up into features that can be individually enabled to make it possible to try it out without the full set of dependencies.
 The features are introduced one by one below, but you should be able to mix and match by adapting the respective `cargo build` commands.
 
-- [Oneshot Dry-Run Registration (Minimal Feature Set)](#oneshot-dry-run-registration-minimal-feature-set) - using `--app-name` and `--cgroup`
-- [Registration via D-Bus Interface](#registration-via-d-bus-interface) - requires `dbus` feature, preferred over oneshot
-- [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
+- [Oneshot Dry-Run (Minimal Feature Set)](#oneshot-dry-run-minimal-feature-set) - using `--oneshot`
+- [D-Bus Interface](#d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
+- [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
@@ -43,19 +43,20 @@ A TSN/DetNet Node Controller with Interference Protection
 Usage: detnetctl [OPTIONS]
 
 Options:
-  -a, --app-name <APP_NAME>        Oneshot registration with the provided app name and do not spawn D-Bus service
-  -g, --cgroup <CGROUP>            cgroup of the app required for oneshot registration
+  -o, --oneshot                    Oneshot setup, i.e. do not spawn D-Bus service
+  -p, --protect <APP:CGROUP>       At startup, restrict the access to an app to the provided cgroup separated by a
+                                   colon (e.g. -p app0:/user.slice/). can be provided multiple times
   -c, --config <FILE>              Use YAML configuration with the provided file. Otherwise, uses sysrepo
       --no-queue-setup <PRIORITY>  Skip queue setup and use the given priority for all streams
       --no-dispatcher              Skip installing eBPFs - no interference protection!
       --bpf-debug-output           Print eBPF debug output to kernel tracing
       --no-interface-setup         Skip setting up the link
-  -p, --ptp-instance <INSTANCE>    Configure PTP for the given instance
+  -i, --ptp-instance <INSTANCE>    Configure PTP for the given instance
   -h, --help                       Print help
   -V, --version                    Print version
 ```
 
-## Oneshot Dry-Run Registration (Minimal Feature Set)
+## Oneshot Dry-Run (Minimal Feature Set)
 
 Only performs a one-shot dry-run reading the configuration from a YAML file.
 
@@ -72,13 +73,104 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-dispatcher --no-interface-setup --app-name app0 --cgroup /user.slice/
+./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-dispatcher --no-interface-setup --oneshot --protect app0:/user.slice/
 ```
 
-This will only read the configuration matching to `app0` from the configuration file, performs a dry run and prints out for example the following output:
+This will only read the configurations from the configuration file, performs a dry run setup as well as pretending to installing protection for `app0` and prints out for example the following output:
 
 ```console
-Request to register app0
+Setup of DetNet system
+  Fetched from configuration module: {
+    "app0": AppConfig {
+        logical_interface: "enp86s0.5",
+        physical_interface: "enp86s0",
+        period_ns: Some(
+            100000,
+        ),
+        offset_ns: Some(
+            0,
+        ),
+        size_bytes: Some(
+            1000,
+        ),
+        destination_address: Some(
+            MacAddress("48:21:0b:56:db:da"),
+        ),
+        vid: Some(
+            5,
+        ),
+        pcp: Some(
+            3,
+        ),
+        addresses: Some(
+            [
+                (
+                    10.5.1.1,
+                    24,
+                ),
+            ],
+        ),
+    },
+    "app1": AppConfig {
+        logical_interface: "enp86s0.3",
+        physical_interface: "enp86s0",
+        period_ns: Some(
+            200000,
+        ),
+        offset_ns: Some(
+            0,
+        ),
+        size_bytes: Some(
+            2000,
+        ),
+        destination_address: Some(
+            MacAddress("48:21:0b:56:db:da"),
+        ),
+        vid: Some(
+            3,
+        ),
+        pcp: Some(
+            2,
+        ),
+        addresses: None,
+    },
+}
+  Interface enp86s0 down
+  Result of queue setup: QueueSetupResponse {
+    logical_interface: "enp86s0.5",
+    priority: 3,
+}
+  Dispatcher installed for stream StreamIdentification {
+    destination_address: Some(
+        MacAddress("48:21:0b:56:db:da"),
+    ),
+    vlan_identifier: Some(
+        5,
+    ),
+} with priority 3 on enp86s0
+  VLAN interface enp86s0.5 properly configured
+  Added 10.5.1.1/24 to enp86s0.5
+  Interface enp86s0 up
+  Interface enp86s0.5 up
+  Interface enp86s0 down
+  Result of queue setup: QueueSetupResponse {
+    logical_interface: "enp86s0.3",
+    priority: 3,
+}
+  Dispatcher installed for stream StreamIdentification {
+    destination_address: Some(
+        MacAddress("48:21:0b:56:db:da"),
+    ),
+    vlan_identifier: Some(
+        3,
+    ),
+} with priority 3 on enp86s0
+  VLAN interface enp86s0.3 properly configured
+  No IP address configured, since none was provided
+  Interface enp86s0 up
+  Interface enp86s0.3 up
+  Finished after 249.7µs
+Request to protect app0
   Fetched from configuration module: AppConfig {
     logical_interface: "enp86s0.5",
     physical_interface: "enp86s0",
@@ -109,32 +201,19 @@ Request to register app0
         ],
     ),
 }
-  Interface enp86s0 down
-  Result of queue setup: QueueSetupResponse {
-    logical_interface: "enp86s0.5",
-    priority: 3,
-}
-  Dispatcher installed for stream StreamIdentification {
+  Protection installed for stream StreamIdentification {
     destination_address: Some(
         MacAddress("48:21:0b:56:db:da"),
     ),
     vlan_identifier: Some(
         5,
     ),
-} with priority 3 on enp86s0
-  VLAN interface enp86s0.5 properly configured
-  Added 10.5.1.1/24 to enp86s0.5
-  Interface enp86s0 up
-  Interface enp86s0.5 up
-  Finished after 131.4µs
-Final result: RegisterResponse {
-    logical_interface: "enp86s0.5",
-}
+} on enp86s0
 ```
 
-## Registration via D-Bus Interface
+## D-Bus Interface
 
-Allows for registration of via D-Bus. This can be done by the application itself (for the interface description see [facade]) or via the `detnetctl-run` tool. For the former, the application needs to take care to put itself in an adequate cgroup (see [eBPF Dispatcher](#ebpf-dispatcher)), while the `detnetctl-run` tool requires a running systemd user session.
+Instead of using the oneshot mode, you usually want to run detnetctl as daemon to dynamically react to new requests. In the following, it is shown how to use the D-Bus interface to send protect requests (even if they will have no effect until the [eBPF Dispatcher](#ebpf-dispatcher) is also used). This can be done by the application itself (for the interface description see [facade]) or via the `detnetctl-run` tool. For the former, the application needs to take care to put itself in an adequate cgroup (see [eBPF Dispatcher](#ebpf-dispatcher)), while the `detnetctl-run` tool requires a running systemd user session.
 
 ### Build
 
@@ -236,7 +315,7 @@ it will happily connect, too. That is normal for general networking, but in DetN
 
 ## eBPF Dispatcher
 
-Installs an eBPF at tc egress so that after an application has registered, only the application(s) in a certain cgroup can transmit for the given TSN stream. The respective cgroup will be provided during registration by the caller, so it is its responsibility to make sure that all applications within the given cgroup are permitted to send to the TSN stream. This usually means that the relevant application is isolated in its own cgroup (similar to isolating applications in cgroups for controlling CPU and memory utilization).
+Installs an eBPF at tc egress so that after an application has registered, only the application(s) in a certain cgroup can transmit for the given TSN stream. The respective cgroup will be provided during protection by the caller, so it is its responsibility to make sure that all applications within the given cgroup are permitted to send to the TSN stream. This usually means that the relevant application is isolated in its own cgroup (similar to isolating applications in cgroups for controlling CPU and memory utilization).
 
 How the cgroups are managed is system-dependent. Today, this is usually the responsibility of a dedicated service like systemd ([reasons for this approach and how systemd handles it](https://www.freedesktop.org/wiki/Software/systemd/ControlGroupInterface/)), but there are other options like the (unfavored) option for [direct interfacing with the kernel cgroup interface](https://www.freedesktop.org/wiki/Software/systemd/PaxControlGroups/). For this documentation, we assume systemd is used, but `detnetctl` itself has no dependency on systemd (except for the `detnetctl-run` tool) and can be used with other means of managing cgroups.
 
@@ -430,7 +509,7 @@ sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot
 sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
 ```
 
-Then start detnetctl as
+Restart `detd` as explained above, then start detnetctl as
 ```console
 sudo ./target/debug/detnetctl
 ```

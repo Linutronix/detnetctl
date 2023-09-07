@@ -32,6 +32,7 @@ use crate::ptp::PtpConfig;
 use anyhow::Result;
 use eui48::MacAddress;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 #[cfg(test)]
@@ -116,6 +117,13 @@ pub trait Configuration {
     /// Will return `Err` if no configuration can be found for the given `app_name`
     /// or there is general problem reading the configuration.
     fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig>;
+
+    /// Get the configuration for all provided apps
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>>;
 
     /// Get the PTP configuration for a given instance
     ///

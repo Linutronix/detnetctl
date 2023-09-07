@@ -107,7 +107,9 @@ impl QueueSetup for DetdGateway {
         )?;
 
         if !response.ok {
-            return Err(anyhow!("Setup of NIC not possible!"));
+            return Err(anyhow!(
+                "Setup of queues via detd not possible! See /var/log/detd.log"
+            ));
         }
 
         if response.vlan_interface != config.logical_interface {
@@ -215,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Setup of NIC not possible!")]
+    #[should_panic(expected = "Setup of queues via detd not possible!")]
     fn test_response_not_ok() {
         run_test(
             &generate_app_config(0),

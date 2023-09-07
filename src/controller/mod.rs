@@ -5,11 +5,11 @@
 //! Core component of the node controller
 //!
 //! The controller is combining the configuration, the NIC setup and the dispatcher
-//! to perform a complete registration of an application.
+//! to perform a complete protection of an application.
 //!
 //! ```
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
-//! use detnetctl::controller::{Controller, Registration};
+//! use detnetctl::controller::{Controller, Setup, Protection};
 //! use detnetctl::dispatcher::{DummyDispatcher, Dispatcher};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
 //! use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
@@ -31,8 +31,11 @@
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
 //! let mut dispatcher = Arc::new(Mutex::new(DummyDispatcher));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
-//! let response = controller
-//!     .register("app0", &cgroup, configuration, queue_setup, dispatcher, interface_setup)
+//! controller
+//!     .setup(configuration.clone(), queue_setup, dispatcher.clone(), interface_setup)
+//!     .await?;
+//! controller
+//!     .protect("app0", &cgroup, configuration, dispatcher)
 //!     .await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
@@ -50,36 +53,33 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::time::Instant;
 
-/// The reponse of a registration to be passed back to the application
-/// for setting up the socket appropriately.
-#[derive(Debug)]
-pub struct RegisterResponse {
-    /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
-    pub logical_interface: String,
-}
-
-/// Defines a registration operation
+/// Defines a setup operation
 #[async_trait]
-pub trait Registration {
-    /// Register an application including the following steps
-    ///
-    /// 1. Generate a random token
-    /// 2. Fetch the configuration corresponding to the `app_name`
-    /// 3. Set up the NIC according to the configuration
-    /// 4. Set up the dispatcher to prevent interfering messages from other applications
-    /// 5. Return the appropriate socket settings for the application
-    async fn register(
+pub trait Setup {
+    /// Setup the system considering all application configurations
+    async fn setup(
         &self,
-        app_name: &str,
-        cgroup: &Path,
         mut configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
         mut dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
         mut interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
-    ) -> Result<RegisterResponse>;
+    ) -> Result<()>;
 }
 
-/// Struct to perform the registration on
+/// Defines a protection operation
+#[async_trait]
+pub trait Protection {
+    /// Protect an application by setting the cgroup for the provided `app_name`
+    async fn protect(
+        &self,
+        app_name: &str,
+        cgroup: &Path,
+        mut configuration: Arc<Mutex<dyn Configuration + Send>>,
+        mut dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
+    ) -> Result<()>;
+}
+
+/// Struct to perform the protection on
 #[derive(Default)]
 pub struct Controller;
 
@@ -92,18 +92,68 @@ impl Controller {
 }
 
 #[async_trait]
-impl Registration for Controller {
-    async fn register(
+impl Setup for Controller {
+    async fn setup(
         &self,
-        app_name: &str,
-        cgroup: &Path,
         configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
         dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
         interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
-    ) -> Result<RegisterResponse> {
+    ) -> Result<()> {
         let start = Instant::now();
-        println!("Request to register {app_name}");
+        println!("Setup of DetNet system");
+
+        // Fetch configurations for apps
+        let app_configs = configuration
+            .lock()
+            .await
+            .get_app_configs()
+            .context("Fetching the configuration failed")?;
+        println!("  Fetched from configuration module: {app_configs:#?}");
+
+        for (_app_name, app_config) in app_configs {
+            let locked_interface_setup = interface_setup.lock().await;
+
+            let setup_result = setup(
+                &app_config,
+                queue_setup.clone(),
+                dispatcher.clone(),
+                &*locked_interface_setup,
+            )
+            .await; // No ? since we need to ensure that the link is up again even after error
+
+            let if_up_result = set_interfaces_up(&app_config, &*locked_interface_setup).await;
+
+            // The first occurred error shall be returned, but a potential second still be printed
+            if let Err(if_up_error) = if_up_result {
+                return match setup_result {
+                    Ok(_) => Err(if_up_error),
+                    Err(setup_error) => {
+                        eprintln!("After setup failed, interface up failed, too: {if_up_error}");
+                        Err(setup_error)
+                    }
+                };
+            }
+
+            setup_result?;
+        }
+
+        println!("  Finished after {:.1?}", start.elapsed());
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Protection for Controller {
+    async fn protect(
+        &self,
+        app_name: &str,
+        cgroup: &Path,
+        configuration: Arc<Mutex<dyn Configuration + Send>>,
+        dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
+    ) -> Result<()> {
+        println!("Request to protect {app_name}");
 
         // Fetch configuration for app
         let app_config = configuration
@@ -113,43 +163,30 @@ impl Registration for Controller {
             .context("Fetching the configuration failed")?;
         println!("  Fetched from configuration module: {app_config:#?}");
 
-        let locked_interface_setup = interface_setup.lock().await;
+        let stream_id = StreamIdentification {
+            destination_address: app_config.destination_address,
+            vlan_identifier: app_config.vid,
+        };
 
-        let setup_result = setup(
-            &app_config,
-            cgroup,
-            queue_setup,
-            dispatcher,
-            &*locked_interface_setup,
-        )
-        .await; // No ? since we need to ensure that the link is up again even after error
+        let mut locked_dispatcher = dispatcher.lock().await;
+        locked_dispatcher
+            .protect_stream(
+                &app_config.physical_interface,
+                &stream_id,
+                Some(cgroup.into()),
+            )
+            .context("Installing protection via the dispatcher failed")?;
+        println!(
+            "  Protection installed for stream {:#?} on {}",
+            stream_id, app_config.physical_interface
+        );
 
-        let if_up_result = set_interfaces_up(&app_config, &*locked_interface_setup).await;
-
-        // The first occurred error shall be returned, but a potential second still be printed
-        if let Err(if_up_error) = if_up_result {
-            return match setup_result {
-                Ok(_) => Err(if_up_error),
-                Err(setup_error) => {
-                    eprintln!("After setup failed, interface up failed, too: {if_up_error}");
-                    Err(setup_error)
-                }
-            };
-        }
-
-        setup_result?;
-
-        println!("  Finished after {:.1?}", start.elapsed());
-
-        Ok(RegisterResponse {
-            logical_interface: app_config.logical_interface,
-        })
+        Ok(())
     }
 }
 
 async fn setup(
     app_config: &AppConfig,
-    cgroup: &Path,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
@@ -191,7 +228,7 @@ async fn setup(
             &stream_id,
             queue_setup_response.priority,
             app_config.pcp,
-            Some(cgroup.into()),
+            None,
         )
         .context("Installing protection via the dispatcher failed")?;
     println!(
@@ -271,23 +308,35 @@ mod tests {
     use crate::interface_setup::MockInterfaceSetup;
     use crate::queue_setup::{MockQueueSetup, QueueSetupResponse};
     use anyhow::anyhow;
+    use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
 
+    fn generate_app_config(interface: String, vid: u16) -> AppConfig {
+        AppConfig {
+            logical_interface: format!("{interface}.{vid}"),
+            physical_interface: interface,
+            period_ns: Some(0),
+            offset_ns: Some(0),
+            size_bytes: Some(0),
+            destination_address: Some("8b:de:82:a1:59:5a".parse().unwrap()),
+            vid: Some(vid),
+            pcp: Some(4),
+            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
+        }
+    }
+
     fn configuration_happy(interface: String, vid: u16) -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
-        configuration.expect_get_app_config().returning(move |_| {
-            Ok(AppConfig {
-                logical_interface: format!("{interface}.{vid}"),
-                physical_interface: interface.clone(),
-                period_ns: Some(0),
-                offset_ns: Some(0),
-                size_bytes: Some(0),
-                destination_address: Some("8b:de:82:a1:59:5a".parse()?),
-                vid: Some(vid),
-                pcp: Some(4),
-                addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
-            })
+        let interface2 = interface.clone();
+        configuration
+            .expect_get_app_config()
+            .returning(move |_| Ok(generate_app_config(interface.clone(), vid)));
+        configuration.expect_get_app_configs().returning(move || {
+            Ok(HashMap::from([(
+                String::from("app0"),
+                generate_app_config(interface2.clone(), vid),
+            )]))
         });
         configuration
     }
@@ -297,6 +346,9 @@ mod tests {
         configuration
             .expect_get_app_config()
             .returning(|_| Err(anyhow!("failed")));
+        configuration
+            .expect_get_app_configs()
+            .returning(|| Err(anyhow!("failed")));
         configuration
     }
 
@@ -325,6 +377,9 @@ mod tests {
             .expect_configure_stream()
             .returning(|_, _, _, _, _| Ok(()));
         dispatcher
+            .expect_protect_stream()
+            .returning(|_, _, _| Ok(()));
+        dispatcher
             .expect_configure_best_effort()
             .returning(|_, _, _| Ok(()));
         dispatcher
@@ -335,6 +390,9 @@ mod tests {
         dispatcher
             .expect_configure_stream()
             .returning(|_, _, _, _, _| Err(anyhow!("failed")));
+        dispatcher
+            .expect_protect_stream()
+            .returning(|_, _, _| Err(anyhow!("failed")));
         dispatcher
             .expect_configure_best_effort()
             .returning(|_, _, _| Err(anyhow!("failed")));
@@ -370,7 +428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_happy() -> Result<()> {
+    async fn test_setup_happy() -> Result<()> {
         let interface = "ethxy";
         let vid = 43;
         let priority = 32;
@@ -382,99 +440,106 @@ mod tests {
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
-        let response = controller
-            .register(
-                "app123",
-                &PathBuf::from("cgroup"),
-                configuration,
-                queue_setup,
-                dispatcher,
-                interface_setup,
-            )
+        controller
+            .setup(configuration, queue_setup, dispatcher, interface_setup)
             .await?;
-        assert_eq!(response.logical_interface, format!("{interface}.{vid}"));
         Ok(())
     }
 
     #[tokio::test]
     #[should_panic(expected = "Fetching the configuration failed")]
-    async fn test_register_configuration_failure() {
+    async fn test_setup_configuration_failure() {
         let configuration = Arc::new(Mutex::new(configuration_failing()));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .register(
-                "app123",
-                &PathBuf::from("cgroup"),
-                configuration,
-                queue_setup,
-                dispatcher,
-                interface_setup,
-            )
+            .setup(configuration, queue_setup, dispatcher, interface_setup)
             .await
             .unwrap();
     }
 
     #[tokio::test]
     #[should_panic(expected = "Setting up the queue failed")]
-    async fn test_register_queue_setup_failure() {
+    async fn test_setup_queue_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .register(
-                "app123",
-                &PathBuf::from("cgroup"),
-                configuration,
-                queue_setup,
-                dispatcher,
-                interface_setup,
-            )
+            .setup(configuration, queue_setup, dispatcher, interface_setup)
             .await
             .unwrap();
     }
 
     #[tokio::test]
     #[should_panic(expected = "Installing protection via the dispatcher failed")]
-    async fn test_register_dispatcher_failure() {
+    async fn test_setup_dispatcher_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let dispatcher = Arc::new(Mutex::new(dispatcher_failing()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .register(
-                "app123",
-                &PathBuf::from("cgroup"),
-                configuration,
-                queue_setup,
-                dispatcher,
-                interface_setup,
-            )
+            .setup(configuration, queue_setup, dispatcher, interface_setup)
             .await
             .unwrap();
     }
 
     #[tokio::test]
     #[should_panic(expected = "Setting interface abc down failed")]
-    async fn test_register_interface_setup_failure() {
+    async fn test_setup_interface_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy(32)));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_failing()));
         let controller = Controller::new();
         controller
-            .register(
+            .setup(configuration, queue_setup, dispatcher, interface_setup)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_protect_happy() -> Result<()> {
+        let interface = "ethxy";
+        let vid = 43;
+        let configuration = Arc::new(Mutex::new(configuration_happy(
+            String::from(interface),
+            vid,
+        )));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
+        let controller = Controller::new();
+        controller
+            .protect(
                 "app123",
                 &PathBuf::from("cgroup"),
                 configuration,
-                queue_setup,
                 dispatcher,
-                interface_setup,
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Installing protection via the dispatcher failed")]
+    async fn test_protect_dispatcher_failing() {
+        let interface = "ethxy";
+        let vid = 43;
+        let configuration = Arc::new(Mutex::new(configuration_happy(
+            String::from(interface),
+            vid,
+        )));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_failing()));
+        let controller = Controller::new();
+        controller
+            .protect(
+                "app123",
+                &PathBuf::from("cgroup"),
+                configuration,
+                dispatcher,
             )
             .await
             .unwrap();

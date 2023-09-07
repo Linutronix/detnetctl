@@ -6,24 +6,21 @@
 //!
 //! ## D-Bus Interface
 //!
-//! ### org.detnet.detnetctl.Register
+//! ### org.detnet.detnetctl.Protect
 //!
 //! ```markdown
-//! Register(app_name: string, cgroup: string) -> (interface: string)
+//! Protect(app_name: string, cgroup: string) -> ()
 //! ```
 //!
 //! The caller needs to be owner of `org.detnet.apps.{app_name}`. Otherwise, the method call is
 //! rejected. Together with a corresponding D-Bus policy, this only allows a permitted application
-//! to register a DetNet application.
+//! to protect a DetNet application.
 //!
 //! #### Parameters
-//! * **app_name**: The name of the app to register. Matches the app name in the configuration.
+//! * **app_name**: The name of the app to protect. Matches the app name in the configuration.
 //! * **cgroup**: The cgroup that should be allowed to generate traffic for this app.
 //!               Provide as path rooted in the cgroup fs as it is also provided by /proc/\<PID\>/cgroup,
 //!               e.g. /user.slice/user-1001.slice/user@1001.service/app.slice/detnetctl.app0.scope
-//!
-//! #### Returns
-//! * **interface**: The name of the (virtual) interface to use for setting up the socket.
 //!
 //! ### org.detnet.detnetctl.PtpStatus
 //!
@@ -63,9 +60,9 @@
 //! ## Usage Example of the Facade Module within detnetctl
 #![cfg_attr(not(feature = "ptp"), doc = "```ignore")]
 #![cfg_attr(feature = "ptp", doc = "```")]
-//! use detnetctl::controller::{Registration, Controller};
+//! use detnetctl::controller::{Setup, Protection, Controller};
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
-//! use detnetctl::facade::{Facade, Setup};
+//! use detnetctl::facade::{Facade, Setup as DBusSetup};
 //! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};
 //! use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
@@ -99,17 +96,13 @@
 //!         let cgroup = PathBuf::from(cgroup);
 //!         let cloned_controller = controller.clone();
 //!         let cloned_configuration = configuration.clone();
-//!         let cloned_queue_setup = queue_setup.clone();
 //!         let cloned_dispatcher = dispatcher.clone();
-//!         let cloned_interface_setup = interface_setup.clone();
 //!         Box::pin(async move {
-//!             cloned_controller.lock().await.register(
+//!             cloned_controller.lock().await.protect(
 //!                 &app_name,
 //!                 &cgroup,
 //!                 cloned_configuration,
-//!                 cloned_queue_setup,
-//!                 cloned_dispatcher,
-//!                 cloned_interface_setup).await
+//!                 cloned_dispatcher).await
 //!         })
 //!     }),
 //!     Some(Box::new(move |interface,max_clock_delta,max_master_offset| {
@@ -124,7 +117,6 @@
 //! # });
 //! # Ok::<(), anyhow::Error>(())
 
-use crate::controller::RegisterResponse;
 use crate::ptp;
 use anyhow::Result;
 use async_shutdown::Shutdown;
@@ -136,10 +128,9 @@ use std::pin::Pin;
 mod dbus;
 
 /// Future to await for registration
-pub type RegisterFuture =
-    Pin<Box<dyn Future<Output = Result<RegisterResponse, anyhow::Error>> + Send>>;
+pub type ProtectFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send>>;
 /// Returns a future to await for registration
-pub type RegisterCallback = Box<dyn for<'a> FnMut(&'a str, &'a str) -> RegisterFuture + Send>;
+pub type ProtectCallback = Box<dyn for<'a> FnMut(&'a str, &'a str) -> ProtectFuture + Send>;
 
 /// Future to await to get the PTP status
 pub type PtpStatusFuture =
@@ -154,7 +145,7 @@ pub trait Setup {
     /// Setup the facade by providing a callback for the registration command
     async fn setup(
         &mut self,
-        register: RegisterCallback,
+        protect: ProtectCallback,
         get_ptp_status: Option<PtpStatusCallback>,
     ) -> Result<()>;
 }
@@ -182,10 +173,10 @@ impl Facade {
 impl Setup for Facade {
     async fn setup(
         &mut self,
-        register: RegisterCallback,
+        protect: ProtectCallback,
         get_ptp_status: Option<PtpStatusCallback>,
     ) -> Result<()> {
-        self.dbus.setup(register, get_ptp_status).await?;
+        self.dbus.setup(protect, get_ptp_status).await?;
         Ok(())
     }
 }

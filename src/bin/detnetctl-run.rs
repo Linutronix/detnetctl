@@ -234,9 +234,8 @@ fn register_detnet_app(app_name: &str, cgroup: &str) -> Result<()> {
         return Err(anyhow!("Not the primary owner of the D-Bus name! Is the process run under the correct user according to the D-Bus policy?"));
     }
 
-    // Register the DetNet app
-    let (_interface,): (String,) =
-        proxy.method_call("org.detnet.detnetctl", "Register", (app_name, cgroup))?;
+    // Protect the DetNet app
+    proxy.method_call("org.detnet.detnetctl", "Protect", (app_name, cgroup))?;
 
     Ok(())
 }

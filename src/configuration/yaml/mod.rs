@@ -37,6 +37,14 @@ impl configuration::Configuration for YAMLConfiguration {
         )
     }
 
+    fn get_app_configs(&mut self) -> Result<HashMap<String, configuration::AppConfig>> {
+        self.config
+            .apps
+            .as_ref()
+            .ok_or_else(|| anyhow!("No apps section found in configuration!"))
+            .cloned()
+    }
+
     fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
         self.config.ptp.as_ref().map_or_else(
             || Err(anyhow!("No ptp section found in configuration!")),

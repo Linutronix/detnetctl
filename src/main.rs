@@ -31,22 +31,46 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use detnetctl::configuration::{Configuration, YAMLConfiguration};
-use detnetctl::controller::{Controller, Registration};
+use detnetctl::controller::{Controller, Protection, Setup};
 use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
 use detnetctl::ptp::Ptp;
 use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
 
+#[derive(Debug, Clone)]
+struct ProtectRequest {
+    app_name: String,
+    cgroup: PathBuf,
+}
+
+impl std::str::FromStr for ProtectRequest {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: [&str; 2] = s
+            .split(':')
+            .collect::<Vec<&str>>()
+            .try_into()
+            .map_err(|_| anyhow!("No single : to separate app and cgroup"))?;
+        Ok(Self {
+            app_name: parts[0].into(),
+            cgroup: parts[1].into(),
+        })
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 struct Cli {
-    /// Oneshot registration with the provided app name and do not spawn D-Bus service
+    /// Oneshot setup, i.e. do not spawn D-Bus service
     #[arg(short, long)]
-    app_name: Option<String>,
+    oneshot: bool,
 
-    /// cgroup of the app required for oneshot registration
-    #[arg(short = 'g', long)]
-    cgroup: Option<String>,
+    /// At startup, restrict the access to an app to the provided cgroup separated by a colon (e.g. -p app0:/user.slice/).
+    /// can be provided multiple times
+    #[arg(short, long, value_parser, value_name = "APP:CGROUP")]
+    protect: Vec<ProtectRequest>,
 
     /// Use YAML configuration with the provided file. Otherwise, uses sysrepo.
     #[arg(short, long, value_name = "FILE")]
@@ -69,7 +93,7 @@ struct Cli {
     no_interface_setup: bool,
 
     /// Configure PTP for the given instance
-    #[arg(short, long, value_name = "INSTANCE")]
+    #[arg(short = 'i', long, value_name = "INSTANCE")]
     ptp_instance: Option<u32>,
 }
 
@@ -131,38 +155,37 @@ pub async fn main() -> Result<()> {
 
     let controller = Controller::new();
 
-    match cli.app_name {
-        Some(app_name) => match cli.cgroup {
-            Some(cgroup) => {
-                let response = controller
-                    .register(
-                        &app_name,
-                        &PathBuf::from(cgroup),
-                        configuration,
-                        queue_setup,
-                        dispatcher,
-                        interface_setup,
-                    )
-                    .await?;
-                println!("Final result: {response:#?}");
-            }
-            None => {
-                return Err(anyhow!(
-                    "If app_name is provided, cgroup needs to be provided, too!"
-                ));
-            }
-        },
-        None => {
-            spawn_dbus_service(
-                Arc::new(Mutex::new(controller)),
-                configuration,
-                queue_setup,
-                dispatcher,
-                interface_setup,
-                ptp_manager,
+    // Setup the system for all configured applications
+    controller
+        .setup(
+            configuration.clone(),
+            queue_setup.clone(),
+            dispatcher.clone(),
+            interface_setup.clone(),
+        )
+        .await?;
+
+    // Protect all apps provided via CLI
+    for protect in cli.protect {
+        controller
+            .protect(
+                &protect.app_name,
+                &protect.cgroup,
+                configuration.clone(),
+                dispatcher.clone(),
             )
             .await?;
-        }
+    }
+
+    // Spawn D-Bus service if requested
+    if !cli.oneshot {
+        spawn_dbus_service(
+            Arc::new(Mutex::new(controller)),
+            configuration,
+            dispatcher,
+            ptp_manager,
+        )
+        .await?;
     }
 
     Ok(())
@@ -177,7 +200,8 @@ fn feature_missing_error(feature: &str, alternative: &str) -> Error {
 use {
     async_shutdown::Shutdown,
     detnetctl::facade::{
-        Facade, PtpStatusCallback, PtpStatusFuture, RegisterCallback, RegisterFuture, Setup,
+        Facade, ProtectCallback, ProtectFuture, PtpStatusCallback, PtpStatusFuture,
+        Setup as FacadeSetup,
     },
     tokio::signal,
 };
@@ -185,34 +209,23 @@ use {
 async fn spawn_dbus_service(
     controller: Arc<Mutex<Controller>>,
     configuration: Arc<Mutex<dyn Configuration + Send>>,
-    queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
-    interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
     let shutdown = Shutdown::new();
     let mut facade = Facade::new(shutdown.clone())?;
 
-    let register_callback: RegisterCallback = Box::new(move |app_name, cgroup| -> RegisterFuture {
+    let protect_callback: ProtectCallback = Box::new(move |app_name, cgroup| -> ProtectFuture {
         let app_name = String::from(app_name);
         let cgroup = PathBuf::from(cgroup);
         let cloned_controller = controller.clone();
         let cloned_configuration = configuration.clone();
-        let cloned_queue_setup = queue_setup.clone();
         let cloned_dispatcher = dispatcher.clone();
-        let cloned_interface_setup = interface_setup.clone();
         Box::pin(async move {
             cloned_controller
                 .lock()
                 .await
-                .register(
-                    &app_name,
-                    &cgroup,
-                    cloned_configuration,
-                    cloned_queue_setup,
-                    cloned_dispatcher,
-                    cloned_interface_setup,
-                )
+                .protect(&app_name, &cgroup, cloned_configuration, cloned_dispatcher)
                 .await
         })
     });
@@ -233,7 +246,7 @@ async fn spawn_dbus_service(
         )
     });
 
-    facade.setup(register_callback, ptp_callback).await?;
+    facade.setup(protect_callback, ptp_callback).await?;
 
     println!("Started detnetctl");
 
@@ -257,9 +270,7 @@ async fn spawn_dbus_service(
 async fn spawn_dbus_service(
     _controller: Arc<Mutex<Controller>>,
     _configuration: Arc<Mutex<dyn Configuration + Send>>,
-    _queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     _dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
-    _interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     _ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
     Err(feature_missing_error("dbus", "--app-name"))

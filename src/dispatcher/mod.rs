@@ -61,6 +61,21 @@ pub trait Dispatcher {
         cgroup: Option<Arc<Path>>,
     ) -> Result<()>;
 
+    /// Protect a stream
+    /// Traffic identified with the provided `stream_identification` will
+    /// be protected by only allowing applications in the provided cgroup.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to protect the stream,
+    /// e.g. if it does not exist yet.
+    fn protect_stream(
+        &mut self,
+        interface: &str,
+        stream_identification: &StreamIdentification,
+        cgroup: Option<Arc<Path>>,
+    ) -> Result<()>;
+
     /// Configure best-effort traffic
     /// All traffic that can not be classified into one of the other streams is classified as
     /// best-effort traffic.
@@ -101,6 +116,15 @@ impl Dispatcher for DummyDispatcher {
         _stream_identification: &StreamIdentification,
         _priority: u32,
         _pcp: Option<u8>,
+        _cgroup: Option<Arc<Path>>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn protect_stream(
+        &mut self,
+        _interface: &str,
+        _stream_identification: &StreamIdentification,
         _cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
         Ok(())

@@ -52,6 +52,12 @@ impl Stream {
         }
     }
 
+    fn pcp(&self) -> Result<u8> {
+        (self.shifted_pcp >> 13)
+            .try_into()
+            .map_err(|_e| anyhow!("Cannot properly shift PCP"))
+    }
+
     #[must_use]
     pub fn to_bytes(&self) -> [u8; 7] {
         let mut result: [u8; 7] = [0; 7];
@@ -61,7 +67,6 @@ impl Stream {
         result
     }
 
-    #[cfg(test)]
     pub fn from_bytes(bytes: [u8; 7]) -> Result<Self> {
         Ok(Self {
             restrictions: bytes[0],
@@ -128,6 +133,19 @@ impl<'a> Dispatcher for BPFDispatcher<'a> {
             iface
                 .configure_stream(stream_identification, priority, pcp, cgroup)
                 .context("Failed to configure stream")
+        })
+    }
+
+    fn protect_stream(
+        &mut self,
+        interface: &str,
+        stream_identification: &StreamIdentification,
+        cgroup: Option<Arc<Path>>,
+    ) -> Result<()> {
+        self.with_interface(interface, |iface| {
+            iface
+                .protect_stream(stream_identification, cgroup)
+                .context("Failed to protect stream")
         })
     }
 
@@ -300,6 +318,39 @@ impl<'a> BPFInterface<'a> {
         Ok(())
     }
 
+    pub fn protect_stream(
+        &mut self,
+        stream_identification: &StreamIdentification,
+        cgroup: Option<Arc<Path>>,
+    ) -> Result<()> {
+        let stream_id_bytes = stream_identification.to_bytes()?;
+
+        let stream_handle: u32 = u16::from_ne_bytes(
+            self.skel
+                .maps()
+                .stream_handles()
+                .lookup(&stream_id_bytes, MapFlags::ANY)?
+                .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
+                .try_into()
+                .map_err(|_e| anyhow!("Invalid byte number"))?,
+        )
+        .into();
+
+        let stream = Stream::from_bytes(
+            self.skel
+                .maps()
+                .streams()
+                .lookup(&stream_handle.to_ne_bytes(), MapFlags::ANY)?
+                .ok_or_else(|| anyhow!("Cannot find stream for handle"))?
+                .try_into()
+                .map_err(|_e| anyhow!("Invalid byte number"))?,
+        )?;
+
+        self.update_stream_maps(stream_handle, stream.egress_priority, stream.pcp()?, cgroup)?;
+
+        Ok(())
+    }
+
     pub fn configure_best_effort(
         &mut self,
         priority: u32,
@@ -375,6 +426,10 @@ mod tests {
     const STREAM_ID: StreamIdentification = StreamIdentification {
         destination_address: Some(MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb])),
         vlan_identifier: Some(3),
+    };
+    const STREAM_ID2: StreamIdentification = StreamIdentification {
+        destination_address: STREAM_ID.destination_address,
+        vlan_identifier: Some(7),
     };
 
     fn generate_skel_builder(cgroup: Arc<Path>) -> NetworkDispatcherSkelBuilder {
@@ -496,9 +551,13 @@ mod tests {
 
         maps.expect_stream_handles().returning(|| {
             let mut map = Map::default();
-            map.expect_lookup()
-                .times(1)
-                .returning(|_key, _value| Ok(None));
+            map.expect_lookup().times(1).returning(|key, _flags| {
+                if key == STREAM_ID.to_bytes().unwrap() {
+                    Ok(Some(vec![1, 0]))
+                } else {
+                    Ok(None)
+                }
+            });
             map
         });
 
@@ -516,6 +575,8 @@ mod tests {
                     info: MockInnerMapInfo { max_entries: 100 },
                 })
             });
+            map.expect_lookup()
+                .returning(|_key, _flags| Ok(Some(Stream::new(6, 3, false).to_bytes().into())));
             map
         });
 
@@ -523,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn test_happy() -> Result<()> {
+    fn test_configure_stream_happy() -> Result<()> {
         let cgroup = get_cgroup(process::id())?;
         let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
 
@@ -571,7 +632,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "interface not found")]
-    fn test_interface_not_found() {
+    fn test_configure_stream_interface_not_found() {
         let cgroup = get_cgroup(process::id()).unwrap();
         let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
 
@@ -593,6 +654,46 @@ mod tests {
                 Some(PCP),
                 Some(Path::new(&cgroup).into()),
             )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_protect_happy() -> Result<()> {
+        let cgroup = get_cgroup(process::id())?;
+        let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
+
+        let mut dispatcher = BPFDispatcher {
+            interfaces: HashMap::default(),
+            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
+            nametoindex: Box::new(|interface| {
+                assert_eq!(interface, INTERFACE);
+                Ok(3)
+            }),
+            debug_output: false,
+        };
+
+        dispatcher.protect_stream(INTERFACE, &STREAM_ID, Some(Path::new(&cgroup).into()))?;
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot find stream for identification")]
+    fn test_protect_stream_missing() {
+        let cgroup = get_cgroup(process::id()).unwrap();
+        let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
+
+        let mut dispatcher = BPFDispatcher {
+            interfaces: HashMap::default(),
+            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
+            nametoindex: Box::new(|interface| {
+                assert_eq!(interface, INTERFACE);
+                Ok(3)
+            }),
+            debug_output: false,
+        };
+
+        dispatcher
+            .protect_stream(INTERFACE, &STREAM_ID2, Some(Path::new(&cgroup).into()))
             .unwrap();
     }
 }
