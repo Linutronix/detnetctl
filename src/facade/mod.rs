@@ -6,13 +6,13 @@
 //!
 //! ## D-Bus Interface
 //!
-//! ### org.detnet.detnetctl.Protect
+//! ### org.detnet.detnetctl1.Protect
 //!
 //! ```markdown
 //! Protect(app_name: string, cgroup: string) -> ()
 //! ```
 //!
-//! The caller needs to be owner of `org.detnet.apps.{app_name}`. Otherwise, the method call is
+//! The caller needs to be owner of `org.detnet.apps1.{app_name}`. Otherwise, the method call is
 //! rejected. Together with a corresponding D-Bus policy, this only allows a permitted application
 //! to protect a DetNet application.
 //!
@@ -22,7 +22,7 @@
 //!               Provide as path rooted in the cgroup fs as it is also provided by /proc/\<PID\>/cgroup,
 //!               e.g. /user.slice/user-1001.slice/user@1001.service/app.slice/detnetctl.app0.scope
 //!
-//! ### org.detnet.detnetctl.PtpStatus
+//! ### org.detnet.detnetctl1.PtpStatus
 //!
 //! ```markdown
 //! PtpStatus(interface: string, max_clock_delta_ns: u64, max_master_offset_ns: u64)

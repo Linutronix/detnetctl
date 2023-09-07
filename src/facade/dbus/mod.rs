@@ -25,9 +25,9 @@ mod mocks;
 #[cfg(test)]
 use {mocks::MockSyncConnection as SyncConnection, mocks::Mockconnection as connection};
 
-const DBUS_NAME: &str = "org.detnet.detnetctl";
-const OBJECT_NAME: &str = "/org/detnet/detnetctl";
-const DBUS_APP_PREFIX: &str = "org.detnet.apps.";
+const DBUS_NAME: &str = "org.detnet.detnetctl1";
+const OBJECT_NAME: &str = "/org/detnet/detnetctl1";
+const DBUS_APP_PREFIX: &str = "org.detnet.apps1.";
 
 type DbusPtpStatus = (u8, i64, i64, i32, u8, i64);
 

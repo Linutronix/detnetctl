@@ -222,20 +222,20 @@ fn register_detnet_app(app_name: &str, cgroup: &str) -> Result<()> {
     let conn = Connection::new_system()?;
 
     let proxy = conn.with_proxy(
-        "org.detnet.detnetctl",
-        "/org/detnet/detnetctl",
+        "org.detnet.detnetctl1",
+        "/org/detnet/detnetctl1",
         Duration::from_millis(10000),
     );
 
     // Request name to authenticate against detnetctl
-    let name = format!("org.detnet.apps.{app_name}");
+    let name = format!("org.detnet.apps1.{app_name}");
     let request_reply = conn.request_name(name, true, true, true)?;
     if request_reply != RequestNameReply::PrimaryOwner {
         return Err(anyhow!("Not the primary owner of the D-Bus name! Is the process run under the correct user according to the D-Bus policy?"));
     }
 
     // Protect the DetNet app
-    proxy.method_call("org.detnet.detnetctl", "Protect", (app_name, cgroup))?;
+    proxy.method_call("org.detnet.detnetctl1", "Protect", (app_name, cgroup))?;
 
     Ok(())
 }

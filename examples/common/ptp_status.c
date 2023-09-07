@@ -35,8 +35,8 @@ int print_ptp_status(const char *interface)
 
 	/* assemble method call */
 	DBusMessage *msgQuery = dbus_message_new_method_call(
-		"org.detnet.detnetctl", "/org/detnet/detnetctl",
-		"org.detnet.detnetctl", "PtpStatus");
+		"org.detnet.detnetctl1", "/org/detnet/detnetctl1",
+		"org.detnet.detnetctl1", "PtpStatus");
 
 	uint64_t max_clock_delta_ns = MAX_CLOCK_DELTA_NS;
 	uint64_t max_master_offset_ns = MAX_MASTER_OFFSET_NS;
