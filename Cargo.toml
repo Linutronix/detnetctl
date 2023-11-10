@@ -87,3 +87,7 @@ tempfile = "3.4.0"
 [[bin]]
 name = "detnetctl-run"
 required-features = ["dbus"]
+
+[[bin]]
+name = "qcw2taprio"
+required-features = ["sysrepo","netlink"]

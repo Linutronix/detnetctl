@@ -32,6 +32,9 @@ use anyhow::Result;
 #[cfg(test)]
 use mockall::automock;
 
+mod taprio;
+pub use taprio::TaprioSetup;
+
 /// Configuration returned from the queue setup specifying how to setup the socket
 #[derive(Debug)]
 pub struct QueueSetupResponse {

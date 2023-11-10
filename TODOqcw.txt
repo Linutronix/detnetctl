@@ -1,0 +1,6 @@
+Feature scheduled-traffic nowhere used?
+Missing space in must error messages (Number of elements in admin-control-list must not be greaterthan supported-list-max)
+How is config-change reset?
+1:1 mapping of traffic class to queue fine?
+How to handle priorities > 7?
+Unclarity about types? Sometimes rational-grouping, sometimes u64, sometimes ptp-time-grouping...?

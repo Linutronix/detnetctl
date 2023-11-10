@@ -7,42 +7,23 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 
-#[cfg(not(test))]
-use {sysrepo::SrConn, sysrepo::SrSession};
-
-#[cfg(test)]
-mod mocks;
-#[cfg(test)]
-use {mocks::MockSrConn as SrConn, mocks::MockSrSession as SrSession};
-
-use yang2::context::{Context as YangContext, ContextFlags};
-
 use crate::configuration;
 use crate::ptp::{ClockAccuracy, ClockClass, TimeSource};
 use eui48::MacAddress;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use yang2::data::{Data, DataTree};
 
 mod helper;
-use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath};
+use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath, SysrepoReader};
+
+mod qcw;
+pub use qcw::SysrepoScheduleConfiguration;
 
 /// Reads configuration from sysrepo
 pub struct SysrepoConfiguration {
-    ctx: Arc<Mutex<SysrepoContext>>,
+    reader: SysrepoReader,
 }
-
-struct SysrepoContext {
-    _sr: SrConn, // never used, but referenced by sess
-    sess: SrSession,
-    libyang_ctx: Arc<YangContext>,
-}
-
-#[allow(clippy::non_send_fields_in_send_ty)]
-// SAFETY:
-// Safety should be taken care of by sysrepo_rs in the future!
-unsafe impl Send for SysrepoConfiguration {}
 
 struct AppFlow {
     traffic_profile: String,
@@ -110,13 +91,17 @@ impl configuration::Configuration for SysrepoConfiguration {
     /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
     fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
-        let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+        let cfg = self
+            .reader
+            .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         let app_flow = get_app_flow(&cfg, app_name)?;
         get_app_config_from_app_flow(&cfg, app_name, &app_flow)
     }
 
     fn get_app_configs(&mut self) -> Result<HashMap<String, configuration::AppConfig>> {
-        let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+        let cfg = self
+            .reader
+            .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         get_app_flows(&cfg)?
             .iter()
             .map(|(app_name, app_flow)| {
@@ -129,7 +114,7 @@ impl configuration::Configuration for SysrepoConfiguration {
     }
 
     fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
-        let cfg = self.get_config("/ptp")?;
+        let cfg = self.reader.get_config("/ptp")?;
         get_ptp_instance(&cfg, instance).context("Parsing of YANG PTP configuration failed")
     }
 }
@@ -142,45 +127,9 @@ impl SysrepoConfiguration {
     /// Will return `Err` if no proper connection can be set up to Sysrepo,
     /// usually because the service is not running.
     pub fn new() -> Result<Self> {
-        let ds = sysrepo::SrDatastore::Running;
-
-        sysrepo::log_stderr(sysrepo::SrLogLevel::Debug);
-
-        // Connect to sysrepo
-        let Ok(mut sr) = SrConn::new(0) else {
-            return Err(anyhow!("Could not connect to sysrepo"));
-        };
-
-        // Start session
-        let Ok(sess) = sr.start_session(ds) else {
-            return Err(anyhow!("Could not start sysrepo session"));
-        };
-        let unowned_sess = sess.clone();
-
-        // Setup libyang context
-        let libyang_ctx =
-            YangContext::new(ContextFlags::NO_YANGLIBRARY).context("Failed to create context")?;
-        let libyang_ctx = Arc::new(libyang_ctx);
-
         Ok(Self {
-            ctx: Arc::new(Mutex::new(SysrepoContext {
-                _sr: sr,
-                sess: unowned_sess,
-                libyang_ctx,
-            })),
+            reader: SysrepoReader::new()?,
         })
-    }
-
-    fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
-        let mut lock = self
-            .ctx
-            .lock()
-            .or(Err(anyhow!("Poisoned Sysrepo Context")))?;
-        let context = &mut *lock;
-        context
-            .sess
-            .get_data(&context.libyang_ctx, xpath, None, None, 0)
-            .map_err(|e| anyhow!("Can not get sysrepo data: {e}"))
     }
 }
 
