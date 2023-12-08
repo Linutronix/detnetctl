@@ -1,0 +1,183 @@
+{
+  "ietf-detnet:detnet": {
+    "traffic-profile": [
+      {
+        "name": "pf-rtvideo",
+        "traffic-spec": {
+          "interval": 2000000,
+          "max-pkts-per-interval": 10,
+          "max-payload-size": 1500
+        }
+      }
+    ],
+    "app-flows": {
+      "app-flow": [
+        {
+          "name": "app-rtvideo",
+          "traffic-profile": "pf-rtvideo",
+          "ingress": {
+            "interface": "eth0",
+            "tsn-app-flow": {
+              "vlan-id": 101
+            }
+          }
+        }
+      ]
+    },
+    "service": {
+      "sub-layer": [
+        {
+          "name": "ssl-rtvideo",
+          "traffic-profile": "pf-rtvideo",
+          "operation": "initiation",
+          "incoming": {
+            "app-flow": {
+              "flow": [
+                "app-rtvideo"
+              ]
+            }
+          },
+          "outgoing": {
+            "forwarding-sub-layer": {
+              "service-outgoing": [
+                {
+                  "index": 0,
+                  "sub-layer": [
+                    "fsl-rtvideo"
+                  ],
+                  "src-ip-address": "10.2.0.3",
+                  "dest-ip-address": "10.2.0.4",
+		  "destination-port": 4789
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "forwarding": {
+      "sub-layer": [
+        {
+          "name": "fsl-rtvideo",
+          "traffic-profile": "pf-rtvideo",
+          "operation": "forward",
+          "incoming": {
+            "service-sub-layer": {
+              "sub-layer": [
+                "ssl-rtvideo"
+              ]
+            }
+          },
+          "outgoing": {
+            "interface": {
+              "outgoing-interface": "ilan",
+              "next-hop-address": "10.2.0.4"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "ieee802-dot1cb-stream-identification:stream-identity": [
+    {
+      "index": 0,
+      "handle": 1,
+      "in-facing": {
+	"input-port": [
+          "ilan"
+        ]
+      },
+      "ip-stream-identification": {
+        "ip-source": "10.2.0.3",
+	"ip-destination": "10.2.0.4",
+	"destination-port": 4789
+      }
+    },
+    {
+      "index": 1,
+      "handle": 1,
+      "out-facing": {
+	"output-port": [
+          "enp86s0"
+        ]
+      },
+      "dmac-vlan-stream-identification": {
+	"down": {
+          "priority": 1
+	}
+      }
+    }
+  ],
+  "ietf-interfaces:interfaces": {
+    "interface": [
+      {
+        "name": "eth0",
+        "type": "iana-if-type:ethernetCsmacd"
+      },
+      {
+        "name": "ilan",
+	"type": "iana-if-type:ilan"
+      },
+      {
+        "name": "enp86s0",
+        "type": "iana-if-type:ethernetCsmacd",
+        "ieee802-dot1q-bridge:bridge-port": {
+          "traffic-class": {
+            "traffic-class-table": {
+              "number-of-traffic-classes": 3,
+	      "priority0": 2,
+	      "priority1": 2,
+	      "priority2": 1,
+	      "priority3": 0,
+	      "priority4": 2,
+	      "priority5": 2,
+	      "priority6": 2,
+	      "priority7": 2
+	    }
+          },
+          "ieee802-dot1q-sched-bridge:gate-parameter-table": {
+            "gate-enabled": true,
+            "config-change": true,
+            "supported-list-max": 3,
+            "supported-interval-max": 1000000,
+            "supported-cycle-max": {
+              "numerator": 1,
+              "denominator": 1
+            },
+            "admin-cycle-time": {
+              "numerator": 1,
+              "denominator": 1000
+            },
+            "admin-base-time": {
+              "seconds": "1",
+              "nanoseconds": 0
+            },
+            "admin-control-list": {
+              "gate-control-entry": [
+                {
+                  "index": 0,
+                  "operation-name": "ieee802-dot1q-sched:set-gate-states",
+                  "time-interval-value": 300000,
+                  "gate-states-value": 1
+                },
+                {
+                  "index": 1,
+                  "operation-name": "ieee802-dot1q-sched:set-gate-states",
+                  "time-interval-value": 300000,
+                  "gate-states-value": 3
+                },
+                {
+                  "index": 2,
+                  "operation-name": "ieee802-dot1q-sched:set-gate-states",
+                  "time-interval-value": 400000,
+                  "gate-states-value": 4
+                }
+              ]
+	    }
+          }
+        }
+      }
+    ]
+  }
+}
+
