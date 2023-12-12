@@ -15,7 +15,7 @@ pub async fn main() -> Result<()> {
     let schedule = config.get_schedule(interface_name)?;
     println!("{schedule:#?}");
 
-    let taprio = TaprioSetup::setup(interface_name, &schedule);
+    let taprio = TaprioSetup::setup(interface_name, &schedule).await;
 
     Ok(())
 }

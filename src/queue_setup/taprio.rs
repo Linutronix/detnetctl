@@ -6,12 +6,14 @@ use anyhow::Result;
 use std::process::Command;
 
 use crate::configuration::Schedule;
+use crate::interface_setup::NetlinkSetup;
 
 /// Setup TAPRIO via netlink
 pub struct TaprioSetup;
 
 impl TaprioSetup {
-    pub fn setup(interface_name: &str, schedule: &Schedule) -> Result<()> {
+    pub async fn setup(interface_name: &str, schedule: &Schedule) -> Result<()> {
+        println!("hallo");
         let mut command = Command::new("tc");
 
         command
@@ -63,6 +65,21 @@ impl TaprioSetup {
 
         //let cmd = command.program + " " + command.args.join(" ");
         println!("{}", format!("{:?}", command).replace("\"", ""));
+
+        /*
+        let (connection, handle, _) = rtnetlink::new_connection()?;
+        tokio::spawn(connection);
+
+        let idx = NetlinkSetup::get_interface_index(interface_name, &handle).await?;
+
+        handle
+            .qdisc()
+            .replace(0)
+            .root()
+            .execute()
+            .await?;
+            */
+
         Ok(())
     }
 }
