@@ -18,6 +18,7 @@
           "ingress": {
             "interface": "eth0",
             "tsn-app-flow": {
+	      "destination-mac-address": "02:00:00:00:00:04",
               "vlan-id": 101
             }
           }
@@ -45,8 +46,8 @@
                   "sub-layer": [
                     "fsl-rtvideo"
                   ],
-                  "src-ip-address": "10.2.0.3",
-                  "dest-ip-address": "10.2.0.4",
+                  "src-ip-address": "10.0.0.2",
+                  "dest-ip-address": "10.0.0.3",
 		  "destination-port": 4789
                 }
               ]
@@ -71,7 +72,7 @@
           "outgoing": {
             "interface": {
               "outgoing-interface": "ilan",
-              "next-hop-address": "10.2.0.4"
+              "next-hop-address": "10.0.0.3"
             }
           }
         }
@@ -88,8 +89,8 @@
         ]
       },
       "ip-stream-identification": {
-        "ip-source": "10.2.0.3",
-	"ip-destination": "10.2.0.4",
+        "ip-source": "10.0.0.2",
+	"ip-destination": "10.0.0.3",
 	"destination-port": 4789
       }
     },
@@ -103,7 +104,9 @@
       },
       "dmac-vlan-stream-identification": {
 	"down": {
-          "priority": 1
+	  "destination-mac": "02-00-00-00-00-03",
+	  "vlan": 150,
+          "priority": 3
 	}
       }
     }
