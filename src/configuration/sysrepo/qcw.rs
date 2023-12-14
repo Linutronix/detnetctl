@@ -6,9 +6,10 @@
 
 use crate::configuration;
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 use yang2::data::{Data, DataNodeRef, DataTree};
 
-use crate::configuration::schedule::{GateControlEntry, Schedule};
+use crate::configuration::schedule::{GateControlEntry, GateOperation, Schedule};
 use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath, SysrepoReader};
 
 /// Reads configuration from sysrepo
@@ -31,9 +32,29 @@ impl SysrepoScheduleConfiguration {
 }
 
 impl configuration::schedule::ScheduleConfiguration for SysrepoScheduleConfiguration {
+    fn get_schedules(&mut self) -> Result<HashMap<String, Schedule>> {
+        let tree = self.reader.get_config("/interfaces")?;
+        let interfaces = tree.find_xpath("/interfaces/interface")?;
+
+        interfaces
+            .into_iter()
+            .try_fold(HashMap::new(), |mut acc, interface| {
+                if let Some(bridge_port) = interface
+                    .find_xpath("ieee802-dot1q-bridge:bridge-port")?
+                    .next()
+                {
+                    let name: String = interface.get_value_for_xpath("name")?;
+                    acc.insert(name, parse_schedule(bridge_port)?);
+                }
+
+                return Ok(acc);
+            })
+    }
+
     fn get_schedule(&mut self, interface_name: &str) -> Result<Schedule> {
         let tree = self.reader.get_config("/interfaces")?;
         let interfaces = tree.find_xpath("/interfaces/interface")?;
+
         for interface in interfaces {
             let name: String = interface.get_value_for_xpath("name")?;
             if name == interface_name {
@@ -42,7 +63,6 @@ impl configuration::schedule::ScheduleConfiguration for SysrepoScheduleConfigura
                         .find_xpath("ieee802-dot1q-bridge:bridge-port")?
                         .next()
                         .ok_or(anyhow!("bridge-port section not found for interface"))?,
-                    // TODO better interface for single element?
                 );
             }
         }
@@ -80,8 +100,22 @@ fn parse_schedule(tree: DataNodeRef) -> Result<Schedule> {
     // TODO check if index matches!
     let control_list: Vec<GateControlEntry> = entries
         .map(|entry| {
+            let operation_name: String = entry.get_value_for_xpath("operation-name")?;
+            let operation = if let Some(last_part) = operation_name.split(':').last() {
+                match last_part {
+                    "set-gate-states" => GateOperation::SetGates,
+                    "set-and-hold-mac" => GateOperation::SetAndHold,
+                    "set-and-release-mac" => GateOperation::SetAndRelease,
+                    _ => {
+                        return Err(anyhow!("Cannot parse operation-name {last_part}"));
+                    }
+                }
+            } else {
+                return Err(anyhow!("Cannot parse operation-name"));
+            };
+
             Ok(GateControlEntry {
-                operation_name: entry.get_value_for_xpath("operation-name")?,
+                operation,
                 time_interval_value_ns: entry.get_value_for_xpath("time-interval-value")?,
                 gate_states_value: entry.get_value_for_xpath("gate-states-value")?,
             })

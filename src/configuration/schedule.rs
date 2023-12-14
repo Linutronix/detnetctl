@@ -4,7 +4,9 @@
 //
 
 use anyhow::Result;
+use num_derive::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Contains the configuration for a Qbv/TAPRIO schedule
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -17,13 +19,21 @@ pub struct Schedule {
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct GateControlEntry {
-    pub operation_name: String, // TODO enum!
+    pub operation: GateOperation,
     pub time_interval_value_ns: u32,
     pub gate_states_value: u8,
+}
+
+#[derive(Debug, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq, Copy, Serialize, Deserialize)]
+pub enum GateOperation {
+    SetGates = 0,
+    SetAndHold = 1,
+    SetAndRelease = 2,
 }
 
 /// Defines how to request the configuration
 #[cfg_attr(test, automock)]
 pub trait ScheduleConfiguration {
+    fn get_schedules(&mut self) -> Result<HashMap<String, Schedule>>;
     fn get_schedule(&mut self, interface_name: &str) -> Result<Schedule>;
 }

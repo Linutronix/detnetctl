@@ -33,6 +33,8 @@ use anyhow::Result;
 use mockall::automock;
 
 mod taprio;
+pub use taprio::ClockId;
+pub use taprio::Mode;
 pub use taprio::TaprioSetup;
 
 /// Configuration returned from the queue setup specifying how to setup the socket

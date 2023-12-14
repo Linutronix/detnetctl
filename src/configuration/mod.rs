@@ -145,4 +145,4 @@ pub use self::sysrepo::SysrepoConfiguration;
 mod schedule;
 #[cfg(feature = "sysrepo")]
 pub use self::sysrepo::SysrepoScheduleConfiguration;
-pub use schedule::{Schedule, ScheduleConfiguration};
+pub use schedule::{GateOperation, Schedule, ScheduleConfiguration};
