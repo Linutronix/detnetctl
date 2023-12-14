@@ -18,7 +18,13 @@ impl TaprioSetup {
 
         command
             .args(&[
-                "qdisc", "replace", "dev", interface_name, "parent", "root", "taprio",
+                "qdisc",
+                "replace",
+                "dev",
+                interface_name,
+                "parent",
+                "root",
+                "taprio",
             ])
             .args(&["num_tc", &schedule.number_of_traffic_classes.to_string()])
             .arg("map");
@@ -40,20 +46,36 @@ impl TaprioSetup {
 
         for entry in &schedule.control_list {
             // TODO S!
-            command.args(&["sched-entry", "S", &entry.gate_states_value.to_string(), &entry.time_interval_value_ns.to_string()]);
+            command.args(&[
+                "sched-entry",
+                "S",
+                &entry.gate_states_value.to_string(),
+                &entry.time_interval_value_ns.to_string(),
+            ]);
         }
 
-        command.args(&["flags", "0x1"])
+        command
+            .args(&["flags", "0x1"])
             .args(&["txtime-delay", "500000"])
             .args(&["clockid", "CLOCK_TAI"]);
 
         // TODO
-        command.args(&["fp","P","E","E"]);
+        /*
+        command.args(&["fp", "P", "E", "E"]);
         command.args(&["P"; 13]);
-        command.args(&["max-sdu","0","300","200"]);
+        command.args(&["max-sdu", "0", "300", "200"]);
         command.args(&["0"; 13]);
-        command.args(&["cycle-time", &schedule.control_list.iter().map(|entry| entry.time_interval_value_ns).fold(0, |acc, val| acc + val).to_string()]); // sum is actually calculated automatically if not provided
+        command.args(&[
+            "cycle-time",
+            &schedule
+                .control_list
+                .iter()
+                .map(|entry| entry.time_interval_value_ns)
+                .fold(0, |acc, val| acc + val)
+                .to_string(),
+        ]); // sum is actually calculated automatically if not provided
         command.args(&["cycle-time-extension", "100"]);
+        */
 
         /*.output()
             .expect("Failed to execute command");
@@ -66,7 +88,6 @@ impl TaprioSetup {
         //let cmd = command.program + " " + command.args.join(" ");
         println!("{}", format!("{:?}", command).replace("\"", ""));
 
-        /*
         let (connection, handle, _) = rtnetlink::new_connection()?;
         tokio::spawn(connection);
 
@@ -76,9 +97,33 @@ impl TaprioSetup {
             .qdisc()
             .replace(0)
             .root()
+            .taprio()
+            .clockid(11) // TODO?
+            .flags(0x1)
+            .num_tc(schedule.number_of_traffic_classes)
+            .priority_map(schedule.priority_map.to_vec())?
+            .queues(
+                (0..schedule.number_of_traffic_classes)
+                    .map(|i| (1, i.into()))
+                    .collect(),
+            )? // TODO?
+            .txtime_delay(500000) // TODO ?
+            .basetime(schedule.basetime_ns.try_into()?)
+            .schedule(
+                schedule
+                    .control_list
+                    .iter()
+                    .map(|entry| {
+                        (
+                            'S',
+                            entry.gate_states_value.into(),
+                            entry.time_interval_value_ns,
+                        )
+                    })
+                    .collect(),
+            )?
             .execute()
             .await?;
-            */
 
         Ok(())
     }
