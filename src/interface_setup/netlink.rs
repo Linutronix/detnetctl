@@ -10,11 +10,11 @@ use ethtool::EthtoolAttr::LinkMode;
 use ethtool::EthtoolHandle;
 use ethtool::EthtoolLinkModeAttr::Speed;
 use futures::stream::TryStreamExt;
-use netlink_packet_route::link::nlas::Info::{Data, Kind};
-use netlink_packet_route::link::nlas::InfoVlan::{Id, Protocol};
-use netlink_packet_route::link::nlas::Nla::Info;
-use netlink_packet_route::link::nlas::{InfoData, InfoKind};
-use netlink_packet_route::{LinkMessage, IFF_UP};
+use netlink_packet_route::link::InfoVlan::{Id, Protocol};
+use netlink_packet_route::link::LinkAttribute::LinkInfo;
+use netlink_packet_route::link::LinkInfo::{Data, Kind};
+use netlink_packet_route::link::{InfoData, InfoKind};
+use netlink_packet_route::link::{LinkFlag, LinkMessage, VlanProtocol};
 use rtnetlink::Handle;
 use std::net::IpAddr;
 use tokio::time::{sleep, Duration, Instant};
@@ -157,8 +157,16 @@ impl InterfaceSetup for NetlinkSetup {
             .add()
             .vlan(vlan_interface.into(), parent_idx, vid);
         // We want to set the interface state to up manually later
-        request.message_mut().header.flags &= !IFF_UP;
-        request.message_mut().header.change_mask &= !IFF_UP;
+        request
+            .message_mut()
+            .header
+            .flags
+            .retain(|&x| x != LinkFlag::Up);
+        request
+            .message_mut()
+            .header
+            .change_mask
+            .retain(|&x| x != LinkFlag::Up);
         Ok(request.execute().await?)
     }
 }
@@ -167,10 +175,10 @@ fn validate_link(link: &LinkMessage, vlan_interface: &str, vid: u16) -> Result<(
     // VLAN interface already exists
     // Validate that configuration is compatible
     let info = link
-        .nlas
+        .attributes
         .iter()
         .find_map(|d| match d {
-            Info(info) => Some(info),
+            LinkInfo(info) => Some(info),
             _ => None,
         })
         .ok_or_else(|| anyhow!("No link info found for {}", vlan_interface))?;
@@ -200,7 +208,7 @@ fn validate_link(link: &LinkMessage, vlan_interface: &str, vid: u16) -> Result<(
         _ => None,
     });
     match protocol {
-        Some(p) if p == &ETH_P_8021Q => (),
+        Some(p) if p == &VlanProtocol::Ieee8021Q => (),
         _ => {
             return Err(anyhow!(
                 "VLAN protocol for {} is not 0x{:x}",
@@ -241,7 +249,7 @@ mod tests {
     #[should_panic(expected = "Data kind invalid for eth0.5")]
     fn test_link_no_kind() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![]));
+        link.attributes.push(LinkInfo(vec![]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
@@ -249,7 +257,7 @@ mod tests {
     #[should_panic(expected = "Data kind invalid for eth0.5")]
     fn test_link_invalid_kind() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![Kind(InfoKind::Bridge)]));
+        link.attributes.push(LinkInfo(vec![Kind(InfoKind::Bridge)]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
@@ -257,7 +265,7 @@ mod tests {
     #[should_panic(expected = "No VLAN info data found for eth0.5")]
     fn test_link_missing_data() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![Kind(InfoKind::Vlan)]));
+        link.attributes.push(LinkInfo(vec![Kind(InfoKind::Vlan)]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
@@ -265,7 +273,7 @@ mod tests {
     #[should_panic(expected = "No VLAN info data found for eth0.5")]
     fn test_link_wrong_data() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![
+        link.attributes.push(LinkInfo(vec![
             Kind(InfoKind::Vlan),
             Data(InfoData::Bridge(vec![])),
         ]));
@@ -276,7 +284,7 @@ mod tests {
     #[should_panic(expected = "VLAN protocol for eth0.5 is not 0x8100")]
     fn test_link_missing_protocol() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![
+        link.attributes.push(LinkInfo(vec![
             Kind(InfoKind::Vlan),
             Data(InfoData::Vlan(vec![])),
         ]));
@@ -287,9 +295,9 @@ mod tests {
     #[should_panic(expected = "VLAN protocol for eth0.5 is not 0x8100")]
     fn test_link_wrong_protocol() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![
+        link.attributes.push(LinkInfo(vec![
             Kind(InfoKind::Vlan),
-            Data(InfoData::Vlan(vec![Protocol(0x8102)])),
+            Data(InfoData::Vlan(vec![Protocol(0x88A8.into())])),
         ]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
@@ -298,9 +306,9 @@ mod tests {
     #[should_panic(expected = "VLAN ID for eth0.5 is not 5")]
     fn test_link_missing_vid() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![
+        link.attributes.push(LinkInfo(vec![
             Kind(InfoKind::Vlan),
-            Data(InfoData::Vlan(vec![Protocol(0x8100)])),
+            Data(InfoData::Vlan(vec![Protocol(0x8100.into())])),
         ]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
@@ -309,9 +317,9 @@ mod tests {
     #[should_panic(expected = "VLAN ID for eth0.5 is not 5")]
     fn test_link_wrong_vid() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![
+        link.attributes.push(LinkInfo(vec![
             Kind(InfoKind::Vlan),
-            Data(InfoData::Vlan(vec![Protocol(0x8100), Id(8)])),
+            Data(InfoData::Vlan(vec![Protocol(0x8100.into()), Id(8)])),
         ]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
@@ -319,9 +327,9 @@ mod tests {
     #[test]
     fn test_link_valid() {
         let mut link = LinkMessage::default();
-        link.nlas.push(Info(vec![
+        link.attributes.push(LinkInfo(vec![
             Kind(InfoKind::Vlan),
-            Data(InfoData::Vlan(vec![Protocol(0x8100), Id(5)])),
+            Data(InfoData::Vlan(vec![Protocol(0x8100.into()), Id(5)])),
         ]));
         validate_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
