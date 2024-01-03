@@ -44,10 +44,10 @@ impl configuration::schedule::ScheduleConfiguration for SysrepoScheduleConfigura
                     .next()
                 {
                     let name: String = interface.get_value_for_xpath("name")?;
-                    acc.insert(name, parse_schedule(bridge_port)?);
+                    acc.insert(name, parse_schedule(&bridge_port)?);
                 }
 
-                return Ok(acc);
+                Ok(acc)
             })
     }
 
@@ -59,10 +59,10 @@ impl configuration::schedule::ScheduleConfiguration for SysrepoScheduleConfigura
             let name: String = interface.get_value_for_xpath("name")?;
             if name == interface_name {
                 return parse_schedule(
-                    interface
+                    &interface
                         .find_xpath("ieee802-dot1q-bridge:bridge-port")?
                         .next()
-                        .ok_or(anyhow!("bridge-port section not found for interface"))?,
+                        .ok_or_else(|| anyhow!("bridge-port section not found for interface"))?,
                 );
             }
         }
@@ -71,11 +71,11 @@ impl configuration::schedule::ScheduleConfiguration for SysrepoScheduleConfigura
     }
 }
 
-fn parse_schedule(tree: DataNodeRef) -> Result<Schedule> {
+fn parse_schedule(tree: &DataNodeRef) -> Result<Schedule> {
     let tc_table = tree
         .find_xpath("traffic-class/traffic-class-table")?
         .next()
-        .ok_or(anyhow!("traffic-class-table not found"))?;
+        .ok_or_else(|| anyhow!("traffic-class-table not found"))?;
     let priority_map: [u8; 8] = [
         tc_table.get_value_for_xpath("priority0")?,
         tc_table.get_value_for_xpath("priority1")?,
@@ -90,14 +90,13 @@ fn parse_schedule(tree: DataNodeRef) -> Result<Schedule> {
     let gates = tree
         .find_xpath("ieee802-dot1q-sched-bridge:gate-parameter-table")?
         .next()
-        .ok_or(anyhow!("gate-parameter-table not found"))?;
+        .ok_or_else(|| anyhow!("gate-parameter-table not found"))?;
     let mut basetime: u64 = gates.get_value_for_xpath("admin-base-time/seconds")?;
-    basetime *= 1000000000;
-    basetime += gates.get_value_for_xpath::<u32>("admin-base-time/nanoseconds")? as u64;
+    basetime *= 1_000_000_000;
+    basetime += u64::from(gates.get_value_for_xpath::<u32>("admin-base-time/nanoseconds")?);
 
     let entries = gates.find_xpath("admin-control-list/gate-control-entry")?;
 
-    // TODO check if index matches!
     let control_list: Vec<GateControlEntry> = entries
         .map(|entry| {
             let operation_name: String = entry.get_value_for_xpath("operation-name")?;
@@ -128,22 +127,4 @@ fn parse_schedule(tree: DataNodeRef) -> Result<Schedule> {
         basetime_ns: basetime,
         control_list,
     })
-
-    /*
-    pub struct Schedule {
-        pub number_of_traffic_classes: u8,
-        pub priority_map: [u8:8];
-        pub basetime_ns: u64; // TODO type?
-        pub control_list: Vec<GateControlEntry>;
-    }
-
-    #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-    pub struct GateControlEntry {
-        pub operation_name: String; // TODO enum!
-        pub time_interval_value_ns: u64; // TODO type?
-        pub gate_states_value: u8;
-    }
-         */
-
-    // TODO validate cycle time, currently automatically in TAPRIO, right?
 }

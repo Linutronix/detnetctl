@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::{error::ErrorKind, CommandFactory, Parser};
 use detnetctl::configuration::{Schedule, ScheduleConfiguration, SysrepoScheduleConfiguration};
 use detnetctl::queue_setup::{ClockId, Mode, TaprioSetup};
+use env_logger::Env;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Sets up TAPRIO qdiscs from current sysrepo state", long_about = None, trailing_var_arg=true)]
@@ -45,7 +46,7 @@ struct Cli {
 /// Main function of the qcw2taprio tool
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<()> {
-    env_logger::init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("warn")).init();
 
     let cli = Cli::parse();
 
@@ -83,8 +84,8 @@ pub async fn main() -> Result<()> {
     } else {
         let schedules = config.get_schedules()?;
         for (interface, schedule) in &schedules {
-            setup_taprio_qdisc(&taprio, &interface, &schedule).await?;
-            println!("");
+            setup_taprio_qdisc(&taprio, interface, schedule).await?;
+            println!();
         }
     }
 
@@ -102,11 +103,11 @@ async fn setup_taprio_qdisc(
     // Print tc command
     // Only for convenience, the actual setup directly uses netlink
     println!("Matching tc command:");
-    let command = taprio.assemble_tc_command(&interface, &schedule)?;
-    println!("{}", format!("{:?}", command).replace("\"", ""));
+    let command = taprio.assemble_tc_command(interface, schedule)?;
+    println!("{}\n", format!("{:?}", command).replace('\"', ""));
 
     // Setup qdisc via netlink
-    taprio.setup(&interface, &schedule).await?;
+    taprio.setup(interface, schedule).await?;
 
     Ok(())
 }

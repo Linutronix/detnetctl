@@ -41,6 +41,7 @@ pub struct GateControlEntry {
 
 /// The operation to perform for a gate control entry
 #[derive(Debug, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[allow(clippy::enum_variant_names)] // Names given by standard
 pub enum GateOperation {
     /// Gate is open during this interval
     SetGates = 0,
@@ -56,8 +57,19 @@ pub enum GateOperation {
 #[cfg_attr(test, automock)]
 pub trait ScheduleConfiguration {
     /// Get all schedules
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to request the schedules,
+    /// e.g. due to problems related to the underlying data store.
     fn get_schedules(&mut self) -> Result<HashMap<String, Schedule>>;
 
     /// Get the schedule matching the given interface name
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to request the schedule,
+    /// e.g. due to problems related to the underlying data store or if no
+    /// schedule was found for that interface.
     fn get_schedule(&mut self, interface_name: &str) -> Result<Schedule>;
 }
