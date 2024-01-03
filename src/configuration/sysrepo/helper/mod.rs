@@ -18,6 +18,10 @@ use {sysrepo::SrConn, sysrepo::SrSession};
 mod mocks;
 #[cfg(test)]
 use {mocks::MockSrConn as SrConn, mocks::MockSrSession as SrSession};
+#[cfg(test)]
+use yang2::data::{DataFormat, DataParserFlags, DataValidationFlags};
+#[cfg(test)]
+use std::fs::File;
 
 /// Reads configuration from sysrepo
 pub struct SysrepoReader {
@@ -70,6 +74,57 @@ impl SysrepoReader {
                 libyang_ctx,
             })),
         })
+    }
+
+    #[cfg(test)]
+    pub fn mock_from_file(file: &str) -> Self {
+        let sr = SrConn::default();
+        let mut sess = SrSession::default();
+        let mut libyang_ctx =
+            YangContext::new(ContextFlags::NO_YANGLIBRARY).expect("Failed to create context");
+        libyang_ctx
+            .set_searchdir("./config/yang")
+            .expect("Failed to set YANG search directory");
+
+        let modules = &[
+            ("iana-if-type", vec![]),
+            ("ietf-ip", vec![]),
+            ("ietf-if-extensions", vec!["sub-interfaces"]),
+            ("ietf-detnet", vec![]),
+            ("tsn-interface-configuration", vec![]),
+            ("ieee1588-ptp", vec![]),
+        ];
+
+        for (module_name, features) in modules {
+            libyang_ctx
+                .load_module(module_name, None, features)
+                .expect("Failed to load module");
+        }
+
+        let libyang_ctx = Arc::new(libyang_ctx);
+
+        let filename = String::from(file);
+        sess.expect_get_data()
+            .returning(move |context, _xpath, _max_depth, _timeout, _opts| {
+                let tree = DataTree::parse_file(
+                    context,
+                    File::open(filename.clone()).expect("file not found"),
+                    DataFormat::JSON,
+                    DataParserFlags::STRICT,
+                    DataValidationFlags::NO_STATE,
+                )
+                .expect("could not parse");
+
+                Ok(tree)
+            });
+
+        Self {
+            ctx: Arc::new(Mutex::new(SysrepoContext {
+                _sr: sr,
+                sess,
+                libyang_ctx,
+            })),
+        }
     }
 
     pub fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
@@ -172,3 +227,4 @@ impl GetValueForXPath for DataNodeRef<'_> {
             .with_context(|| format!("Converting value for {xpath} failed"))
     }
 }
+

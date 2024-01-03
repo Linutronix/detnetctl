@@ -8,6 +8,9 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[cfg(test)]
+use mockall::automock;
+
 /// Contains the configuration for a Qbv/TAPRIO schedule
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct Schedule {

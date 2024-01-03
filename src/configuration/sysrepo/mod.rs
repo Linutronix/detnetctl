@@ -389,64 +389,13 @@ mod tests {
     use super::*;
     use crate::configuration::{AppConfig, Configuration};
     use crate::ptp::PtpConfig;
-    use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    use yang2::data::{DataFormat, DataParserFlags, DataTree, DataValidationFlags};
-
-    fn create_sysrepo_config(file: &str) -> SysrepoConfiguration {
-        let sr = SrConn::default();
-        let mut sess = SrSession::default();
-        let mut libyang_ctx =
-            YangContext::new(ContextFlags::NO_YANGLIBRARY).expect("Failed to create context");
-        libyang_ctx
-            .set_searchdir("./config/yang")
-            .expect("Failed to set YANG search directory");
-
-        let modules = &[
-            ("iana-if-type", vec![]),
-            ("ietf-ip", vec![]),
-            ("ietf-if-extensions", vec!["sub-interfaces"]),
-            ("ietf-detnet", vec![]),
-            ("tsn-interface-configuration", vec![]),
-            ("ieee1588-ptp", vec![]),
-        ];
-
-        for (module_name, features) in modules {
-            libyang_ctx
-                .load_module(module_name, None, features)
-                .expect("Failed to load module");
-        }
-
-        let libyang_ctx = Arc::new(libyang_ctx);
-
-        let filename = String::from(file);
-        sess.expect_get_data()
-            .returning(move |context, _xpath, _max_depth, _timeout, _opts| {
-                let tree = DataTree::parse_file(
-                    context,
-                    File::open(filename.clone()).expect("file not found"),
-                    DataFormat::JSON,
-                    DataParserFlags::STRICT,
-                    DataValidationFlags::NO_STATE,
-                )
-                .expect("could not parse");
-
-                Ok(tree)
-            });
-
-        SysrepoConfiguration {
-            ctx: Arc::new(Mutex::new(SysrepoContext {
-                _sr: sr,
-                sess,
-                libyang_ctx,
-            })),
-        }
-    }
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let mut sysrepo_config = SysrepoConfiguration {
+            reader: SysrepoReader::mock_from_file("./src/configuration/sysrepo/test-successful.json")
+        };
         let config = sysrepo_config.get_app_config("app0")?;
 
         let interface = String::from("enp86s0");
@@ -476,8 +425,9 @@ mod tests {
 
     #[test]
     fn test_get_app_config_happy_without_ip() -> Result<()> {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-without-ip.json");
+        let mut sysrepo_config = SysrepoConfiguration {
+            reader: SysrepoReader::mock_from_file("./src/configuration/sysrepo/test-without-ip.json")
+        };
         let config = sysrepo_config.get_app_config("app0")?;
 
         let interface = String::from("enp86s0");
@@ -502,24 +452,26 @@ mod tests {
     #[test]
     #[should_panic(expected = "App flow not found")]
     fn test_get_app_config_missing() {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let mut sysrepo_config = SysrepoConfiguration {
+            reader: SysrepoReader::mock_from_file("./src/configuration/sysrepo/test-successful.json")
+        };
         sysrepo_config.get_app_config("somemissingapp").unwrap();
     }
 
     #[test]
     #[should_panic(expected = "config-list/time-aware-offset missing")]
     fn test_get_app_config_invalid_file() {
-        let mut sysrepo_config = create_sysrepo_config(
-            "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
-        );
+        let mut sysrepo_config = SysrepoConfiguration {
+            reader: SysrepoReader::mock_from_file("./src/configuration/sysrepo/test-missing-time-aware-offset.json")
+        };
         sysrepo_config.get_app_config("app0").unwrap();
     }
 
     #[test]
     fn test_get_ptp_config_happy() -> Result<()> {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let mut sysrepo_config = SysrepoConfiguration {
+            reader: SysrepoReader::mock_from_file("./src/configuration/sysrepo/test-successful.json")
+        };
         let config = sysrepo_config.get_ptp_config(1)?;
 
         assert_eq!(
@@ -545,7 +497,7 @@ mod tests {
 
     #[test]
     fn validate_example_yang() {
-        create_sysrepo_config("./config/yang/example.json")
+        SysrepoReader::mock_from_file("./config/yang/example.json")
             .get_config("")
             .unwrap();
     }
