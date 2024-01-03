@@ -12,18 +12,22 @@ use std::process::Command;
 use crate::configuration::{GateOperation, Schedule};
 use crate::interface_setup::NetlinkSetup;
 use nix::libc::{CLOCK_BOOTTIME, CLOCK_MONOTONIC, CLOCK_REALTIME, CLOCK_TAI};
-//use nix::sys::socket::setsockopt;
-use nix::libc;
-use std::os::fd::AsRawFd;
-use std::os::fd::RawFd;
-use core::mem;
+use nix::errno;
 use rtnetlink::Error::NetlinkError;
+use netlink_packet_core::ExtendedAckAttribute;
 
+/// The TAPRIO offload mode to apply
 #[derive(ValueEnum, Debug, Clone, PartialEq, Copy)]
 #[clap(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Mode {
+    /// Emulate TAPRIO fully in software without need for hardware support
     Software,
+
+    /// Emulate TAPRIO in software, but send the packets with TX timestamps to the NIC
+    /// Requires NIC support for tx-time.
     TxTimeAssist,
+
+    /// Fully offload TAPRIO to the NIC. Requires respective support.
     FullOffload,
 }
 
@@ -38,6 +42,7 @@ impl fmt::Display for Mode {
 }
 
 impl Mode {
+    /// Get the flags in the bitmask for each mode
     pub fn flags(&self) -> u32 {
         match self {
             Mode::Software => 0x0,
@@ -47,13 +52,21 @@ impl Mode {
     }
 }
 
+/// The ID for the clock to use for TAPRIO
 #[derive(ValueEnum, Debug, Clone, FromPrimitive, ToPrimitive, PartialEq, Copy)]
 #[clap(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ClockId {
+    /// Clock corresponding to the International Atomic Time (TAI) if available. Not corrected by leap seconds.
     ClockTai = CLOCK_TAI as isize,
+
+    /// The best effort estimate of UTC that is always available.
     ClockRealtime = CLOCK_REALTIME as isize,
-    ClockBoottime = CLOCK_BOOTTIME as isize,
+
+    /// Clock that cannot be set and represents monotonic time since some unspecified starting point.
     ClockMonotonic = CLOCK_MONOTONIC as isize,
+
+    /// Identical to CLOCK_MONOTONIC, except it also includes any time that the system is suspended.
+    ClockBoottime = CLOCK_BOOTTIME as isize,
 }
 
 impl fmt::Display for ClockId {
@@ -69,10 +82,21 @@ impl fmt::Display for ClockId {
 
 /// Setup TAPRIO via netlink
 pub struct TaprioSetup {
+    /// The offload mode
     pub mode: Mode,
+
+    /// The clock to use
     pub clock_id: Option<ClockId>,
+
+    /// The maximum time a packet might take to reach the network card from the taprio qdisc.
+    /// Only used for TxTimeAssist mode.
     pub txtime_delay: Option<u32>,
+
+    /// Use this traffic class for all unspecified priorities
     pub tc_fallback: u8,
+
+    /// Count and offset of queue range for each traffic class in the format count@offset.
+    /// If empty, perform a one-to-one mapping of traffic classes and queues (1@0 1@1 ... 1@<num_tc-1>).
     pub queues: Vec<String>,
 }
 
@@ -116,30 +140,10 @@ impl TaprioSetup {
     }
 }
 
-fn setsockopt<T>(
-    fd: RawFd,
-    level: libc::c_int,
-    option: libc::c_int,
-    payload: T,
-) -> Result<()> {
-    let payload = &payload as *const T as *const libc::c_void;
-    let payload_len = mem::size_of::<T>() as libc::socklen_t;
-
-    let res =
-        unsafe { libc::setsockopt(fd, level, option, payload, payload_len) };
-    if res < 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    Ok(())
-}
-
 impl TaprioSetup {
+    /// Setup TAPRIO schedule for the given interface via netlink
     pub async fn setup(&self, interface_name: &str, schedule: &Schedule) -> Result<()> {
-        let (mut connection, handle, _) = rtnetlink::new_connection()?;
-
-        // TODO This should be integrated into netlink-sys
-        let fd = connection.socket_mut().as_raw_fd();
-        setsockopt(fd, libc::SOL_NETLINK, libc::NETLINK_EXT_ACK, 1)?;
+        let (connection, handle, _) = rtnetlink::new_connection()?;
 
         tokio::spawn(connection);
 
@@ -185,18 +189,29 @@ impl TaprioSetup {
 
         // TODO Replace this hack with proper support of extended ACKs by netlink library
         if let Err(NetlinkError(err)) = result {
-            let msg = std::str::from_utf8(&err.header[20..])?.trim_end_matches('\0');
+            //println!("{:?}",err.header);
+            //let msg = std::str::from_utf8(&err.header[20..])?.trim_end_matches('\0');
+            let mut msg = String::new();
 
-            let kind = if err.code.is_none() {
-                println!("Warning: {msg}");
+            for ext_ack in err.extended_ack {
+                if let ExtendedAckAttribute::Msg(m) = ext_ack {
+                    msg = m;
+                }
+            }
+
+            if let Some(code) = err.code {
+                let errno = errno::Errno::from_i32((-code).into());
+                return Err(anyhow!("{} ({}) {msg}", errno.to_string(), (-code)));
             } else {
-                return Err(anyhow!("{msg}"));
+                println!("Warning: {msg}");
             };
         }
 
         Ok(())
     }
 
+    /// Assemble tc command for the given schedule and interface.
+    /// Usually `setup` is preferred that uses netlink directly.
     pub fn assemble_tc_command(
         &self,
         interface_name: &str,

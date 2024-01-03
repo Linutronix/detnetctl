@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::Result;
 use clap::{error::ErrorKind, CommandFactory, Parser};
 use detnetctl::configuration::{Schedule, ScheduleConfiguration, SysrepoScheduleConfiguration};
 use detnetctl::queue_setup::{ClockId, Mode, TaprioSetup};

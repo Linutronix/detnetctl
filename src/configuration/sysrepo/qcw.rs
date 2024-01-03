@@ -7,10 +7,10 @@
 use crate::configuration;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use yang2::data::{Data, DataNodeRef, DataTree};
+use yang2::data::{Data, DataNodeRef};
 
 use crate::configuration::schedule::{GateControlEntry, GateOperation, Schedule};
-use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath, SysrepoReader};
+use crate::configuration::sysrepo::helper::{GetValueForXPath, SysrepoReader};
 
 /// Reads configuration from sysrepo
 pub struct SysrepoScheduleConfiguration {

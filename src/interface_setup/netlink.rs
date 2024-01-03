@@ -46,6 +46,7 @@ impl NetlinkSetup {
         }
     }
 
+    /// Get the index for the given interface name
     pub async fn get_interface_index(interface: &str, handle: &Handle) -> Result<u32> {
         match Self::get_interface(interface, handle).await {
             Some(link) => Ok(link.header.index),
