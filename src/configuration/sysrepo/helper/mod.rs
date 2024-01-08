@@ -92,7 +92,7 @@ impl SysrepoReader {
             ("ietf-if-extensions", vec!["sub-interfaces"]),
             ("ietf-detnet", vec![]),
             ("tsn-interface-configuration", vec![]),
-            ("ieee1588-ptp", vec![]),
+            ("ieee1588-ptp-tt", vec![]),
         ];
 
         for (module_name, features) in modules {

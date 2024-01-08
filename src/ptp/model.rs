@@ -466,6 +466,6 @@ pub struct PtpInstanceConfig {
 
 fn strip_prefix(input: &str) -> &str {
     input
-        .strip_prefix("ieee1588-ptp:")
+        .strip_prefix("ieee1588-ptp-tt:")
         .map_or(input, |stripped| stripped)
 }

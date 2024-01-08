@@ -105,15 +105,15 @@
       }
     ]
   },
-  "ieee1588-ptp:ptp": {
+  "ieee1588-ptp-tt:ptp": {
     "instances": {
       "instance": [
         {
           "instance-index": 1,
           "default-ds": {
             "clock-quality": {
-              "clock-class": "ieee1588-ptp:cc-default",
-              "clock-accuracy": "ieee1588-ptp:ca-time-accurate-to-gt-10-s",
+              "clock-class": "ieee1588-ptp-tt:cc-default",
+              "clock-accuracy": "ieee1588-ptp-tt:ca-time-accurate-to-gt-10-s",
               "offset-scaled-log-variance": 65535
             },
 	    "domain-number": 0,
@@ -127,7 +127,7 @@
             "time-traceable": true,
             "frequency-traceable": false,
             "ptp-timescale": true,
-            "time-source": "ieee1588-ptp:internal-oscillator"
+            "time-source": "ieee1588-ptp-tt:internal-oscillator"
           }
         }
       ]
