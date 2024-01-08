@@ -351,7 +351,7 @@ cargo build --no-default-features --features dbus,netlink,bpf,ptp
 
 ### Configuration
 
-Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp` as shown below that should be added to your `myconfig.yml`. For YANG (see below) the relevant section is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `active_instance` parameter. While the instances themselves can also be configured via YANG (see below), the `active_instance` parameter is only available in the YAML file that can be supplied at the same time as loading the YANG file. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
+Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp` as shown below that should be added to your `myconfig.yml`. For YANG (see below) the relevant section is `ieee1588-ptp-tt:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `active_instance` parameter. While the instances themselves can also be configured via YANG (see below), the `active_instance` parameter is only available in the YAML file that can be supplied at the same time as loading the YANG file. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
 
 ```yaml
 ...
@@ -479,7 +479,7 @@ sudo sysrepocfg --import=config/yang/example.json
 In case of errors, load the missing schemas from `config/yang/schemas`, e.g.
 ```console
 sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-interfaces@2018-02-20.yang
-sudo sysrepoctl -i config/yang/schemas/standard/ieee/draft/1588/ieee1588-ptp.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/draft/1588/ieee1588-ptp-tt.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-ethertypes@2019-03-04.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-routing-types@2017-12-04.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-packet-fields@2019-03-04.yang
