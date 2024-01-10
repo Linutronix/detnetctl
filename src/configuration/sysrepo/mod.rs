@@ -7,42 +7,20 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 
-#[cfg(not(test))]
-use {sysrepo::SrConn, sysrepo::SrSession};
-
-#[cfg(test)]
-mod mocks;
-#[cfg(test)]
-use {mocks::MockSrConn as SrConn, mocks::MockSrSession as SrSession};
-
-use yang2::context::{Context as YangContext, ContextFlags};
-
-use crate::configuration;
+use crate::configuration::{AppConfig, Configuration, PtpConfig};
 use crate::ptp::{ClockAccuracy, ClockClass, TimeSource};
 use eui48::MacAddress;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use yang2::data::{Data, DataTree};
 
 mod helper;
-use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath};
+use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath, SysrepoReader};
 
 /// Reads configuration from sysrepo
 pub struct SysrepoConfiguration {
-    ctx: Arc<Mutex<SysrepoContext>>,
+    reader: SysrepoReader,
 }
-
-struct SysrepoContext {
-    _sr: SrConn, // never used, but referenced by sess
-    sess: SrSession,
-    libyang_ctx: Arc<YangContext>,
-}
-
-#[allow(clippy::non_send_fields_in_send_ty)]
-// SAFETY:
-// Safety should be taken care of by sysrepo_rs in the future!
-unsafe impl Send for SysrepoConfiguration {}
 
 struct AppFlow {
     traffic_profile: String,
@@ -74,7 +52,7 @@ struct VLANInterface {
     addresses: Option<Vec<(IpAddr, u8)>>,
 }
 
-impl configuration::Configuration for SysrepoConfiguration {
+impl Configuration for SysrepoConfiguration {
     /// Get and parse configuration
     ///
     /// IP/MPLS over TSN is explicitly out of scope of the current version of the DetNet YANG model
@@ -109,14 +87,18 @@ impl configuration::Configuration for SysrepoConfiguration {
     /// to set up the NIC. This is currently done via the parent-interface specified by
     /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
-    fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
-        let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+    fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig> {
+        let cfg = self
+            .reader
+            .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         let app_flow = get_app_flow(&cfg, app_name)?;
         get_app_config_from_app_flow(&cfg, app_name, &app_flow)
     }
 
-    fn get_app_configs(&mut self) -> Result<HashMap<String, configuration::AppConfig>> {
-        let cfg = self.get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+    fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>> {
+        let cfg = self
+            .reader
+            .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
         get_app_flows(&cfg)?
             .iter()
             .map(|(app_name, app_flow)| {
@@ -128,8 +110,8 @@ impl configuration::Configuration for SysrepoConfiguration {
             .collect()
     }
 
-    fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
-        let cfg = self.get_config("/ptp")?;
+    fn get_ptp_config(&mut self, instance: u32) -> Result<PtpConfig> {
+        let cfg = self.reader.get_config("/ptp")?;
         get_ptp_instance(&cfg, instance).context("Parsing of YANG PTP configuration failed")
     }
 }
@@ -142,45 +124,17 @@ impl SysrepoConfiguration {
     /// Will return `Err` if no proper connection can be set up to Sysrepo,
     /// usually because the service is not running.
     pub fn new() -> Result<Self> {
-        let ds = sysrepo::SrDatastore::Running;
-
-        sysrepo::log_stderr(sysrepo::SrLogLevel::Debug);
-
-        // Connect to sysrepo
-        let Ok(mut sr) = SrConn::new(0) else {
-            return Err(anyhow!("Could not connect to sysrepo"));
-        };
-
-        // Start session
-        let Ok(sess) = sr.start_session(ds) else {
-            return Err(anyhow!("Could not start sysrepo session"));
-        };
-        let unowned_sess = sess.clone();
-
-        // Setup libyang context
-        let libyang_ctx =
-            YangContext::new(ContextFlags::NO_YANGLIBRARY).context("Failed to create context")?;
-        let libyang_ctx = Arc::new(libyang_ctx);
-
         Ok(Self {
-            ctx: Arc::new(Mutex::new(SysrepoContext {
-                _sr: sr,
-                sess: unowned_sess,
-                libyang_ctx,
-            })),
+            reader: SysrepoReader::new()?,
         })
     }
 
-    fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
-        let mut lock = self
-            .ctx
-            .lock()
-            .or(Err(anyhow!("Poisoned Sysrepo Context")))?;
-        let context = &mut *lock;
-        context
-            .sess
-            .get_data(&context.libyang_ctx, xpath, None, None, 0)
-            .map_err(|e| anyhow!("Can not get sysrepo data: {e}"))
+    #[cfg(test)]
+    #[must_use]
+    pub fn mock_from_file(file: &str) -> Self {
+        Self {
+            reader: SysrepoReader::mock_from_file(file),
+        }
     }
 }
 
@@ -220,7 +174,7 @@ fn get_app_config_from_app_flow(
     tree: &DataTree,
     app_name: &str,
     app_flow: &AppFlow,
-) -> Result<configuration::AppConfig> {
+) -> Result<AppConfig> {
     let service_sublayer = get_service_sublayer(tree, app_name)?;
     let forwarding_sublayer =
         get_forwarding_sublayer(tree, &service_sublayer.outgoing_forwarding_sublayer)?;
@@ -229,7 +183,7 @@ fn get_app_config_from_app_flow(
         get_tsn_interface_config(tree, &forwarding_sublayer.outgoing_interface)?;
     let logical_interface = get_logical_interface(tree, &forwarding_sublayer.outgoing_interface)?;
 
-    Ok(configuration::AppConfig {
+    Ok(AppConfig {
         logical_interface: logical_interface.name,
         physical_interface: logical_interface.physical_interface,
         period_ns: Some(traffic_profile.period_ns),
@@ -304,7 +258,7 @@ fn get_forwarding_sublayer(
     Err(anyhow!("No matching forwarding sublayer found"))
 }
 
-fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<configuration::PtpConfig> {
+fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<PtpConfig> {
     let instances = tree.find_xpath("/ptp/instances/instance")?;
     for instance in instances {
         let index: u32 = instance.get_value_for_xpath("instance-index")?;
@@ -328,7 +282,7 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<configuratio
                 }
             };
 
-            return Ok(configuration::PtpConfig {
+            return Ok(PtpConfig {
                 clock_class: ClockClass::from_str(&clock_class)?,
                 clock_accuracy: ClockAccuracy::from_str(&clock_accuracy)?,
                 offset_scaled_log_variance: instance
@@ -440,64 +394,13 @@ mod tests {
     use super::*;
     use crate::configuration::{AppConfig, Configuration};
     use crate::ptp::PtpConfig;
-    use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    use yang2::data::{DataFormat, DataParserFlags, DataTree, DataValidationFlags};
-
-    fn create_sysrepo_config(file: &str) -> SysrepoConfiguration {
-        let sr = SrConn::default();
-        let mut sess = SrSession::default();
-        let mut libyang_ctx =
-            YangContext::new(ContextFlags::NO_YANGLIBRARY).expect("Failed to create context");
-        libyang_ctx
-            .set_searchdir("./config/yang")
-            .expect("Failed to set YANG search directory");
-
-        let modules = &[
-            ("iana-if-type", vec![]),
-            ("ietf-ip", vec![]),
-            ("ietf-if-extensions", vec!["sub-interfaces"]),
-            ("ietf-detnet", vec![]),
-            ("tsn-interface-configuration", vec![]),
-            ("ieee1588-ptp", vec![]),
-        ];
-
-        for (module_name, features) in modules {
-            libyang_ctx
-                .load_module(module_name, None, features)
-                .expect("Failed to load module");
-        }
-
-        let libyang_ctx = Arc::new(libyang_ctx);
-
-        let filename = String::from(file);
-        sess.expect_get_data()
-            .returning(move |context, _xpath, _max_depth, _timeout, _opts| {
-                let tree = DataTree::parse_file(
-                    context,
-                    File::open(filename.clone()).expect("file not found"),
-                    DataFormat::JSON,
-                    DataParserFlags::STRICT,
-                    DataValidationFlags::NO_STATE,
-                )
-                .expect("could not parse");
-
-                Ok(tree)
-            });
-
-        SysrepoConfiguration {
-            ctx: Arc::new(Mutex::new(SysrepoContext {
-                _sr: sr,
-                sess,
-                libyang_ctx,
-            })),
-        }
-    }
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-successful.json",
+        );
         let config = sysrepo_config.get_app_config("app0")?;
 
         let interface = String::from("enp86s0");
@@ -527,8 +430,9 @@ mod tests {
 
     #[test]
     fn test_get_app_config_happy_without_ip() -> Result<()> {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-without-ip.json");
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-without-ip.json",
+        );
         let config = sysrepo_config.get_app_config("app0")?;
 
         let interface = String::from("enp86s0");
@@ -553,15 +457,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "App flow not found")]
     fn test_get_app_config_missing() {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-successful.json",
+        );
         sysrepo_config.get_app_config("somemissingapp").unwrap();
     }
 
     #[test]
     #[should_panic(expected = "config-list/time-aware-offset missing")]
     fn test_get_app_config_invalid_file() {
-        let mut sysrepo_config = create_sysrepo_config(
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
         );
         sysrepo_config.get_app_config("app0").unwrap();
@@ -569,8 +474,9 @@ mod tests {
 
     #[test]
     fn test_get_ptp_config_happy() -> Result<()> {
-        let mut sysrepo_config =
-            create_sysrepo_config("./src/configuration/sysrepo/test-successful.json");
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-successful.json",
+        );
         let config = sysrepo_config.get_ptp_config(1)?;
 
         assert_eq!(
@@ -596,7 +502,7 @@ mod tests {
 
     #[test]
     fn validate_example_yang() {
-        create_sysrepo_config("./config/yang/example.json")
+        SysrepoReader::mock_from_file("./config/yang/example.json")
             .get_config("")
             .unwrap();
     }
