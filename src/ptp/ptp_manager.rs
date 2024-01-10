@@ -35,7 +35,7 @@ use std::os::unix::net::UnixDatagram;
 use std::path::Path;
 
 use crate::ptp::{
-    ClockAccuracy, ClockClass, PortStates, Ptp, PtpConfig, PtpIssue, PtpIssues, PtpStatus,
+    ClockAccuracy, ClockClass, PortStates, Ptp, PtpInstanceConfig, PtpIssue, PtpIssues, PtpStatus,
     PtpTimes, TimeSource,
 };
 
@@ -44,7 +44,7 @@ const DEFAULT_UTC_OFFSET: i16 = 37; // only used if no configuration got applied
 /// Gateway to Linux PTP
 #[derive(Debug)]
 pub struct PtpManager {
-    applied_config: Option<PtpConfig>,
+    applied_config: Option<PtpInstanceConfig>,
 }
 
 flags! {
@@ -275,7 +275,7 @@ impl fmt::Display for GrandmasterSettingsNp {
 
 #[async_trait]
 impl Ptp for PtpManager {
-    async fn apply_config(&self, config: &PtpConfig) -> Result<()> {
+    async fn apply_config(&self, config: &PtpInstanceConfig) -> Result<()> {
         println!("Applying PTP configuration {config:#?}");
 
         let missing = |v| move || anyhow!("{} missing", v);

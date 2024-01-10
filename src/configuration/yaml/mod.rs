@@ -4,14 +4,14 @@
 //
 //! Provides YAML-based network configuration
 
-use crate::configuration::{AppConfig, Configuration, PtpConfig};
+use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig};
 use anyhow::{anyhow, Context, Result};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = "0.0.1";
+const VERSION_REQ: &str = "<=0.0.2";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -24,11 +24,18 @@ pub struct YAMLConfiguration {
 struct Config {
     version: String,
     apps: Option<AppConfigurations>,
-    ptp: Option<PtpConfigurations>,
+    ptp: Option<PtpConfig>,
+}
+
+#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PtpConfig {
+    active_instance: Option<u32>,
+    instances: Option<PtpInstanceConfigurations>,
 }
 
 type AppConfigurations = HashMap<String, AppConfig>;
-type PtpConfigurations = HashMap<u32, PtpConfig>;
+type PtpInstanceConfigurations = HashMap<u32, PtpInstanceConfig>;
 
 impl Configuration for YAMLConfiguration {
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
@@ -43,12 +50,18 @@ impl Configuration for YAMLConfiguration {
         Ok(self.config.apps.as_ref().cloned().unwrap_or_default())
     }
 
-    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>> {
+    fn get_ptp_active_instance(&mut self) -> Result<Option<u32>> {
+        Ok(self.config.ptp.as_ref().and_then(|ptp| ptp.active_instance))
+    }
+
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpInstanceConfig>> {
         Ok(self
             .config
             .ptp
             .as_ref()
-            .and_then(|ptp| ptp.get(&instance).cloned()))
+            .and_then(|ptp| ptp.instances.as_ref())
+            .and_then(|instances| instances.get(&instance))
+            .cloned())
     }
 }
 

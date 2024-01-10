@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 
-use crate::configuration::{AppConfig, Configuration, PtpConfig};
+use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig};
 use crate::ptp::{ClockAccuracy, ClockClass, TimeSource};
 use eui48::MacAddress;
 use std::net::IpAddr;
@@ -111,7 +111,12 @@ impl Configuration for SysrepoConfiguration {
             .collect()
     }
 
-    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>> {
+    fn get_ptp_active_instance(&mut self) -> Result<Option<u32>> {
+        // Not available via sysrepo. Needs to be configured by another configuration option.
+        Ok(None)
+    }
+
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpInstanceConfig>> {
         let cfg = self.reader.get_config("/ptp")?;
         get_ptp_instance(&cfg, instance).context("Parsing of YANG PTP configuration failed")
     }
@@ -288,7 +293,7 @@ fn get_forwarding_sublayer(
     Ok(None)
 }
 
-fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpConfig>> {
+fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpInstanceConfig>> {
     let instances = tree.find_xpath("/ptp/instances/instance")?;
     for instance in instances {
         if let Some(index) = instance.get_value_for_xpath::<u32>("instance-index")? {
@@ -317,7 +322,7 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpCo
                     })
                     .transpose()?;
 
-                return Ok(Some(PtpConfig {
+                return Ok(Some(PtpInstanceConfig {
                     clock_class,
                     clock_accuracy,
                     offset_scaled_log_variance: instance.get_value_for_xpath(
@@ -454,7 +459,7 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option
 mod tests {
     use super::*;
     use crate::configuration::{AppConfig, Configuration};
-    use crate::ptp::PtpConfig;
+    use crate::ptp::PtpInstanceConfig;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -548,7 +553,7 @@ mod tests {
 
         assert_eq!(
             config.unwrap(),
-            PtpConfig {
+            PtpInstanceConfig {
                 clock_class: Some(ClockClass::Default),
                 clock_accuracy: Some(ClockAccuracy::TimeAccurateToGreaterThan10S),
                 offset_scaled_log_variance: Some(0xFFFF),

@@ -139,20 +139,22 @@ apps:
     vid: 7
     pcp: 4
 ptp:
-  1:
-    clock_class: 248
-    clock_accuracy: 0x31
-    offset_scaled_log_variance: 65535
-    current_utc_offset: 37
-    current_utc_offset_valid: true
-    leap59: false
-    leap61: false
-    time_traceable: true
-    frequency_traceable: false
-    ptp_timescale: true
-    time_source: 0xA0
-    domain_number: 0
-    gptp_profile: true
+  active_instance: 1
+  instances:
+    1:
+      clock_class: 248
+      clock_accuracy: 0x31
+      offset_scaled_log_variance: 65535
+      current_utc_offset: 37
+      current_utc_offset_valid: true
+      leap59: false
+      leap61: false
+      time_traceable: true
+      frequency_traceable: false
+      ptp_timescale: true
+      time_source: 0xA0
+      domain_number: 0
+      gptp_profile: true
 ```
 
 and then apply it with

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::configuration::{AppConfig, Configuration, PtpConfig, ReplaceNoneOptions};
+use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig, ReplaceNoneOptions};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -71,7 +71,13 @@ impl Configuration for MergedConfiguration {
         ))
     }
 
-    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>> {
+    fn get_ptp_active_instance(&mut self) -> Result<Option<u32>> {
+        self.config
+            .get_ptp_active_instance()?
+            .map_or_else(|| self.fallback.get_ptp_active_instance(), |v| Ok(Some(v)))
+    }
+
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpInstanceConfig>> {
         Ok(merge_structs(
             self.config.get_ptp_config(instance)?,
             self.fallback.get_ptp_config(instance)?,
@@ -134,6 +140,28 @@ mod tests {
         let mut merged = MergedConfiguration::new(Box::new(sysrepo_config_wo_ip), Box::new(config));
 
         assert_eq!(merged.get_app_config("app0")?.unwrap(), expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merged_ptp() -> Result<()> {
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-successful.json",
+        );
+
+        assert!(sysrepo_config.get_ptp_active_instance()?.is_none());
+
+        let yaml = concat!("version: 0.0.2\n", "ptp:\n", "  active_instance: 1\n",);
+
+        let mut config = YAMLConfiguration::default();
+        config.read(yaml.as_bytes())?;
+
+        let mut merged = MergedConfiguration::new(Box::new(sysrepo_config), Box::new(config));
+
+        let active_instance = merged.get_ptp_active_instance()?.unwrap();
+
+        merged.get_ptp_config(active_instance).unwrap().unwrap();
 
         Ok(())
     }

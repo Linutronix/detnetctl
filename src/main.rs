@@ -88,13 +88,13 @@ struct Cli {
     #[arg(long)]
     no_interface_setup: bool,
 
+    /// Skip PTP configuration
+    #[arg(long)]
+    no_ptp_config: bool,
+
     /// Load Sysrepo configuration
     #[arg(short, long)]
     sysrepo: bool,
-
-    /// Configure PTP for the given instance
-    #[arg(short = 'i', long, value_name = "INSTANCE")]
-    ptp_instance: Option<u32>,
 
     /// YAML configuration file. Mandatory if --sysrepo is not provided. If both is provided, configuration of file and sysrepo is merged.
     #[arg(value_name = "FILE", required_unless_present = "sysrepo")]
@@ -136,20 +136,25 @@ pub async fn main() -> Result<()> {
     };
 
     let ptp_manager = new_ptp_manager();
-    if let Some(identity) = cli.ptp_instance {
-        if let Some(mgr) = &ptp_manager {
-            mgr.lock()
-                .await
-                .apply_config(
-                    &configuration
-                        .lock()
-                        .await
-                        .get_ptp_config(identity)?
-                        .ok_or_else(|| anyhow!("No PTP config found for identity {identity}"))?,
-                )
-                .await?;
-        } else {
-            return Err(anyhow!("ptp feature not built in!"));
+    let ptp_active_instance = configuration.lock().await.get_ptp_active_instance()?;
+    if !cli.no_ptp_config {
+        if let Some(instance) = ptp_active_instance {
+            if let Some(mgr) = &ptp_manager {
+                mgr.lock()
+                    .await
+                    .apply_config(
+                        &configuration
+                            .lock()
+                            .await
+                            .get_ptp_config(instance)?
+                            .ok_or_else(|| {
+                                anyhow!("No PTP config found for instance {instance}")
+                            })?,
+                    )
+                    .await?;
+            } else {
+                return Err(feature_missing_error("ptp", "--no-ptp-config"));
+            }
         }
     }
 

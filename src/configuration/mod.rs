@@ -28,7 +28,7 @@
 //! let config = sysrepo_config.get_app_config("app0");
 //! # Ok::<(), anyhow::Error>(())
 //! ```
-use crate::ptp::PtpConfig;
+use crate::ptp::PtpInstanceConfig;
 use anyhow::Result;
 use eui48::MacAddress;
 use replace_none_options_derive::ReplaceNoneOptions;
@@ -133,13 +133,21 @@ pub trait Configuration {
     /// Will return `Err` if there is a general problem reading the configuration.
     fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>>;
 
+    /// Get the configured active PTP instance
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no active instance is configured, Ok(None) is returned.
+    fn get_ptp_active_instance(&mut self) -> Result<Option<u32>>;
+
     /// Get the PTP configuration for a given instance
     ///
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
-    /// If no `PtpConfig` is found for the instance, Ok(None) is returned.
-    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>>;
+    /// If no `PtpInstanceConfig` is found for the instance, Ok(None) is returned.
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpInstanceConfig>>;
 }
 
 mod yaml;

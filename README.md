@@ -23,7 +23,7 @@ The features are introduced one by one below, but you should be able to mix and 
 - [D-Bus Interface](#d-bus-interface) - requires `dbus` feature, preferred over oneshot
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
 - [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
-- [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature
+- [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature, skip at runtime via `--no-ptp-config`
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, if requested with `--sysrepo`
 
@@ -54,8 +54,8 @@ Options:
       --no-dispatcher              Skip installing eBPFs - no interference protection!
       --bpf-debug-output           Print eBPF debug output to kernel tracing
       --no-interface-setup         Skip setting up the link
+      --no-ptp-config              Skip PTP configuration
   -s, --sysrepo                    Load Sysrepo configuration
-  -i, --ptp-instance <INSTANCE>    Configure PTP for the given instance
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -77,7 +77,7 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher --no-interface-setup --oneshot --protect app0:/user.slice/ config/yaml/example.yml
+./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher --no-interface-setup --no-ptp-config --oneshot --protect app0:/user.slice/ config/yaml/example.yml
 ```
 
 This will only read the configurations from the configuration file, performs a dry run setup as well as pretending to installing protection for `app0` and prints out for example the following output:
@@ -391,25 +391,27 @@ cargo build --no-default-features --features dbus,netlink,bpf,ptp
 
 ### Configuration
 
-Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp`, for YANG (see below) it is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `--ptp-instance` parameter. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
+Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp` as shown below that should be added to your `myconfig.yml`. For YANG (see below) the relevant section is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `active_instance` parameter. While the instances themselves can also be configured via YANG (see below), the `active_instance` parameter is only available in the YAML file that can be supplied at the same time as loading the YANG file. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
 
 ```yaml
-version: 0.0.1
+...
 ptp:
-  1:
-    clock_class: 248
-    clock_accuracy: 0x31
-    offset_scaled_log_variance: 65535
-    current_utc_offset: 37
-    current_utc_offset_valid: true
-    leap59: false
-    leap61: false
-    time_traceable: true
-    frequency_traceable: false
-    ptp_timescale: true
-    time_source: 0xA0
-    domain_number: 0
-    gptp_profile: true
+  active_instance: 1
+  instances:
+    1:
+      clock_class: 248
+      clock_accuracy: 0x31
+      offset_scaled_log_variance: 65535
+      current_utc_offset: 37
+      current_utc_offset_valid: true
+      leap59: false
+      leap61: false
+      time_traceable: true
+      frequency_traceable: false
+      ptp_timescale: true
+      time_source: 0xA0
+      domain_number: 0
+      gptp_profile: true
 ```
 
 The most important setting that ensures the configuration is applied correctly is if the gPTP profile (IEEE 802.1AS) is used. If you are unsure, have a look at the `transportSpecific` field of the `ptp4l` configuration and the `--transportSpecific` argument of `phc2sys`. If it is `1`, you should set `gptp_profile` in the YAML file to `true` and in the YANG file the `sdo-id` to `256` (i.e. `0x100`). Otherwise, set it to `false` and `0`, respectively.
@@ -418,7 +420,7 @@ The most important setting that ensures the configuration is applied correctly i
 
 Then start detnetctl for YAML configuration as
 ```console
-sudo ./target/debug/detnetctl --no-queue-setup 3 --ptp-instance 1 myconfig.yml
+sudo ./target/debug/detnetctl --no-queue-setup 3 myconfig.yml
 ```
 
 At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.

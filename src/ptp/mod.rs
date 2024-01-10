@@ -94,7 +94,7 @@ pub struct PtpStatus {
 #[cfg_attr(test, automock)]
 pub trait Ptp {
     /// Apply the given configuration
-    async fn apply_config(&self, config: &PtpConfig) -> Result<()>;
+    async fn apply_config(&self, config: &PtpInstanceConfig) -> Result<()>;
 
     /// Get the current PTP status
     async fn get_status(
