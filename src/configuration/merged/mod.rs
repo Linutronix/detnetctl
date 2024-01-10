@@ -121,7 +121,12 @@ mod tests {
             expected
         );
 
-        let yaml = concat!("apps:\n", "  app0:\n", "    offset_ns: 0\n",);
+        let yaml = concat!(
+            "version: 0.0.1\n",
+            "apps:\n",
+            "  app0:\n",
+            "    offset_ns: 0\n",
+        );
 
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;

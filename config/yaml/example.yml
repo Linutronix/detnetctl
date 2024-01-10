@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: 0BSD
 
+version: 0.0.1
 apps:
   app0:
     logical_interface: enp86s0.5

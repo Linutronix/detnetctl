@@ -5,10 +5,13 @@
 //! Provides YAML-based network configuration
 
 use crate::configuration::{AppConfig, Configuration, PtpConfig};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
+
+const VERSION_REQ: &str = "0.0.1";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -19,6 +22,7 @@ pub struct YAMLConfiguration {
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    version: String,
     apps: Option<AppConfigurations>,
     ptp: Option<PtpConfigurations>,
 }
@@ -74,6 +78,14 @@ impl YAMLConfiguration {
     /// Will return `Err` if the configuration could not be parsed.
     pub fn read<R: Read>(&mut self, reader: R) -> Result<()> {
         self.config = serde_yaml::from_reader(reader).context("Reading YAML file")?;
+
+        if !VersionReq::parse(VERSION_REQ)?.matches(&Version::parse(&self.config.version)?) {
+            return Err(anyhow!(
+                "File configuration version \"{}\" is not matching expected \"{VERSION_REQ}\"",
+                self.config.version
+            ));
+        }
+
         Ok(())
     }
 }
@@ -82,12 +94,18 @@ impl YAMLConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::Configuration;
+    use const_format::concatcp;
     use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr};
 
+    const VERSION: &str = "0.0.1";
+
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
-        let yaml = concat!(
+        let yaml = concatcp!(
+            "version: ",
+            VERSION,
+            "\n",
             "apps:\n",
             "  app0:\n",
             "    logical_interface: eth0.1\n",
@@ -129,7 +147,10 @@ mod tests {
 
     #[test]
     fn test_get_app_config_minimal_happy() -> Result<()> {
-        let yaml = concat!(
+        let yaml = concatcp!(
+            "version: ",
+            VERSION,
+            "\n",
             "apps:\n",
             "  app0:\n",
             "    logical_interface: eth0\n",
@@ -193,6 +214,7 @@ mod tests {
         apps.insert("app0".to_owned(), app_0.clone());
         apps.insert("app1".to_owned(), app_1.clone());
         let config = Config {
+            version: VERSION.to_owned(),
             apps: Some(apps),
             ptp: None,
         };
@@ -217,7 +239,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid type: string")]
     fn test_invalid_type() {
-        let yaml = concat!(
+        let yaml = concatcp!(
+            "version: ",
+            VERSION,
+            "\n",
             "apps:\n",
             "  app0:\n",
             "    logical_interface: eth0.1\n",
@@ -228,6 +253,35 @@ mod tests {
             "    destination_address: cb:cb:cb:cb:cb:cb\n",
             "    vid: 1\n",
             "    pcp: 2\n"
+        );
+
+        let mut config = YAMLConfiguration::default();
+        config.read(yaml.as_bytes()).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "missing field `version`")]
+    fn test_no_version() {
+        let yaml = concat!(
+            "apps:\n",
+            "  app0:\n",
+            "    logical_interface: eth0\n",
+            "    physical_interface: eth0\n"
+        );
+
+        let mut config = YAMLConfiguration::default();
+        config.read(yaml.as_bytes()).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "File configuration version \"99999.0.0\" is not matching expected")]
+    fn test_wrong_version() {
+        let yaml = concat!(
+            "version: 99999.0.0\n",
+            "apps:\n",
+            "  app0:\n",
+            "    logical_interface: eth0\n",
+            "    physical_interface: eth0\n"
         );
 
         let mut config = YAMLConfiguration::default();

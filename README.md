@@ -257,6 +257,7 @@ The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, s
 
 Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
 ```yaml
+version: 0.0.1
 apps:
   app0:
     logical_interface: enp86s0
@@ -284,6 +285,7 @@ Up to now the transmission took place directly via the physical interface. Now, 
 ### Configuration
 Adapt the configuration to include the interface configuration, e.g.
 ```yaml
+version: 0.0.1
 apps:
   app0:
     logical_interface: enp86s0.5
@@ -338,6 +340,7 @@ How the cgroups are managed is system-dependent. Today, this is usually the resp
 ### Configuration
 To properly identify the TSN stream in the dispatcher and to set the PCP, we now also need to add the destination MAC address and the PCP to the configuration:
 ```yaml
+version: 0.0.1
 apps:
   app0:
     logical_interface: enp86s0.5
@@ -391,6 +394,7 @@ cargo build --no-default-features --features dbus,netlink,bpf,ptp
 Adapt the configuration according to your needs. For the YAML file, the relevant section is `ptp`, for YANG (see below) it is `ieee1588-ptp:ptp`. There can be multiple PTP instances in the configuration file that will be selected by the `--ptp-instance` parameter. If it is not provided, no configuration will be applied, but the PTP status can still be requested.
 
 ```yaml
+version: 0.0.1
 ptp:
   1:
     clock_class: 248
@@ -437,6 +441,7 @@ Hint: detd requires proper time synchronization between the TAI clock and the PH
 ### Configuration
 In order for detd to calculate the size and position of the timeslot, the configuration needs to be extended:
 ```yaml
+version: 0.0.1
 apps:
   app0:
     logical_interface: enp86s0.5
