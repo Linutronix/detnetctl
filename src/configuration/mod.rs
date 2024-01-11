@@ -43,10 +43,10 @@ use mockall::automock;
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
-    pub logical_interface: String,
+    pub logical_interface: Option<String>,
 
     /// Physical interface corresponding to the logical interface
-    pub physical_interface: String,
+    pub physical_interface: Option<String>,
 
     /// Reference time period for traffic specification
     #[serde(default)]
@@ -115,9 +115,9 @@ pub trait Configuration {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if no configuration can be found for the given `app_name`
-    /// or there is general problem reading the configuration.
-    fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig>;
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no `AppConfig` is found for the name, Ok(None) is returned.
+    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>>;
 
     /// Get the configuration for all provided apps
     ///
@@ -130,9 +130,9 @@ pub trait Configuration {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if no configuration can be found for the given PTP instance
-    /// or there is general problem reading the configuration.
-    fn get_ptp_config(&mut self, instance: u32) -> Result<PtpConfig>;
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no `PtpConfig` is found for the instance, Ok(None) is returned.
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>>;
 }
 
 mod yaml;

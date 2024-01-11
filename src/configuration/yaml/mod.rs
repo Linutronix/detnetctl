@@ -4,8 +4,8 @@
 //
 //! Provides YAML-based network configuration
 
-use crate::configuration;
-use anyhow::{anyhow, Context, Result};
+use crate::configuration::{AppConfig, Configuration, PtpConfig};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -23,38 +23,28 @@ struct Config {
     ptp: Option<PtpConfigurations>,
 }
 
-type AppConfigurations = HashMap<String, configuration::AppConfig>;
-type PtpConfigurations = HashMap<u32, configuration::PtpConfig>;
+type AppConfigurations = HashMap<String, AppConfig>;
+type PtpConfigurations = HashMap<u32, PtpConfig>;
 
-impl configuration::Configuration for YAMLConfiguration {
-    fn get_app_config(&mut self, app_name: &str) -> Result<configuration::AppConfig> {
-        self.config.apps.as_ref().map_or_else(
-            || Err(anyhow!("No apps section found in configuration!")),
-            |apps| {
-                apps.get(app_name)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("App {} not found in configuration!", app_name))
-            },
-        )
-    }
-
-    fn get_app_configs(&mut self) -> Result<HashMap<String, configuration::AppConfig>> {
-        self.config
+impl Configuration for YAMLConfiguration {
+    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
+        Ok(self
+            .config
             .apps
             .as_ref()
-            .ok_or_else(|| anyhow!("No apps section found in configuration!"))
-            .cloned()
+            .and_then(|apps| apps.get(app_name).cloned()))
     }
 
-    fn get_ptp_config(&mut self, instance: u32) -> Result<configuration::PtpConfig> {
-        self.config.ptp.as_ref().map_or_else(
-            || Err(anyhow!("No ptp section found in configuration!")),
-            |ptp| {
-                ptp.get(&instance)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("PTP instance {} not found in configuration!", instance))
-            },
-        )
+    fn get_app_configs(&mut self) -> Result<AppConfigurations> {
+        Ok(self.config.apps.as_ref().cloned().unwrap_or_default())
+    }
+
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>> {
+        Ok(self
+            .config
+            .ptp
+            .as_ref()
+            .and_then(|ptp| ptp.get(&instance).cloned()))
     }
 }
 
@@ -126,11 +116,11 @@ mod tests {
 
         let plain_config: Config = serde_yaml::from_str(yaml)?;
         assert_eq!(
-            config.get_app_config("app0")?,
+            config.get_app_config("app0")?.unwrap(),
             plain_config.apps.as_ref().unwrap()["app0"]
         );
         assert_eq!(
-            config.get_app_config("app1")?,
+            config.get_app_config("app1")?.unwrap(),
             plain_config.apps.as_ref().unwrap()["app1"]
         );
 
@@ -151,7 +141,7 @@ mod tests {
 
         let plain_config: Config = serde_yaml::from_str(yaml)?;
         assert_eq!(
-            config.get_app_config("app0")?,
+            config.get_app_config("app0")?.unwrap(),
             plain_config.apps.unwrap()["app0"]
         );
 
@@ -175,9 +165,9 @@ mod tests {
 
     #[test]
     fn test_get_app_config_happy_with_serialization() -> Result<()> {
-        let app_0 = configuration::AppConfig {
-            logical_interface: "eth0.1".to_owned(),
-            physical_interface: "eth0".to_owned(),
+        let app_0 = AppConfig {
+            logical_interface: Some("eth0.1".to_owned()),
+            physical_interface: Some("eth0".to_owned()),
             period_ns: Some(1000 * 100),
             offset_ns: Some(0),
             size_bytes: Some(1000),
@@ -187,9 +177,9 @@ mod tests {
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
         };
 
-        let app_1 = configuration::AppConfig {
-            logical_interface: "eth1.2".to_owned(),
-            physical_interface: "eth1".to_owned(),
+        let app_1 = AppConfig {
+            logical_interface: Some("eth1.2".to_owned()),
+            physical_interface: Some("eth1".to_owned()),
             period_ns: Some(1000 * 120),
             offset_ns: Some(10),
             size_bytes: Some(2000),
@@ -212,27 +202,27 @@ mod tests {
         let mut read_config = YAMLConfiguration::default();
         read_config.read(yaml.as_bytes())?;
 
-        assert_eq!(read_config.get_app_config("app0")?, app_0);
-        assert_eq!(read_config.get_app_config("app1")?, app_1);
+        assert_eq!(read_config.get_app_config("app0")?, Some(app_0));
+        assert_eq!(read_config.get_app_config("app1")?, Some(app_1));
 
         Ok(())
     }
 
     #[test]
-    #[should_panic(expected = "No apps section found in configuration!")]
     fn test_get_app_config_not_found() {
         let mut config = YAMLConfiguration::default();
-        config.get_app_config("app0").unwrap();
+        assert!(config.get_app_config("app0").unwrap().is_none());
     }
 
     #[test]
-    #[should_panic(expected = "missing field `logical_interface`")]
-    fn test_missing_field() {
+    #[should_panic(expected = "invalid type: string")]
+    fn test_invalid_type() {
         let yaml = concat!(
             "apps:\n",
             "  app0:\n",
+            "    logical_interface: eth0.1\n",
             "    physical_interface: eth0\n",
-            "    period_ns: 100000\n",
+            "    period_ns: this is no integer\n",
             "    offset_ns: 0\n",
             "    size_bytes: 1000\n",
             "    destination_address: cb:cb:cb:cb:cb:cb\n",

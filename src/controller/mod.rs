@@ -46,7 +46,7 @@ use crate::configuration::{AppConfig, Configuration};
 use crate::dispatcher::{Dispatcher, StreamIdentification};
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::lock::Mutex;
 use std::path::Path;
@@ -122,7 +122,11 @@ impl Setup for Controller {
             )
             .await; // No ? since we need to ensure that the link is up again even after error
 
-            let if_up_result = set_interfaces_up(&app_config, &*locked_interface_setup).await;
+            let if_up_result = set_interfaces_up(
+                vec![app_config.physical_interface, app_config.logical_interface],
+                &*locked_interface_setup,
+            )
+            .await;
 
             // The first occurred error shall be returned, but a potential second still be printed
             if let Err(if_up_error) = if_up_result {
@@ -160,7 +164,8 @@ impl Protection for Controller {
             .lock()
             .await
             .get_app_config(app_name)
-            .context("Fetching the configuration failed")?;
+            .context("Fetching the configuration failed")?
+            .ok_or_else(|| anyhow!("No configuration found for {app_name}"))?;
         println!("  Fetched from configuration module: {app_config:#?}");
 
         let stream_id = StreamIdentification {
@@ -168,18 +173,16 @@ impl Protection for Controller {
             vlan_identifier: app_config.vid,
         };
 
+        let physical_interface = app_config
+            .physical_interface
+            .as_ref()
+            .ok_or_else(|| anyhow!("Physical interface not provided"))?;
+
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
-            .protect_stream(
-                &app_config.physical_interface,
-                &stream_id,
-                Some(cgroup.into()),
-            )
+            .protect_stream(physical_interface, &stream_id, Some(cgroup.into()))
             .context("Installing protection via the dispatcher failed")?;
-        println!(
-            "  Protection installed for stream {:#?} on {}",
-            stream_id, app_config.physical_interface
-        );
+        println!("  Protection installed for stream {stream_id:#?} on {physical_interface}");
 
         Ok(())
     }
@@ -191,16 +194,20 @@ async fn setup(
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
+    let physical_interface = app_config
+        .physical_interface
+        .as_ref()
+        .ok_or_else(|| anyhow!("Physical interface not provided"))?;
+    let logical_interface = app_config
+        .logical_interface
+        .as_ref()
+        .ok_or_else(|| anyhow!("Logical interface not provided"))?;
+
     interface_setup
-        .set_link_state(LinkState::Down, &app_config.physical_interface)
+        .set_link_state(LinkState::Down, physical_interface)
         .await
-        .with_context(|| {
-            format!(
-                "Setting interface {} down failed",
-                &app_config.physical_interface
-            )
-        })?;
-    println!("  Interface {} down", app_config.physical_interface);
+        .with_context(|| format!("Setting interface {physical_interface} down failed"))?;
+    println!("  Interface {physical_interface} down");
 
     // Setup Queue
     let queue_setup_response = queue_setup
@@ -224,7 +231,7 @@ async fn setup(
     let mut locked_dispatcher = dispatcher.lock().await;
     locked_dispatcher
         .configure_stream(
-            &app_config.physical_interface,
+            physical_interface,
             &stream_id,
             queue_setup_response.priority,
             app_config.pcp,
@@ -233,36 +240,26 @@ async fn setup(
         .context("Installing protection via the dispatcher failed")?;
     println!(
         "  Dispatcher installed for stream {:#?} with priority {} on {}",
-        stream_id, queue_setup_response.priority, app_config.physical_interface
+        stream_id, queue_setup_response.priority, physical_interface
     );
 
     // Setup logical interface
     if let Some(vid) = app_config.vid {
         interface_setup
-            .setup_vlan_interface(
-                &app_config.physical_interface,
-                &app_config.logical_interface,
-                vid,
-            )
+            .setup_vlan_interface(physical_interface, logical_interface, vid)
             .await
             .context("Setting up VLAN interface failed")?;
-        println!(
-            "  VLAN interface {} properly configured",
-            app_config.logical_interface
-        );
+        println!("  VLAN interface {logical_interface} properly configured");
     }
 
     // Add address to logical interface
     if let Some(addresses) = &app_config.addresses {
         for (ip, prefix_length) in addresses {
             interface_setup
-                .add_address(*ip, *prefix_length, &app_config.logical_interface)
+                .add_address(*ip, *prefix_length, logical_interface)
                 .await
                 .context("Adding address to VLAN interface failed")?;
-            println!(
-                "  Added {}/{} to {}",
-                ip, prefix_length, app_config.logical_interface
-            );
+            println!("  Added {ip}/{prefix_length} to {logical_interface}");
         }
     } else {
         println!("  No IP address configured, since none was provided");
@@ -272,30 +269,20 @@ async fn setup(
 }
 
 async fn set_interfaces_up(
-    app_config: &AppConfig,
+    interfaces: Vec<Option<String>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
-    interface_setup
-        .set_link_state(LinkState::Up, &app_config.physical_interface)
-        .await
-        .with_context(|| {
-            format!(
-                "Setting interface {} up failed",
-                &app_config.physical_interface
-            )
-        })?;
-    println!("  Interface {} up", app_config.physical_interface);
+    for interface in interfaces {
+        let iface = interface
+            .as_ref()
+            .ok_or_else(|| anyhow!("Interface not provided"))?;
 
-    interface_setup
-        .set_link_state(LinkState::Up, &app_config.logical_interface)
-        .await
-        .with_context(|| {
-            format!(
-                "Setting interface {} up failed",
-                &app_config.logical_interface
-            )
-        })?;
-    println!("  Interface {} up", app_config.logical_interface);
+        interface_setup
+            .set_link_state(LinkState::Up, iface)
+            .await
+            .with_context(|| format!("Setting interface {iface} up failed"))?;
+        println!("  Interface {iface} up");
+    }
 
     Ok(())
 }
@@ -314,8 +301,8 @@ mod tests {
 
     fn generate_app_config(interface: String, vid: u16) -> AppConfig {
         AppConfig {
-            logical_interface: format!("{interface}.{vid}"),
-            physical_interface: interface,
+            logical_interface: Some(format!("{interface}.{vid}")),
+            physical_interface: Some(interface),
             period_ns: Some(0),
             offset_ns: Some(0),
             size_bytes: Some(0),
@@ -331,7 +318,7 @@ mod tests {
         let interface2 = interface.clone();
         configuration
             .expect_get_app_config()
-            .returning(move |_| Ok(generate_app_config(interface.clone(), vid)));
+            .returning(move |_| Ok(Some(generate_app_config(interface.clone(), vid))));
         configuration.expect_get_app_configs().returning(move || {
             Ok(HashMap::from([(
                 String::from("app0"),
@@ -356,7 +343,7 @@ mod tests {
         let mut queue_setup = MockQueueSetup::new();
         queue_setup.expect_apply_config().returning(move |config| {
             Ok(QueueSetupResponse {
-                logical_interface: config.logical_interface.clone(),
+                logical_interface: config.logical_interface.clone().unwrap(),
                 priority,
             })
         });

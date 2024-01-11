@@ -374,42 +374,42 @@ pub struct PtpConfig {
     /// Enumeration that denotes the traceability, synchronization
     /// state and expected performance of the time or frequency
     /// distributed by the Grandmaster PTP Instance.
-    pub clock_class: ClockClass,
+    pub clock_class: Option<ClockClass>,
 
     /// Enumeration that indicates the expected accuracy of a
     /// PTP Instance when it is the Grandmaster PTP Instance,
     /// or in the event it becomes the Grandmaster PTP Instance.
-    pub clock_accuracy: ClockAccuracy,
+    pub clock_accuracy: Option<ClockAccuracy>,
 
     /// The offsetScaledLogVariance indicates the stability of the
     /// clock (Local Clock of the PTP Instance). It provides an
     /// estimate of the variations of the clock from a linear timescale
     /// when it is not synchronized to another clock using the protocol.
-    pub offset_scaled_log_variance: u16,
+    pub offset_scaled_log_variance: Option<u16>,
 
     /// Specified as dLS in IERS Bulletin C, this provides
     /// the offset from UTC (TAI - UTC). The offset is in
     /// units of seconds.
-    pub current_utc_offset: i16,
+    pub current_utc_offset: Option<i16>,
 
     /// The value of current-utc-offset-valid shall be true
     /// if the values of current-utc-offset, leap59, and leap61
     /// are known to be correct, otherwise it shall be false.
-    pub current_utc_offset_valid: bool,
+    pub current_utc_offset_valid: Option<bool>,
 
     /// If the timescale is PTP, a true value for leap59
     /// shall indicate that the last minute of the
     /// current UTC day contains 59 seconds.
     /// If the timescale is not PTP, the value shall be
     /// false.
-    pub leap59: bool,
+    pub leap59: Option<bool>,
 
     /// If the timescale is PTP, a true value for leap61
     /// shall indicate that the last minute of the
     /// current UTC day contains 61 seconds.
     /// If the timescale is not PTP, the value shall be
     /// false.
-    pub leap61: bool,
+    pub leap61: Option<bool>,
 
     /// The value of time-traceable shall be true if the
     /// timescale is traceable to a primary reference;
@@ -420,7 +420,7 @@ pub struct PtpConfig {
     /// applicable PTP Profile. In the absence of such a
     /// definition the value of time-traceable is
     /// implementation specific.
-    pub time_traceable: bool,
+    pub time_traceable: Option<bool>,
 
     /// The value of time-traceable shall be true if the
     /// frequency determining the timescale is traceable
@@ -432,7 +432,7 @@ pub struct PtpConfig {
     /// applicable PTP Profile. In the absence of such a
     /// definition the value of frequency-traceable is
     /// implementation specific.
-    pub frequency_traceable: bool,
+    pub frequency_traceable: Option<bool>,
 
     /// If ptp-timescale is true, the timescale of
     /// the Grandmaster PTP Instance is PTP, which is
@@ -442,20 +442,20 @@ pub struct PtpConfig {
     /// If ptp-timescale is false, the timescale of
     /// the Grandmaster PTP Instance is ARB, which is
     /// the elapsed time since an arbitrary epoch.
-    pub ptp_timescale: bool,
+    pub ptp_timescale: Option<bool>,
 
     /// The source of time used by the Grandmaster
     /// PTP Instance.
-    pub time_source: TimeSource,
+    pub time_source: Option<TimeSource>,
 
     /// The IEEE Std 1588 domainNumber used by this
     /// Link Port. This domain number is not configurable,
     /// since its value is determined by the transport
     /// mechanism of the Link Port.
-    pub domain_number: u8,
+    pub domain_number: Option<u8>,
 
     /// If gptp_profile is true, use IEE 802.1AS (or gPTP) profile.
-    pub gptp_profile: bool,
+    pub gptp_profile: Option<bool>,
 }
 
 fn strip_prefix(input: &str) -> &str {

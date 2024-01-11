@@ -210,20 +210,34 @@ impl FromDataValue for bool {
 }
 
 pub trait GetValueForXPath {
-    fn get_value_for_xpath<T: FromDataValue>(&self, xpath: &str) -> Result<T>;
+    /// Get the value for this `XPath`.
+    ///
+    /// Assumes the `XPath` points to a single value. If there are multiple
+    /// matches, an error is return.
+    ///
+    /// Returns Ok(None) if either there is no match for the `XPath`
+    /// or there is no associated value for the match.
+    fn get_value_for_xpath<T: FromDataValue>(&self, xpath: &str) -> Result<Option<T>>;
 }
 
 impl GetValueForXPath for DataNodeRef<'_> {
-    fn get_value_for_xpath<T: FromDataValue>(&self, xpath: &str) -> Result<T> {
+    fn get_value_for_xpath<T: FromDataValue>(&self, xpath: &str) -> Result<Option<T>> {
         let mut elements = self.find_xpath(xpath)?;
-        let element = elements
+
+        Ok(elements
             .next()
-            .ok_or_else(|| anyhow!("{} missing", xpath))?;
-        ensure!(elements.next().is_none(), "expecting only one element");
-        let value = element
-            .value()
-            .ok_or_else(|| anyhow!("{} has no value", xpath))?;
-        T::try_from_data_value(value)
-            .with_context(|| format!("Converting value for {xpath} failed"))
+            .map(|element| {
+                ensure!(elements.next().is_none(), "expecting only one element");
+
+                element
+                    .value()
+                    .map(|value| {
+                        T::try_from_data_value(value)
+                            .with_context(|| format!("Converting value for {xpath} failed"))
+                    })
+                    .transpose()
+            })
+            .transpose()?
+            .flatten())
     }
 }

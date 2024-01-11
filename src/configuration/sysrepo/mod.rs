@@ -23,22 +23,22 @@ pub struct SysrepoConfiguration {
 }
 
 struct AppFlow {
-    traffic_profile: String,
+    traffic_profile: Option<String>,
 }
 
 struct ServiceSublayer {
-    outgoing_forwarding_sublayer: String,
+    outgoing_forwarding_sublayer: Option<String>,
 }
 
 struct ForwardingSublayer {
-    outgoing_interface: String,
+    outgoing_interface: Option<String>,
 }
 
 struct TSNInterfaceConfig {
-    offset_ns: u32,
-    destination_address: MacAddress,
-    vid: u16, // actually 12 bit
-    pcp: u8,  // actually 3 bit
+    offset_ns: Option<u32>,
+    destination_address: Option<MacAddress>,
+    vid: Option<u16>, // actually 12 bit
+    pcp: Option<u8>,  // actually 3 bit
 }
 
 struct TrafficProfile {
@@ -48,7 +48,7 @@ struct TrafficProfile {
 
 struct VLANInterface {
     name: String,
-    physical_interface: String,
+    physical_interface: Option<String>,
     addresses: Option<Vec<(IpAddr, u8)>>,
 }
 
@@ -87,12 +87,13 @@ impl Configuration for SysrepoConfiguration {
     /// to set up the NIC. This is currently done via the parent-interface specified by
     /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
-    fn get_app_config(&mut self, app_name: &str) -> Result<AppConfig> {
+    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
         let cfg = self
             .reader
             .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
-        let app_flow = get_app_flow(&cfg, app_name)?;
-        get_app_config_from_app_flow(&cfg, app_name, &app_flow)
+        get_app_flow(&cfg, app_name)?
+            .map(|app_flow| get_app_config_from_app_flow(&cfg, app_name, &app_flow))
+            .transpose()
     }
 
     fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>> {
@@ -110,7 +111,7 @@ impl Configuration for SysrepoConfiguration {
             .collect()
     }
 
-    fn get_ptp_config(&mut self, instance: u32) -> Result<PtpConfig> {
+    fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpConfig>> {
         let cfg = self.reader.get_config("/ptp")?;
         get_ptp_instance(&cfg, instance).context("Parsing of YANG PTP configuration failed")
     }
@@ -138,36 +139,40 @@ impl SysrepoConfiguration {
     }
 }
 
-fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<AppFlow> {
+fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<Option<AppFlow>> {
     // It would be easier to put the provided app_name inside the XPath expression,
     // but this could lead to a potential unsafe expression
     // (see https://owasp.org/www-community/attacks/XPATH_Injection - also for alternative implementations).
     let app_flows = tree.find_xpath("/detnet/app-flows/app-flow")?;
     for app_flow in app_flows {
-        let name: String = app_flow.get_value_for_xpath("name")?;
-
-        if name == app_name {
-            return Ok(AppFlow {
-                traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
-            });
+        if let Some(name) = app_flow.get_value_for_xpath::<String>("name")? {
+            if name == app_name {
+                return Ok(Some(AppFlow {
+                    traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                }));
+            }
         }
     }
 
-    Err(anyhow!("App flow not found"))
+    Ok(None)
 }
 
 fn get_app_flows(tree: &DataTree) -> Result<Vec<(String, AppFlow)>> {
     tree.find_xpath("/detnet/app-flows/app-flow")?
-        .map(|app_flow| {
-            let name: String = app_flow.get_value_for_xpath("name")?;
-            Ok((
-                name,
-                AppFlow {
-                    traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
-                },
-            ))
+        .try_fold(vec![], |mut acc, app_flow| {
+            match app_flow.get_value_for_xpath("name")? {
+                Some(name) => {
+                    acc.push((
+                        name,
+                        AppFlow {
+                            traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                        },
+                    ));
+                    Ok(acc)
+                }
+                None => Ok(acc),
+            }
         })
-        .collect()
 }
 
 fn get_app_config_from_app_flow(
@@ -176,27 +181,52 @@ fn get_app_config_from_app_flow(
     app_flow: &AppFlow,
 ) -> Result<AppConfig> {
     let service_sublayer = get_service_sublayer(tree, app_name)?;
-    let forwarding_sublayer =
-        get_forwarding_sublayer(tree, &service_sublayer.outgoing_forwarding_sublayer)?;
-    let traffic_profile = get_traffic_profile(tree, &app_flow.traffic_profile)?;
-    let tsn_interface_cfg =
-        get_tsn_interface_config(tree, &forwarding_sublayer.outgoing_interface)?;
-    let logical_interface = get_logical_interface(tree, &forwarding_sublayer.outgoing_interface)?;
+    let forwarding_sublayer = service_sublayer
+        .and_then(|ssl| ssl.outgoing_forwarding_sublayer)
+        .map(|ofsl| get_forwarding_sublayer(tree, &ofsl))
+        .transpose()?
+        .flatten();
+    let traffic_profile = app_flow
+        .traffic_profile
+        .as_ref()
+        .map(|profile| get_traffic_profile(tree, profile))
+        .transpose()?
+        .flatten();
+    let outgoing_interface = forwarding_sublayer.and_then(|fsl| fsl.outgoing_interface);
+    let tsn_interface_cfg = outgoing_interface
+        .as_ref()
+        .map(|iface| get_tsn_interface_config(tree, iface))
+        .transpose()?
+        .flatten();
+    let logical_interface = outgoing_interface
+        .as_ref()
+        .map(|iface| get_logical_interface(tree, iface))
+        .transpose()?
+        .flatten();
 
     Ok(AppConfig {
-        logical_interface: logical_interface.name,
-        physical_interface: logical_interface.physical_interface,
-        period_ns: Some(traffic_profile.period_ns),
-        offset_ns: Some(tsn_interface_cfg.offset_ns),
-        size_bytes: Some(traffic_profile.size_bytes),
-        destination_address: Some(tsn_interface_cfg.destination_address),
-        vid: Some(tsn_interface_cfg.vid),
-        pcp: Some(tsn_interface_cfg.pcp),
-        addresses: logical_interface.addresses,
+        logical_interface: logical_interface.as_ref().map(|iface| iface.name.clone()),
+        physical_interface: logical_interface
+            .as_ref()
+            .and_then(|iface| iface.physical_interface.clone()),
+        period_ns: traffic_profile.as_ref().map(|profile| profile.period_ns),
+        offset_ns: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.offset_ns),
+        size_bytes: traffic_profile.as_ref().map(|profile| profile.size_bytes),
+        destination_address: tsn_interface_cfg
+            .as_ref()
+            .and_then(|cfg| cfg.destination_address),
+        vid: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.vid),
+        pcp: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.pcp),
+        addresses: logical_interface
+            .as_ref()
+            .and_then(|iface| iface.addresses.clone()),
     })
 }
 
-fn get_service_sublayer(tree: &DataTree, incoming_app_flow: &str) -> Result<ServiceSublayer> {
+fn get_service_sublayer(
+    tree: &DataTree,
+    incoming_app_flow: &str,
+) -> Result<Option<ServiceSublayer>> {
     let service_sublayers = tree.find_xpath("/detnet/service/sub-layer")?;
     for service_sublayer in service_sublayers {
         let incoming_app_flows = service_sublayer.find_xpath("incoming/app-flow/flow")?;
@@ -229,164 +259,195 @@ fn get_service_sublayer(tree: &DataTree, incoming_app_flow: &str) -> Result<Serv
                     return Err(anyhow!("Currently only exactly one outgoing forwarding sublayer per service sublayer is supported!"));
                 }
 
-                return Ok(ServiceSublayer {
-                    outgoing_forwarding_sublayer,
-                });
+                return Ok(Some(ServiceSublayer {
+                    outgoing_forwarding_sublayer: Some(outgoing_forwarding_sublayer),
+                }));
             }
         }
     }
 
-    Err(anyhow!("No matching service sublayer found"))
+    Ok(None)
 }
 
 fn get_forwarding_sublayer(
     tree: &DataTree,
     forwarding_sublayer_name: &str,
-) -> Result<ForwardingSublayer> {
+) -> Result<Option<ForwardingSublayer>> {
     let forwarding_sublayers = tree.find_xpath("/detnet/forwarding/sub-layer")?;
     for forwarding_sublayer in forwarding_sublayers {
-        let name: String = forwarding_sublayer.get_value_for_xpath("name")?;
-
-        if name == forwarding_sublayer_name {
-            return Ok(ForwardingSublayer {
-                outgoing_interface: forwarding_sublayer
-                    .get_value_for_xpath("outgoing/interface/outgoing-interface")?,
-            });
+        if let Some(name) = forwarding_sublayer.get_value_for_xpath::<String>("name")? {
+            if name == forwarding_sublayer_name {
+                return Ok(Some(ForwardingSublayer {
+                    outgoing_interface: forwarding_sublayer
+                        .get_value_for_xpath("outgoing/interface/outgoing-interface")?,
+                }));
+            }
         }
     }
 
-    Err(anyhow!("No matching forwarding sublayer found"))
+    Ok(None)
 }
 
-fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<PtpConfig> {
+fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpConfig>> {
     let instances = tree.find_xpath("/ptp/instances/instance")?;
     for instance in instances {
-        let index: u32 = instance.get_value_for_xpath("instance-index")?;
+        if let Some(index) = instance.get_value_for_xpath::<u32>("instance-index")? {
+            if index == instance_index {
+                let clock_class = instance
+                    .get_value_for_xpath::<String>("default-ds/clock-quality/clock-class")?
+                    .map(|clock_class| ClockClass::from_str(&clock_class))
+                    .transpose()?;
+                let clock_accuracy = instance
+                    .get_value_for_xpath::<String>("default-ds/clock-quality/clock-accuracy")?
+                    .map(|clock_accuracy| ClockAccuracy::from_str(&clock_accuracy))
+                    .transpose()?;
+                let time_source = instance
+                    .get_value_for_xpath::<String>("time-properties-ds/time-source")?
+                    .map(|time_source| TimeSource::from_str(&time_source))
+                    .transpose()?;
 
-        if index == instance_index {
-            let clock_class: String =
-                instance.get_value_for_xpath("default-ds/clock-quality/clock-class")?;
-            let clock_accuracy: String =
-                instance.get_value_for_xpath("default-ds/clock-quality/clock-accuracy")?;
-            let time_source: String =
-                instance.get_value_for_xpath("time-properties-ds/time-source")?;
+                let gptp_profile = instance
+                    .get_value_for_xpath::<u16>("default-ds/sdo-id")?
+                    .map(|sdo_id| match sdo_id {
+                        0x000 => Ok(false),
+                        0x100 => Ok(true),
+                        _ => Err(anyhow!(
+                            "Only sdoId 0x000 and 0x100 are supported at the moment"
+                        )),
+                    })
+                    .transpose()?;
 
-            let sdo_id: u16 = instance.get_value_for_xpath("default-ds/sdo-id")?;
-            let gptp_profile = match sdo_id {
-                0x000 => false,
-                0x100 => true,
-                _ => {
-                    return Err(anyhow!(
-                        "Only sdoId 0x000 and 0x100 are supported at the moment"
-                    ))
-                }
-            };
-
-            return Ok(PtpConfig {
-                clock_class: ClockClass::from_str(&clock_class)?,
-                clock_accuracy: ClockAccuracy::from_str(&clock_accuracy)?,
-                offset_scaled_log_variance: instance
-                    .get_value_for_xpath("default-ds/clock-quality/offset-scaled-log-variance")?,
-                current_utc_offset: instance
-                    .get_value_for_xpath("time-properties-ds/current-utc-offset")?,
-                current_utc_offset_valid: instance
-                    .get_value_for_xpath("time-properties-ds/current-utc-offset-valid")?,
-                leap59: instance.get_value_for_xpath("time-properties-ds/leap59")?,
-                leap61: instance.get_value_for_xpath("time-properties-ds/leap61")?,
-                time_traceable: instance
-                    .get_value_for_xpath("time-properties-ds/time-traceable")?,
-                frequency_traceable: instance
-                    .get_value_for_xpath("time-properties-ds/frequency-traceable")?,
-                ptp_timescale: instance.get_value_for_xpath("time-properties-ds/ptp-timescale")?,
-                time_source: TimeSource::from_str(&time_source)?,
-                domain_number: instance.get_value_for_xpath("default-ds/domain-number")?,
-                gptp_profile,
-            });
+                return Ok(Some(PtpConfig {
+                    clock_class,
+                    clock_accuracy,
+                    offset_scaled_log_variance: instance.get_value_for_xpath(
+                        "default-ds/clock-quality/offset-scaled-log-variance",
+                    )?,
+                    current_utc_offset: instance
+                        .get_value_for_xpath("time-properties-ds/current-utc-offset")?,
+                    current_utc_offset_valid: instance
+                        .get_value_for_xpath("time-properties-ds/current-utc-offset-valid")?,
+                    leap59: instance.get_value_for_xpath("time-properties-ds/leap59")?,
+                    leap61: instance.get_value_for_xpath("time-properties-ds/leap61")?,
+                    time_traceable: instance
+                        .get_value_for_xpath("time-properties-ds/time-traceable")?,
+                    frequency_traceable: instance
+                        .get_value_for_xpath("time-properties-ds/frequency-traceable")?,
+                    ptp_timescale: instance
+                        .get_value_for_xpath("time-properties-ds/ptp-timescale")?,
+                    time_source,
+                    domain_number: instance.get_value_for_xpath("default-ds/domain-number")?,
+                    gptp_profile,
+                }));
+            }
         }
     }
 
-    Err(anyhow!("PTP instance {} not found", instance_index))
+    Ok(None)
 }
 
-fn get_traffic_profile(tree: &DataTree, traffic_profile_name: &str) -> Result<TrafficProfile> {
+fn get_traffic_profile(
+    tree: &DataTree,
+    traffic_profile_name: &str,
+) -> Result<Option<TrafficProfile>> {
     let traffic_profiles = tree.find_xpath("/detnet/traffic-profile")?;
     for profile in traffic_profiles {
-        let name: String = profile.get_value_for_xpath("name")?;
+        if let Some(name) = profile.get_value_for_xpath::<String>("name")? {
+            if name == traffic_profile_name {
+                let max_pkts_per_interval: u32 = profile
+                    .get_value_for_xpath("traffic-spec/max-pkts-per-interval")?
+                    .ok_or_else(|| {
+                        anyhow!("Size can not be calculated since max-pkts-per-interval is missing")
+                    })?;
+                let max_payload_size: u32 = profile
+                    .get_value_for_xpath("traffic-spec/max-payload-size")?
+                    .ok_or_else(|| {
+                        anyhow!("Size can not be calculated since max-payload-size is missing")
+                    })?;
 
-        if name == traffic_profile_name {
-            let max_pkts_per_interval: u32 =
-                profile.get_value_for_xpath("traffic-spec/max-pkts-per-interval")?;
-            let max_payload_size: u32 =
-                profile.get_value_for_xpath("traffic-spec/max-payload-size")?;
+                return Ok(Some(TrafficProfile {
+                    period_ns: profile
+                        .get_value_for_xpath("traffic-spec/interval")?
+                        .ok_or_else(|| anyhow!("traffic-spec/interval is missing"))?,
 
-            return Ok(TrafficProfile {
-                period_ns: profile.get_value_for_xpath("traffic-spec/interval")?,
-
-                // TODO is that sufficient or do we need to incorporate inter-frame spacing, headers etc.?
-                size_bytes: max_pkts_per_interval
-                    .checked_mul(max_payload_size)
-                    .ok_or_else(|| anyhow!("overflow of slot size"))?,
-            });
+                    // TODO is that sufficient or do we need to incorporate inter-frame spacing, headers etc.?
+                    size_bytes: max_pkts_per_interval
+                        .checked_mul(max_payload_size)
+                        .ok_or_else(|| anyhow!("overflow of slot size"))?,
+                }));
+            }
         }
     }
 
-    Err(anyhow!("Traffic profile not found"))
+    Ok(None)
 }
 
-fn get_tsn_interface_config(tree: &DataTree, interface_name: &str) -> Result<TSNInterfaceConfig> {
+fn get_tsn_interface_config(
+    tree: &DataTree,
+    interface_name: &str,
+) -> Result<Option<TSNInterfaceConfig>> {
     let interface_configs = tree.find_xpath("/tsn-interface-configuration/interface-list")?;
     for interface_config in interface_configs {
-        let name: String = interface_config.get_value_for_xpath("interface-name")?;
-
-        if name == interface_name {
-            const DSTADDRPATH: &str = "config-list/ieee802-mac-addresses/destination-mac-address";
-            const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
-            const PCPPATH: &str = "config-list/ieee802-vlan-tag/priority-code-point";
-            let destination_address_string: String =
-                interface_config.get_value_for_xpath(DSTADDRPATH)?;
-            return Ok(TSNInterfaceConfig {
-                offset_ns: interface_config.get_value_for_xpath("config-list/time-aware-offset")?,
-                destination_address: destination_address_string.parse()?,
-                vid: interface_config.get_value_for_xpath(VLANIDPATH)?,
-                pcp: interface_config.get_value_for_xpath(PCPPATH)?,
-            });
+        if let Some(name) = interface_config.get_value_for_xpath::<String>("interface-name")? {
+            if name == interface_name {
+                const DSTADDRPATH: &str =
+                    "config-list/ieee802-mac-addresses/destination-mac-address";
+                const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
+                const PCPPATH: &str = "config-list/ieee802-vlan-tag/priority-code-point";
+                let destination_address = interface_config
+                    .get_value_for_xpath::<String>(DSTADDRPATH)?
+                    .map(|addr| addr.parse())
+                    .transpose()?;
+                return Ok(Some(TSNInterfaceConfig {
+                    offset_ns: interface_config
+                        .get_value_for_xpath("config-list/time-aware-offset")?,
+                    destination_address,
+                    vid: interface_config.get_value_for_xpath(VLANIDPATH)?,
+                    pcp: interface_config.get_value_for_xpath(PCPPATH)?,
+                }));
+            }
         }
     }
 
-    Err(anyhow!("TSN interface configuration not found"))
+    Ok(None)
 }
 
-fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<VLANInterface> {
+fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option<VLANInterface>> {
     let interfaces = tree.find_xpath("/interfaces/interface")?;
     for interface in interfaces {
-        let name: String = interface.get_value_for_xpath("name")?;
+        if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
+            if name == interface_name {
+                let addresses = interface
+                    .find_xpath("ipv4/address | ipv6/address")
+                    .ok()
+                    .map(|addrs| {
+                        addrs
+                            .map(|address| -> Result<(IpAddr, u8)> {
+                                let ip = address
+                                    .get_value_for_xpath::<String>("ip")?
+                                    .map(|addr| addr.parse::<IpAddr>())
+                                    .transpose()?
+                                    .ok_or_else(|| anyhow!("ip missing"))?;
+                                let prefix_length: u8 = address
+                                    .get_value_for_xpath("prefix-length")?
+                                    .ok_or_else(|| anyhow!("ip missing"))?;
 
-        if name == interface_name {
-            let addresses = interface
-                .find_xpath("ipv4/address | ipv6/address")
-                .ok()
-                .map(|addrs| {
-                    addrs
-                        .map(|address| -> Result<(IpAddr, u8)> {
-                            let ip = address
-                                .get_value_for_xpath::<String>("ip")?
-                                .parse::<IpAddr>()?;
-                            let prefix_length: u8 = address.get_value_for_xpath("prefix-length")?;
-                            Ok((ip, prefix_length))
-                        })
-                        .collect::<Result<Vec<(IpAddr, u8)>>>()
-                })
-                .transpose()?;
+                                Ok((ip, prefix_length))
+                            })
+                            .collect::<Result<Vec<(IpAddr, u8)>>>()
+                    })
+                    .transpose()?;
 
-            return Ok(VLANInterface {
-                name: interface_name.to_owned(),
-                physical_interface: interface.get_value_for_xpath("parent-interface")?,
-                addresses,
-            });
+                return Ok(Some(VLANInterface {
+                    name: interface_name.to_owned(),
+                    physical_interface: interface.get_value_for_xpath("parent-interface")?,
+                    addresses,
+                }));
+            }
         }
     }
 
-    Err(anyhow!("VLAN interface not found in configuration"))
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -406,10 +467,10 @@ mod tests {
         let interface = String::from("enp86s0");
         let vid = 5;
         assert_eq!(
-            config,
+            config.unwrap(),
             AppConfig {
-                logical_interface: format!("{interface}.{vid}"),
-                physical_interface: interface,
+                logical_interface: Some(format!("{interface}.{vid}")),
+                physical_interface: Some(interface),
                 period_ns: Some(2_000_000),
                 offset_ns: Some(0),
                 size_bytes: Some(15000),
@@ -438,10 +499,10 @@ mod tests {
         let interface = String::from("enp86s0");
         let vid = 5;
         assert_eq!(
-            config,
+            config.unwrap(),
             AppConfig {
-                logical_interface: format!("{interface}.{vid}"),
-                physical_interface: interface,
+                logical_interface: Some(format!("{interface}.{vid}")),
+                physical_interface: Some(interface),
                 period_ns: Some(2_000_000),
                 offset_ns: Some(0),
                 size_bytes: Some(15000),
@@ -455,21 +516,27 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "App flow not found")]
     fn test_get_app_config_missing() {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
-        sysrepo_config.get_app_config("somemissingapp").unwrap();
+        assert!(sysrepo_config
+            .get_app_config("somemissingapp")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
-    #[should_panic(expected = "config-list/time-aware-offset missing")]
-    fn test_get_app_config_invalid_file() {
+    fn test_get_app_config_missing_time_aware_offset() {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
         );
-        sysrepo_config.get_app_config("app0").unwrap();
+        assert!(sysrepo_config
+            .get_app_config("app0")
+            .unwrap()
+            .unwrap()
+            .offset_ns
+            .is_none());
     }
 
     #[test]
@@ -480,21 +547,21 @@ mod tests {
         let config = sysrepo_config.get_ptp_config(1)?;
 
         assert_eq!(
-            config,
+            config.unwrap(),
             PtpConfig {
-                clock_class: ClockClass::Default,
-                clock_accuracy: ClockAccuracy::TimeAccurateToGreaterThan10S,
-                offset_scaled_log_variance: 0xFFFF,
-                current_utc_offset: 37,
-                current_utc_offset_valid: true,
-                leap59: false,
-                leap61: false,
-                time_traceable: true,
-                frequency_traceable: false,
-                ptp_timescale: true,
-                time_source: TimeSource::InternalOscillator,
-                domain_number: 0,
-                gptp_profile: true,
+                clock_class: Some(ClockClass::Default),
+                clock_accuracy: Some(ClockAccuracy::TimeAccurateToGreaterThan10S),
+                offset_scaled_log_variance: Some(0xFFFF),
+                current_utc_offset: Some(37),
+                current_utc_offset_valid: Some(true),
+                leap59: Some(false),
+                leap61: Some(false),
+                time_traceable: Some(true),
+                frequency_traceable: Some(false),
+                ptp_timescale: Some(true),
+                time_source: Some(TimeSource::InternalOscillator),
+                domain_number: Some(0),
+                gptp_profile: Some(true),
             }
         );
         Ok(())

@@ -9,8 +9,8 @@
 //! use detnetctl::configuration::AppConfig;
 //!
 //! let app_config = AppConfig{
-//!     logical_interface: String::from("eth0.3"),
-//!     physical_interface: String::from("eth0"),
+//!     logical_interface: Some("eth0.3".to_owned()),
+//!     physical_interface: Some("eth0".to_owned()),
 //!     period_ns: Some(1000*100),
 //!     offset_ns: Some(0),
 //!     size_bytes: Some(1000),
@@ -27,7 +27,7 @@
 //! ```
 
 use crate::configuration;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 #[cfg(test)]
 use mockall::automock;
@@ -84,7 +84,11 @@ impl DummyQueueSetup {
 impl QueueSetup for DummyQueueSetup {
     fn apply_config(&self, config: &configuration::AppConfig) -> Result<QueueSetupResponse> {
         Ok(QueueSetupResponse {
-            logical_interface: config.logical_interface.clone(),
+            logical_interface: config
+                .logical_interface
+                .as_ref()
+                .ok_or_else(|| anyhow!("logical_interface missing"))?
+                .clone(),
             priority: self.priority,
         })
     }

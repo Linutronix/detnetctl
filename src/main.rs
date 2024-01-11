@@ -129,7 +129,13 @@ pub async fn main() -> Result<()> {
         if let Some(mgr) = &ptp_manager {
             mgr.lock()
                 .await
-                .apply_config(&configuration.lock().await.get_ptp_config(identity)?)
+                .apply_config(
+                    &configuration
+                        .lock()
+                        .await
+                        .get_ptp_config(identity)?
+                        .ok_or_else(|| anyhow!("No PTP config found for identity {identity}"))?,
+                )
                 .await?;
         } else {
             return Err(anyhow!("ptp feature not built in!"));

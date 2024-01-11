@@ -64,7 +64,11 @@ impl QueueSetup for DetdGateway {
             size: config
                 .size_bytes
                 .ok_or_else(|| anyhow!("Size is required for detd!"))?,
-            interface: config.physical_interface.clone(),
+            interface: config
+                .physical_interface
+                .as_ref()
+                .ok_or_else(|| anyhow!("physical_interface missing"))?
+                .clone(),
             dmac: config
                 .destination_address
                 .ok_or_else(|| anyhow!("Destination address is required for detd!"))?
@@ -112,7 +116,12 @@ impl QueueSetup for DetdGateway {
             ));
         }
 
-        if response.vlan_interface != config.logical_interface {
+        if &response.vlan_interface
+            != config
+                .logical_interface
+                .as_ref()
+                .ok_or_else(|| anyhow!("logical_interface missing"))?
+        {
             return Err(anyhow!(
                 "Interface returned from NIC setup does not match VLAN interface in configuration!"
             ));
@@ -173,8 +182,8 @@ mod tests {
 
     fn generate_app_config(offset: u32) -> configuration::AppConfig {
         configuration::AppConfig {
-            logical_interface: String::from("eth0.3"),
-            physical_interface: String::from("eth0"),
+            logical_interface: Some("eth0.3".to_owned()),
+            physical_interface: Some("eth0".to_owned()),
             period_ns: Some(1000 * 100),
             offset_ns: Some(offset),
             size_bytes: Some(1000),
