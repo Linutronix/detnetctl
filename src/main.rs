@@ -30,7 +30,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use detnetctl::configuration::{Configuration, YAMLConfiguration};
+use detnetctl::configuration::{Configuration, MergedConfiguration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Protection, Setup};
 use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
@@ -72,10 +72,6 @@ struct Cli {
     #[arg(short, long, value_parser, value_name = "APP:CGROUP")]
     protect: Vec<ProtectRequest>,
 
-    /// Use YAML configuration with the provided file. Otherwise, uses sysrepo.
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
-
     /// Skip queue setup and use the given priority for all streams
     #[arg(long, value_name = "PRIORITY")]
     no_queue_setup: Option<u32>,
@@ -92,9 +88,17 @@ struct Cli {
     #[arg(long)]
     no_interface_setup: bool,
 
+    /// Load Sysrepo configuration
+    #[arg(short, long)]
+    sysrepo: bool,
+
     /// Configure PTP for the given instance
     #[arg(short = 'i', long, value_name = "INSTANCE")]
     ptp_instance: Option<u32>,
+
+    /// YAML configuration file. Mandatory if --sysrepo is not provided. If both is provided, configuration of file and sysrepo is merged.
+    #[arg(value_name = "FILE", required_unless_present = "sysrepo")]
+    config: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -115,13 +119,20 @@ pub async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let configuration = match cli.config {
-        Some(file) => {
-            let mut c = YAMLConfiguration::new();
-            c.read(File::open(file)?)?;
-            Arc::new(Mutex::new(c))
+    let configuration: Arc<Mutex<dyn Configuration + Send>> = if let Some(file) = cli.config {
+        let mut yaml_configuration = YAMLConfiguration::new();
+        yaml_configuration.read(File::open(file)?)?;
+
+        if cli.sysrepo {
+            Arc::new(Mutex::new(MergedConfiguration::new(
+                new_sysrepo_config_box()?,
+                Box::new(yaml_configuration),
+            )))
+        } else {
+            Arc::new(Mutex::new(yaml_configuration))
         }
-        None => new_sysrepo_config()?,
+    } else {
+        new_sysrepo_config_arc_mutex()?
     };
 
     let ptp_manager = new_ptp_manager();
@@ -297,13 +308,21 @@ fn new_bpf_dispatcher(_debug_output: bool) -> Result<Arc<Mutex<dyn Dispatcher + 
 #[cfg(feature = "sysrepo")]
 use detnetctl::configuration::SysrepoConfiguration;
 #[cfg(feature = "sysrepo")]
-fn new_sysrepo_config() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
+fn new_sysrepo_config_box() -> Result<Box<dyn Configuration + Send>> {
+    Ok(Box::new(SysrepoConfiguration::new()?))
+}
+#[cfg(feature = "sysrepo")]
+fn new_sysrepo_config_arc_mutex() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
     Ok(Arc::new(Mutex::new(SysrepoConfiguration::new()?)))
 }
 
 #[cfg(not(feature = "sysrepo"))]
-fn new_sysrepo_config() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
-    Err(feature_missing_error("sysrepo", "--config"))
+fn new_sysrepo_config_box() -> Result<Box<dyn Configuration + Send>> {
+    Err(feature_missing_error("sysrepo", "a YAML file"))
+}
+#[cfg(not(feature = "sysrepo"))]
+fn new_sysrepo_config_arc_mutex() -> Result<Arc<Mutex<dyn Configuration + Send>>> {
+    Err(feature_missing_error("sysrepo", "a YAML file"))
 }
 
 #[cfg(feature = "detd")]

@@ -157,7 +157,7 @@ ptp:
 and then apply it with
 
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --oneshot
+sudo ./target/debug/detnetctl --oneshot myconfig.yml 
 ```
 
 Configure `ptp4l` to use the respective VLAN interface, e.g.

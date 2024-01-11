@@ -3,10 +3,12 @@
 //
 #![allow(clippy::as_conversions)] // for Serialize_repr
 
+use crate::configuration::ReplaceNoneOptions;
 /// PTP Data Model
 /// Elements and descriptions taken from IEEE Std 1588 and its corresponding YANG model
 use anyhow::{anyhow, Error, Result};
 use num_derive::{FromPrimitive, ToPrimitive};
+use replace_none_options_derive::ReplaceNoneOptions;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::str::FromStr;
@@ -367,7 +369,7 @@ impl FromStr for TimeSource {
 }
 
 /// Configuration for PTP Grandmaster
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, ReplaceNoneOptions)]
 #[allow(clippy::struct_excessive_bools)]
 #[serde(deny_unknown_fields)]
 pub struct PtpConfig {

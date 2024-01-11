@@ -31,15 +31,22 @@
 use crate::ptp::PtpConfig;
 use anyhow::Result;
 use eui48::MacAddress;
+use replace_none_options_derive::ReplaceNoneOptions;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+
+/// Merge two structs by replacing None options with the fallback
+pub trait ReplaceNoneOptions {
+    /// Replace all options that are None with the corresponding value from fallback
+    fn replace_none_options(&mut self, fallback: Self);
+}
 
 #[cfg(test)]
 use mockall::automock;
 
 /// Contains the configuration for a TSN/DetNet application
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, ReplaceNoneOptions)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
@@ -142,3 +149,6 @@ pub use yaml::YAMLConfiguration;
 mod sysrepo;
 #[cfg(feature = "sysrepo")]
 pub use self::sysrepo::SysrepoConfiguration;
+
+mod merged;
+pub use merged::MergedConfiguration;

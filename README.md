@@ -25,7 +25,7 @@ The features are introduced one by one below, but you should be able to mix and 
 - [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature
 - [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
-- [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, alternative to `--config` with YAML file
+- [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, if requested with `--sysrepo`
 
 ## License
 
@@ -40,17 +40,21 @@ Please note that `detnetctl` has several dependencies with their own licenses. T
 ```console
 A TSN/DetNet Node Controller with Interference Protection
 
-Usage: detnetctl [OPTIONS]
+Usage: detnetctl [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  YAML configuration file. Mandatory if --sysrepo is not provided. If both is provided, configuration of
+          file and sysrepo is merged
 
 Options:
   -o, --oneshot                    Oneshot setup, i.e. do not spawn D-Bus service
   -p, --protect <APP:CGROUP>       At startup, restrict the access to an app to the provided cgroup separated by a
                                    colon (e.g. -p app0:/user.slice/). can be provided multiple times
-  -c, --config <FILE>              Use YAML configuration with the provided file. Otherwise, uses sysrepo
       --no-queue-setup <PRIORITY>  Skip queue setup and use the given priority for all streams
       --no-dispatcher              Skip installing eBPFs - no interference protection!
       --bpf-debug-output           Print eBPF debug output to kernel tracing
       --no-interface-setup         Skip setting up the link
+  -s, --sysrepo                    Load Sysrepo configuration
   -i, --ptp-instance <INSTANCE>    Configure PTP for the given instance
   -h, --help                       Print help
   -V, --version                    Print version
@@ -73,7 +77,7 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl -c config/yaml/example.yml --no-queue-setup 3 --no-dispatcher --no-interface-setup --oneshot --protect app0:/user.slice/
+./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher --no-interface-setup --oneshot --protect app0:/user.slice/ config/yaml/example.yml
 ```
 
 This will only read the configurations from the configuration file, performs a dry run setup as well as pretending to installing protection for `app0` and prints out for example the following output:
@@ -82,8 +86,12 @@ This will only read the configurations from the configuration file, performs a d
 Setup of DetNet system
   Fetched from configuration module: {
     "app0": AppConfig {
-        logical_interface: "enp86s0.5",
-        physical_interface: "enp86s0",
+        logical_interface: Some(
+            "enp86s0.5",
+        ),
+        physical_interface: Some(
+            "enp86s0",
+        ),
         period_ns: Some(
             100000,
         ),
@@ -112,8 +120,12 @@ Setup of DetNet system
         ),
     },
     "app1": AppConfig {
-        logical_interface: "enp86s0.3",
-        physical_interface: "enp86s0",
+        logical_interface: Some(
+            "enp86s0.3",
+        ),
+        physical_interface: Some(
+            "enp86s0",
+        ),
         period_ns: Some(
             200000,
         ),
@@ -169,11 +181,15 @@ Setup of DetNet system
   No IP address configured, since none was provided
   Interface enp86s0 up
   Interface enp86s0.3 up
-  Finished after 249.7µs
+  Finished after 1.1ms
 Request to protect app0
   Fetched from configuration module: AppConfig {
-    logical_interface: "enp86s0.5",
-    physical_interface: "enp86s0",
+    logical_interface: Some(
+        "enp86s0.5",
+    ),
+    physical_interface: Some(
+        "enp86s0",
+    ),
     period_ns: Some(
         100000,
     ),
@@ -249,7 +265,7 @@ apps:
 
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 2 --no-dispatcher --no-interface-setup
+sudo ./target/debug/detnetctl --no-queue-setup 2 --no-dispatcher --no-interface-setup  myconfig.yml
 ```
 
 `sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
@@ -300,7 +316,7 @@ cargo build --no-default-features --features dbus,netlink
 ### Run
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3 --no-dispatcher
+sudo ./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher myconfig.yml 
 ```
 And in a second terminal
 ```console
@@ -345,7 +361,7 @@ cargo build --no-default-features --features dbus,netlink,bpf
 ### Run
 Start the service with
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3 --bpf-debug-output
+sudo ./target/debug/detnetctl --no-queue-setup 3 --bpf-debug-output myconfig.yml
 ```
 Then in a second terminal start the sample application with
 ```console
@@ -398,7 +414,7 @@ The most important setting that ensures the configuration is applied correctly i
 
 Then start detnetctl for YAML configuration as
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml --no-queue-setup 3 --ptp-instance 1
+sudo ./target/debug/detnetctl --no-queue-setup 3 --ptp-instance 1 myconfig.yml
 ```
 
 At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.
@@ -448,7 +464,7 @@ cargo build --no-default-features --features dbus,netlink,bpf,ptp,detd
 
 ### Run
 ```console
-sudo ./target/debug/detnetctl -c myconfig.yml
+sudo ./target/debug/detnetctl myconfig.yml
 ```
 
 Note that currently detd does not reset the TAPRIO configuration, so to retry you also have to restart detd if it would otherwise lead to conflicts.
@@ -511,7 +527,7 @@ sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
 
 Restart `detd` as explained above, then start detnetctl as
 ```console
-sudo ./target/debug/detnetctl
+sudo ./target/debug/detnetctl --sysrepo
 ```
 as well as the application like before.
 

@@ -40,6 +40,10 @@ clap = { version = "4.2.0", features = ["derive","wrap_help","cargo"] }
 
 futures = "0.3.11"
 
+# Automatically derive ReplaceNoneOptions trait
+# Needs to be in a separate crate since it is a proc-macro
+replace_none_options_derive = { path = "src/configuration/merged/replace_none_options_derive" }
+
 ### dbus feature
 # From github to include the set_sender feature just merged TODO replace when released
 dbus = { git = "https://github.com/diwic/dbus-rs", branch = "master", optional = true }

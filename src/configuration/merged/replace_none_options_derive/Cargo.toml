@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "replace_none_options_derive"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quote = "1.0"
+syn = "1.0"
+
+[lib]
+proc-macro = true
+
