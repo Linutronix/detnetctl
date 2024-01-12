@@ -487,7 +487,13 @@ sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot
 sudo sysrepoctl -i config/yang/ietf-detnet.yang
 sudo sysrepoctl -i config/yang/schemas/standard/iana/iana-if-type@2023-01-26.yang
 sudo sysrepoctl -i config/yang/schemas/experimental/ietf-extracted-YANG-modules/ietf-if-extensions@2023-01-26.yang -e sub-interfaces
+sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-ip.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-tsn-types.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1cb-stream-identification-types.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1cb-stream-identification.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-bridge.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-sched.yang
+sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-sched-bridge.yang
 sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
 ```
 
