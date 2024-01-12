@@ -4,17 +4,20 @@
 //
 //! Provides sysrepo-based network configuration (for NETCONF integration)
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use std::collections::HashMap;
 
-use crate::configuration::{AppConfig, Configuration, TsnInterfaceConfig};
+use crate::configuration::{
+    schedule::{GateControlEntry, GateControlEntryBuilder, GateOperation},
+    AppConfig, Configuration, Schedule, ScheduleBuilder, TsnInterfaceConfig,
+};
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
 };
 use eui48::MacAddress;
 use std::net::IpAddr;
 use std::str::FromStr;
-use yang2::data::{Data, DataTree};
+use yang2::data::{Data, DataNodeRef, DataTree};
 
 mod helper;
 use crate::configuration::sysrepo::helper::{FromDataValue, GetValueForXPath, SysrepoReader};
@@ -56,13 +59,55 @@ struct VLANInterface {
 
 impl Configuration for SysrepoConfiguration {
     fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
-        Ok(HashMap::default())
+        let tree = self.reader.get_config("/interfaces")?;
+        let interfaces = tree.find_xpath(concat!(
+            "/interfaces/interface[",
+            "ieee802-dot1q-bridge:bridge-port/",
+            "ieee802-dot1q-sched-bridge:gate-parameter-table/",
+            "admin-control-list/gate-control-entry]"
+        ))?;
+
+        interfaces
+            .into_iter()
+            .try_fold(HashMap::new(), |mut acc, interface| {
+                if let Some(bridge_port) = interface
+                    .find_xpath("ieee802-dot1q-bridge:bridge-port")?
+                    .next()
+                {
+                    if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
+                        let tsn_interface_config = TsnInterfaceConfig {
+                            schedule: Some(parse_schedule(&bridge_port)?),
+                        };
+                        acc.insert(name, tsn_interface_config);
+                    }
+                }
+
+                Ok(acc)
+            })
     }
 
-    fn get_interface_config(
-        &mut self,
-        _interface_name: &str,
-    ) -> Result<Option<TsnInterfaceConfig>> {
+    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
+        let tree = self.reader.get_config("/interfaces")?;
+        let interfaces = tree.find_xpath("/interfaces/interface")?;
+
+        for interface in interfaces {
+            if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
+                if name == interface_name {
+                    let tsn_interface_config = TsnInterfaceConfig {
+                        schedule: Some(parse_schedule(
+                            &interface
+                                .find_xpath("ieee802-dot1q-bridge:bridge-port")?
+                                .next()
+                                .ok_or_else(|| {
+                                    anyhow!("bridge-port section not found for interface")
+                                })?,
+                        )?),
+                    };
+                    return Ok(Some(tsn_interface_config));
+                }
+            }
+        }
+
         Ok(None)
     }
 
@@ -101,18 +146,18 @@ impl Configuration for SysrepoConfiguration {
     /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
     /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
-        let cfg = self
-            .reader
-            .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+        let cfg = self.reader.get_config(
+            "/detnet | /tsn-interface-configuration | /interfaces | /stream-identity",
+        )?;
         get_app_flow(&cfg, app_name)?
             .map(|app_flow| get_app_config_from_app_flow(&cfg, app_name, &app_flow))
             .transpose()
     }
 
     fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>> {
-        let cfg = self
-            .reader
-            .get_config("/detnet | /tsn-interface-configuration | /interfaces")?;
+        let cfg = self.reader.get_config(
+            "/detnet | /tsn-interface-configuration | /interfaces | /stream-identity",
+        )?;
         get_app_flows(&cfg)?
             .iter()
             .map(|(app_name, app_flow)| {
@@ -477,6 +522,95 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option
     }
 
     Ok(None)
+}
+
+fn parse_schedule(tree: &DataNodeRef<'_>) -> Result<Schedule> {
+    let mut schedule = ScheduleBuilder::new();
+    let tc_table = tree.find_xpath("traffic-class/traffic-class-table")?.next();
+
+    // --- number_of_traffic_classes ---
+    schedule = schedule.number_of_traffic_classes_opt(
+        tc_table
+            .as_ref()
+            .map(|tab| tab.get_value_for_xpath("number-of-traffic-classes"))
+            .transpose()?
+            .flatten(),
+    );
+
+    // --- priority_map ---
+    let mut priority_map = HashMap::<u8, u8>::default();
+    if let Some(tcs) = tc_table {
+        for prio in 0..8 {
+            if let Some(tc) = tcs.get_value_for_xpath(&format!("priority{prio}"))? {
+                priority_map.insert(prio, tc);
+            }
+        }
+    }
+
+    if !priority_map.is_empty() {
+        schedule = schedule.priority_map(priority_map);
+    }
+
+    // --- basetime_ns and control_list ---
+    if let Some(gates) = tree
+        .find_xpath("ieee802-dot1q-sched-bridge:gate-parameter-table")?
+        .next()
+    {
+        // -- basetime_ns --
+        schedule = schedule.basetime_ns_opt(
+            gates
+                .get_value_for_xpath::<u64>("admin-base-time/seconds")?
+                .map(|mut btime| {
+                    btime *= 1_000_000_000;
+
+                    Ok::<u64, Error>(
+                        gates
+                            .get_value_for_xpath::<u32>("admin-base-time/nanoseconds")?
+                            .map_or_else(|| btime, |nanoseconds| btime + u64::from(nanoseconds)),
+                    )
+                })
+                .transpose()?,
+        );
+
+        // -- control_list --
+        schedule = schedule.control_list(
+            gates
+                .find_xpath("admin-control-list/gate-control-entry")?
+                .map(|entry| {
+                    let operation = entry
+                        .get_value_for_xpath::<String>("operation-name")?
+                        .map(|operation_name| {
+                            operation_name
+                                .split(':')
+                                .last()
+                                .map(|last_part| match last_part {
+                                    "set-gate-states" => Ok(GateOperation::SetGates),
+                                    "set-and-hold-mac" => Ok(GateOperation::SetAndHold),
+                                    "set-and-release-mac" => Ok(GateOperation::SetAndRelease),
+                                    _ => Err(anyhow!("Cannot parse operation-name {last_part}")),
+                                })
+                                .transpose()?
+                                .ok_or_else(|| anyhow!("Cannot parse operation-name"))
+                        })
+                        .transpose()?;
+
+                    Ok(GateControlEntryBuilder::new()
+                        .operation_opt(operation)
+                        .time_interval_ns_opt(entry.get_value_for_xpath("time-interval-value")?)
+                        .traffic_classes_opt(
+                            entry
+                                .get_value_for_xpath::<u8>("gate-states-value")?
+                                .map(|bitmask| {
+                                    (0..8).filter(|&i| (bitmask & (1 << i)) != 0).collect()
+                                }),
+                        )
+                        .build())
+                })
+                .collect::<Result<Vec<GateControlEntry>>>()?,
+        );
+    }
+
+    Ok(schedule.build())
 }
 
 #[cfg(test)]
