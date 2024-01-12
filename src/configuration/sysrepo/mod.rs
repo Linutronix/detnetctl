@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 
-use crate::configuration::{AppConfig, Configuration};
+use crate::configuration::{AppConfig, Configuration, TsnInterfaceConfig};
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
 };
@@ -55,6 +55,17 @@ struct VLANInterface {
 }
 
 impl Configuration for SysrepoConfiguration {
+    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
+        Ok(HashMap::default())
+    }
+
+    fn get_interface_config(
+        &mut self,
+        _interface_name: &str,
+    ) -> Result<Option<TsnInterfaceConfig>> {
+        Ok(None)
+    }
+
     /// Get and parse configuration
     ///
     /// IP/MPLS over TSN is explicitly out of scope of the current version of the DetNet YANG model

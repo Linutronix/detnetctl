@@ -13,7 +13,7 @@ license = "GPL-3.0-or-later"
 [features]
 default = ["dbus", "bpf", "detd", "sysrepo", "netlink", "ptp"]
 dbus = ["dep:dbus", "dep:dbus-crossroads", "dep:dbus-tokio", "dep:async-shutdown"]
-bpf = ["dep:libbpf-rs", "dep:libbpf-cargo", "dep:log", "dep:nix"]
+bpf = ["dep:libbpf-rs", "dep:libbpf-cargo", "dep:nix"]
 detd = ["dep:bytes", "dep:prost"]
 sysrepo = ["dep:sysrepo", "dep:yang2", "dep:ipnet"]
 netlink = ["dep:rtnetlink","dep:ethtool","dep:netlink-packet-route"]
@@ -32,6 +32,7 @@ chrono = "0.4.24"
 rand = "0.8.5"
 regex = "1.8.4"
 semver = "1.0.21"
+log = "0.4.17"
 
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = { version = "0.9" }
@@ -55,7 +56,6 @@ async-shutdown = { version = "0.1.2", optional = true }
 
 ### bpf feature
 libbpf-rs = { version = "0.21.2", optional = true }
-log = { version = "0.4.17", optional = true }
 nix = { version = "0.24", default-features = false, features = ["net", "user", "time", "poll"], optional = true }
 
 ### detd feature
