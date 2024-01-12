@@ -111,6 +111,7 @@ mod tests {
                     64,
                 ),
             ]),
+            cgroup: None,
         };
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",

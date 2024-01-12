@@ -48,8 +48,6 @@ Arguments:
 
 Options:
   -o, --oneshot                    Oneshot setup, i.e. do not spawn D-Bus service
-  -p, --protect <APP:CGROUP>       At startup, restrict the access to an app to the provided cgroup separated by a
-                                   colon (e.g. -p app0:/user.slice/). can be provided multiple times
       --no-queue-setup <PRIORITY>  Skip queue setup and use the given priority for all streams
       --no-dispatcher              Skip installing eBPFs - no interference protection!
       --bpf-debug-output           Print eBPF debug output to kernel tracing
@@ -77,7 +75,7 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher --no-interface-setup --no-ptp-config --oneshot --protect app0:/user.slice/ config/yaml/example.yml
+./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher --no-interface-setup --no-ptp-config --oneshot config/yaml/example.yml
 ```
 
 This will only read the configurations from the configuration file, performs a dry run setup as well as pretending to installing protection for `app0` and prints out for example the following output:
@@ -118,6 +116,9 @@ Setup of DetNet system
                 ),
             ],
         ),
+        cgroup: Some(
+            "/user.slice/",
+        ),
     },
     "app1": AppConfig {
         logical_interface: Some(
@@ -145,6 +146,7 @@ Setup of DetNet system
             2,
         ),
         addresses: None,
+        cgroup: None,
     },
 }
   Interface enp86s0 down
@@ -160,6 +162,7 @@ Setup of DetNet system
         5,
     ),
 } with priority 3 on enp86s0
+  with protection for cgroup "/user.slice/"
   VLAN interface enp86s0.5 properly configured
   Added 10.5.1.1/24 to enp86s0.5
   Interface enp86s0 up
@@ -181,50 +184,7 @@ Setup of DetNet system
   No IP address configured, since none was provided
   Interface enp86s0 up
   Interface enp86s0.3 up
-  Finished after 1.1ms
-Request to protect app0
-  Fetched from configuration module: AppConfig {
-    logical_interface: Some(
-        "enp86s0.5",
-    ),
-    physical_interface: Some(
-        "enp86s0",
-    ),
-    period_ns: Some(
-        100000,
-    ),
-    offset_ns: Some(
-        0,
-    ),
-    size_bytes: Some(
-        1000,
-    ),
-    destination_address: Some(
-        MacAddress("48:21:0b:56:db:da"),
-    ),
-    vid: Some(
-        5,
-    ),
-    pcp: Some(
-        3,
-    ),
-    addresses: Some(
-        [
-            (
-                10.5.1.1,
-                24,
-            ),
-        ],
-    ),
-}
-  Protection installed for stream StreamIdentification {
-    destination_address: Some(
-        MacAddress("48:21:0b:56:db:da"),
-    ),
-    vlan_identifier: Some(
-        5,
-    ),
-} on enp86s0
+  Finished after 1.5ms
 ```
 
 ## D-Bus Interface

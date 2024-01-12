@@ -225,6 +225,7 @@ fn get_app_config_from_app_flow(
         addresses: logical_interface
             .as_ref()
             .and_then(|iface| iface.addresses.clone()),
+        cgroup: None,
     })
 }
 
@@ -488,7 +489,8 @@ mod tests {
                         IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
                         64
                     )
-                ])
+                ]),
+                cgroup: None,
             }
         );
         Ok(())
@@ -514,7 +516,8 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
                 pcp: Some(3),
-                addresses: Some(vec![])
+                addresses: Some(vec![]),
+                cgroup: None,
             }
         );
         Ok(())

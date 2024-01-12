@@ -19,7 +19,8 @@
 //!     pcp: Some(4),
 //!     addresses: Some(vec![
 //!         ("192.168.3.3".parse()?, 16)
-//!     ])
+//!     ]),
+//!     cgroup: None,
 //! };
 //! let mut queue_setup = DetdGateway::new(None, None);
 //! let response = queue_setup.apply_config(&app_config)?;

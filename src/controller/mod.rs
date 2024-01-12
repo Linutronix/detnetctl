@@ -49,7 +49,7 @@ use crate::queue_setup::QueueSetup;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::lock::Mutex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::Instant;
 
@@ -235,13 +235,20 @@ async fn setup(
             &stream_id,
             queue_setup_response.priority,
             app_config.pcp,
-            None,
+            app_config
+                .cgroup
+                .as_ref()
+                .map(|c| <PathBuf as AsRef<Path>>::as_ref(c).into()),
         )
         .context("Installing protection via the dispatcher failed")?;
     println!(
         "  Dispatcher installed for stream {:#?} with priority {} on {}",
         stream_id, queue_setup_response.priority, physical_interface
     );
+
+    if let Some(cgroup) = &app_config.cgroup {
+        println!("  with protection for cgroup {cgroup:?}");
+    }
 
     // Setup logical interface
     if let Some(vid) = app_config.vid {
@@ -310,6 +317,7 @@ mod tests {
             vid: Some(vid),
             pcp: Some(4),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
+            cgroup: None,
         }
     }
 

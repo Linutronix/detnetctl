@@ -35,6 +35,7 @@ use replace_none_options_derive::ReplaceNoneOptions;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 /// Merge two structs by replacing None options with the fallback
 pub trait ReplaceNoneOptions {
@@ -85,6 +86,9 @@ pub struct AppConfig {
 
     /// IP addresses and prefix lengths of the logical interface
     pub addresses: Option<Vec<(IpAddr, u8)>>,
+
+    /// Allow only processes within this cgroup to generate traffic for this app
+    pub cgroup: Option<PathBuf>,
 }
 
 mod serialize_mac_address {

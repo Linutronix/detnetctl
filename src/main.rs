@@ -31,33 +31,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use detnetctl::configuration::{Configuration, MergedConfiguration, YAMLConfiguration};
-use detnetctl::controller::{Controller, Protection, Setup};
+use detnetctl::controller::{Controller, Setup};
 use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
 use detnetctl::ptp::Ptp;
 use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
-
-#[derive(Debug, Clone)]
-struct ProtectRequest {
-    app_name: String,
-    cgroup: PathBuf,
-}
-
-impl std::str::FromStr for ProtectRequest {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: [&str; 2] = s
-            .split(':')
-            .collect::<Vec<&str>>()
-            .try_into()
-            .map_err(|_| anyhow!("No single : to separate app and cgroup"))?;
-        Ok(Self {
-            app_name: parts[0].into(),
-            cgroup: parts[1].into(),
-        })
-    }
-}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -66,11 +44,6 @@ struct Cli {
     /// Oneshot setup, i.e. do not spawn D-Bus service
     #[arg(short, long)]
     oneshot: bool,
-
-    /// At startup, restrict the access to an app to the provided cgroup separated by a colon (e.g. -p app0:/user.slice/).
-    /// can be provided multiple times
-    #[arg(short, long, value_parser, value_name = "APP:CGROUP")]
-    protect: Vec<ProtectRequest>,
 
     /// Skip queue setup and use the given priority for all streams
     #[arg(long, value_name = "PRIORITY")]
@@ -187,18 +160,6 @@ pub async fn main() -> Result<()> {
         )
         .await?;
 
-    // Protect all apps provided via CLI
-    for protect in cli.protect {
-        controller
-            .protect(
-                &protect.app_name,
-                &protect.cgroup,
-                configuration.clone(),
-                dispatcher.clone(),
-            )
-            .await?;
-    }
-
     // Spawn D-Bus service if requested
     if !cli.oneshot {
         spawn_dbus_service(
@@ -221,6 +182,7 @@ fn feature_missing_error(feature: &str, alternative: &str) -> Error {
 #[cfg(feature = "dbus")]
 use {
     async_shutdown::Shutdown,
+    detnetctl::controller::Protection,
     detnetctl::facade::{
         Facade, ProtectCallback, ProtectFuture, PtpStatusCallback, PtpStatusFuture,
         Setup as FacadeSetup,

@@ -191,6 +191,7 @@ mod tests {
             vid: Some(3),
             pcp: Some(4),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
+            cgroup: None,
         }
     }
 
