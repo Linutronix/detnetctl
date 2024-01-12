@@ -46,11 +46,11 @@ impl NetlinkSetup {
         }
     }
 
-    async fn get_interface_index(interface: &str, handle: &Handle) -> Result<u32> {
-        match Self::get_interface(interface, handle).await {
-            Some(link) => Ok(link.header.index),
-            None => Err(anyhow!("no link {} found", interface)),
-        }
+    /// Get the index for the given interface name
+    pub async fn get_interface_index(interface: &str, handle: &Handle) -> Option<u32> {
+        Self::get_interface(interface, handle)
+            .await
+            .map(|link| link.header.index)
     }
 
     async fn get_interface_speed(
@@ -85,7 +85,9 @@ impl InterfaceSetup for NetlinkSetup {
             let (connection, handle, _) = rtnetlink::new_connection()?;
             tokio::spawn(connection);
 
-            let idx = Self::get_interface_index(interface, &handle).await?;
+            let idx = Self::get_interface_index(interface, &handle)
+                .await
+                .ok_or_else(|| anyhow!("No interface {interface} found"))?;
 
             let set_request = handle.link().set(idx);
             match state {
@@ -124,7 +126,9 @@ impl InterfaceSetup for NetlinkSetup {
         let (connection, handle, _) = rtnetlink::new_connection()?;
         tokio::spawn(connection);
 
-        let idx = Self::get_interface_index(interface, &handle).await?;
+        let idx = Self::get_interface_index(interface, &handle)
+            .await
+            .ok_or_else(|| anyhow!("No interface {interface} found"))?;
 
         handle
             .address()
@@ -150,7 +154,9 @@ impl InterfaceSetup for NetlinkSetup {
             return validate_link(&link, vlan_interface, vid);
         }
 
-        let parent_idx = Self::get_interface_index(parent_interface, &handle).await?;
+        let parent_idx = Self::get_interface_index(parent_interface, &handle)
+            .await
+            .ok_or_else(|| anyhow!("No parent interface {parent_interface} found"))?;
 
         let mut request = handle
             .link()

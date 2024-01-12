@@ -33,6 +33,11 @@ use anyhow::Result;
 #[cfg(test)]
 use mockall::automock;
 
+#[cfg(feature = "netlink")]
+mod taprio;
+#[cfg(feature = "netlink")]
+pub use taprio::TaprioSetup;
+
 /// Configuration returned from the queue setup specifying how to setup the socket
 #[derive(Debug)]
 pub struct QueueSetupResponse {

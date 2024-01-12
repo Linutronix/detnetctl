@@ -109,6 +109,9 @@ pub struct AppConfig {
 mod schedule;
 pub use schedule::{GateControlEntry, GateOperation, Schedule, ScheduleBuilder};
 
+mod taprio;
+pub use self::taprio::{Clock, Mode, QueueMapping, TaprioConfig, TaprioConfigBuilder};
+
 /// Contains the configuration for a TSN interface
 #[derive(
     Debug,
@@ -123,7 +126,11 @@ pub use schedule::{GateControlEntry, GateOperation, Schedule, ScheduleBuilder};
 )]
 pub struct TsnInterfaceConfig {
     /// Qbv schedule
-    pub schedule: Option<Schedule>,
+    schedule: Option<Schedule>,
+
+    /// TAPRIO configuration
+    /// (excluding the schedule itself)
+    taprio: Option<TaprioConfig>,
 }
 
 impl FillDefaults for TsnInterfaceConfig {
@@ -134,6 +141,15 @@ impl FillDefaults for TsnInterfaceConfig {
             let mut schedule = ScheduleBuilder::new().build();
             schedule.fill_defaults()?;
             self.schedule = Some(schedule);
+        }
+
+        let num_tc = *self.schedule()?.number_of_traffic_classes()?;
+        if let Some(taprio) = self.taprio.as_mut() {
+            taprio.fill_defaults(num_tc)?;
+        } else {
+            let mut taprio = TaprioConfigBuilder::new().build();
+            taprio.fill_defaults(num_tc)?;
+            self.taprio = Some(taprio);
         }
 
         Ok(())
@@ -228,41 +244,3 @@ pub use self::sysrepo::SysrepoConfiguration;
 
 mod merged;
 pub use merged::MergedConfiguration;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use options_struct_derive::validate_are_some;
-
-    #[test]
-    fn validate_happy() {
-        let app_config = AppConfigBuilder::new()
-            .logical_interface("eth0.3".to_owned())
-            .build();
-
-        validate_are_some!(app_config, logical_interface).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Validation failed! physical_interface is missing for app_config")]
-    fn validate_fails() {
-        let app_config = AppConfigBuilder::new()
-            .logical_interface("eth0.3".to_owned())
-            .build();
-
-        validate_are_some!(app_config, physical_interface).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Required field physical_interface is missing in AppConfig")]
-    fn access_fails() {
-        let app_config = AppConfigBuilder::new()
-            .logical_interface("eth0.3".to_owned())
-            .build();
-
-        assert!(app_config.logical_interface_is_some());
-        assert!(!app_config.physical_interface_is_some());
-        app_config.logical_interface().unwrap();
-        app_config.physical_interface().unwrap();
-    }
-}

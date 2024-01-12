@@ -77,6 +77,7 @@ impl Configuration for SysrepoConfiguration {
                     if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
                         let tsn_interface_config = TsnInterfaceConfig {
                             schedule: Some(parse_schedule(&bridge_port)?),
+                            taprio: None,
                         };
                         acc.insert(name, tsn_interface_config);
                     }
@@ -102,6 +103,7 @@ impl Configuration for SysrepoConfiguration {
                                     anyhow!("bridge-port section not found for interface")
                                 })?,
                         )?),
+                        taprio: None,
                     };
                     return Ok(Some(tsn_interface_config));
                 }
