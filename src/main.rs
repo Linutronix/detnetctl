@@ -87,6 +87,10 @@ struct Cli {
 /// but still stopping of the execution in rare cases can not be
 /// excluded (e.g. due to external crates). Therefore, make sure
 /// a proper restart is configured (e.g. `Restart=` for `systemd`).
+///
+/// # Panics
+/// The only known case is when the tokio runtime can not even be started
+/// before calling the actual main function.
 pub async fn main() -> Result<()> {
     env_logger::init();
 

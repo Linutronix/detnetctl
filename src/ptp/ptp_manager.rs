@@ -353,8 +353,8 @@ impl Ptp for PtpManager {
         println!("Sending {msg}");
 
         let dest_addr = Path::new(PTP_SOCK).to_owned();
-        let mut uds_fd = UnixDatagram::bind("")?;
-        let response: GrandmasterSettingsNp = send_wait_recv(&mut uds_fd, &dest_addr, &msg)
+        let uds_fd = UnixDatagram::bind("")?;
+        let response: GrandmasterSettingsNp = send_wait_recv(&uds_fd, &dest_addr, &msg)
             .with_context(|| {
                 let has_gptp = if gptp_profile { "" } else { "No " };
                 format!("Sending grandmaster settings failed. ({has_gptp}gPTP profile configured. Does that match ptp4l?)")
@@ -555,7 +555,7 @@ fn check_kernel_tai_offset(utc_offset: i16) -> Result<(i32, PtpIssues)> {
 }
 
 fn send_wait_recv<T: Serialize, R: for<'a> Deserialize<'a> + MessageId>(
-    uds_fd: &mut UnixDatagram,
+    uds_fd: &UnixDatagram,
     dest_addr: &Path,
     req: &T,
 ) -> Result<R> {
@@ -668,11 +668,10 @@ fn check_ptp_offset(max_master_offset: Duration) -> Result<(Duration, PortStates
     let dest_addr = Path::new(PTP_SOCK).to_owned();
     let mut gptp_profile = false;
     let mut offset = Duration::zero();
-    let mut uds_fd = UnixDatagram::bind("").context("Binding to Unix datagram socket")?;
+    let uds_fd = UnixDatagram::bind("").context("Binding to Unix datagram socket")?;
 
     let mut port_req = ManagementTlv::new(PortDataSet::MESSAGE_ID, gptp_profile, &Action::Get, 0)?;
-    let mut resp_port_result: Result<PortDataSet> =
-        send_wait_recv(&mut uds_fd, &dest_addr, &port_req);
+    let mut resp_port_result: Result<PortDataSet> = send_wait_recv(&uds_fd, &dest_addr, &port_req);
     if resp_port_result.is_err() {
         /*
          * Send the same request again with the transportSpecific field
@@ -682,7 +681,7 @@ fn check_ptp_offset(max_master_offset: Duration) -> Result<(Duration, PortStates
          */
         gptp_profile = true;
         port_req = ManagementTlv::new(PortDataSet::MESSAGE_ID, gptp_profile, &Action::Get, 0)?;
-        resp_port_result = send_wait_recv(&mut uds_fd, &dest_addr, &port_req);
+        resp_port_result = send_wait_recv(&uds_fd, &dest_addr, &port_req);
     }
 
     let port_state = FromPrimitive::from_u8(
@@ -700,7 +699,7 @@ fn check_ptp_offset(max_master_offset: Duration) -> Result<(Duration, PortStates
 
     if port_state == PortStates::Slave {
         let time_req = ManagementTlv::new(TimeStatusNp::MESSAGE_ID, gptp_profile, &Action::Get, 0)?;
-        let offset_response: TimeStatusNp = send_wait_recv(&mut uds_fd, &dest_addr, &time_req)?;
+        let offset_response: TimeStatusNp = send_wait_recv(&uds_fd, &dest_addr, &time_req)?;
         offset = Duration::nanoseconds(i64::from_be(offset_response.master_offset));
     }
 

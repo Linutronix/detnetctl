@@ -131,7 +131,7 @@ impl Setup for Controller {
             // The first occurred error shall be returned, but a potential second still be printed
             if let Err(if_up_error) = if_up_result {
                 return match setup_result {
-                    Ok(_) => Err(if_up_error),
+                    Ok(()) => Err(if_up_error),
                     Err(setup_error) => {
                         eprintln!("After setup failed, interface up failed, too: {if_up_error}");
                         Err(setup_error)
