@@ -4,7 +4,7 @@
 //
 //! Provides YAML-based network configuration
 
-use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig};
+use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig, TsnInterfaceConfig};
 use anyhow::{anyhow, Context, Result};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,17 @@ type AppConfigurations = HashMap<String, AppConfig>;
 type PtpInstanceConfigurations = HashMap<u32, PtpInstanceConfig>;
 
 impl Configuration for YAMLConfiguration {
+    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
+        Ok(HashMap::default())
+    }
+
+    fn get_interface_config(
+        &mut self,
+        _interface_name: &str,
+    ) -> Result<Option<TsnInterfaceConfig>> {
+        Ok(None)
+    }
+
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
         Ok(self
             .config

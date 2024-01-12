@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig, ReplaceNoneOptions};
+use crate::configuration::{
+    AppConfig, Configuration, PtpInstanceConfig, ReplaceNoneOptions, TsnInterfaceConfig,
+};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -57,6 +59,20 @@ where
 }
 
 impl Configuration for MergedConfiguration {
+    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
+        Ok(merge_maps(
+            self.config.get_interface_configs()?,
+            self.fallback.get_interface_configs()?,
+        ))
+    }
+
+    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
+        Ok(merge_structs(
+            self.config.get_interface_config(interface_name)?,
+            self.fallback.get_interface_config(interface_name)?,
+        ))
+    }
+
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
         Ok(merge_structs(
             self.config.get_app_config(app_name)?,

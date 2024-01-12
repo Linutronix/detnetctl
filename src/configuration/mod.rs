@@ -29,7 +29,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 use crate::ptp::PtpInstanceConfig;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use eui48::MacAddress;
 use options_struct_derive::{OptionsBuilder, OptionsGetters, ReplaceNoneOptions};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,16 @@ use std::path::PathBuf;
 pub trait ReplaceNoneOptions {
     /// Replace all options that are None with the corresponding value from fallback
     fn replace_none_options(&mut self, fallback: Self);
+}
+
+/// Fill unset parameters with defaults where applicable and validate
+pub trait FillDefaults {
+    /// Fill unset fields with defaults if resonable ones can be calculated
+    ///
+    /// # Errors
+    ///
+    /// Returns error if calculating the defaults is not possible.
+    fn fill_defaults(&mut self) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -96,6 +106,40 @@ pub struct AppConfig {
     cgroup: Option<PathBuf>,
 }
 
+mod schedule;
+pub use schedule::{GateControlEntry, GateOperation, Schedule, ScheduleBuilder};
+
+/// Contains the configuration for a TSN interface
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    ReplaceNoneOptions,
+    OptionsGetters,
+    OptionsBuilder,
+)]
+pub struct TsnInterfaceConfig {
+    /// Qbv schedule
+    pub schedule: Option<Schedule>,
+}
+
+impl FillDefaults for TsnInterfaceConfig {
+    fn fill_defaults(&mut self) -> Result<()> {
+        if let Some(schedule) = self.schedule.as_mut() {
+            schedule.fill_defaults()?;
+        } else {
+            let mut schedule = ScheduleBuilder::new().build();
+            schedule.fill_defaults()?;
+            self.schedule = Some(schedule);
+        }
+
+        Ok(())
+    }
+}
+
 mod serialize_mac_address {
     use eui48::MacAddress;
     use serde::{self, Deserialize, Deserializer, Serializer};
@@ -127,6 +171,21 @@ mod serialize_mac_address {
 /// Defines how to request the configuration
 #[cfg_attr(test, automock)]
 pub trait Configuration {
+    /// Get all interface configurations
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>>;
+
+    /// Get configuration for the given interface
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no interface was found for that `interface_name`, Ok(None) is returned.
+    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>>;
+
     /// Get the configuration for a given `app_name`
     ///
     /// # Errors
