@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = "<=0.0.2";
+const VERSION_REQ: &str = "<=0.1.0";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -25,6 +25,7 @@ struct Config {
     version: String,
     apps: Option<AppConfigurations>,
     ptp: Option<PtpConfig>,
+    interfaces: Option<TsnInterfaceConfigs>,
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -36,17 +37,19 @@ struct PtpConfig {
 
 type AppConfigurations = HashMap<String, AppConfig>;
 type PtpInstanceConfigurations = HashMap<u32, PtpInstanceConfig>;
+type TsnInterfaceConfigs = HashMap<String, TsnInterfaceConfig>;
 
 impl Configuration for YAMLConfiguration {
     fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
-        Ok(HashMap::default())
+        Ok(self.config.interfaces.clone().unwrap_or_default())
     }
 
-    fn get_interface_config(
-        &mut self,
-        _interface_name: &str,
-    ) -> Result<Option<TsnInterfaceConfig>> {
-        Ok(None)
+    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
+        Ok(self
+            .config
+            .interfaces
+            .as_ref()
+            .and_then(|x| x.get(interface_name).cloned()))
     }
 
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
@@ -121,8 +124,7 @@ mod tests {
     use const_format::concatcp;
     use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr};
-
-    const VERSION: &str = "0.0.1";
+    const VERSION: &str = "0.1.0";
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -151,6 +153,21 @@ mod tests {
             "    vid: 1\n",
             "    pcp: 2\n",
             "    addresses: [[192.168.0.7, 32]]\n",
+            "interfaces:\n",
+            "  eth0:\n",
+            "    schedule:\n",
+            "      number_of_traffic_classes: 3\n",
+            "      priority_map:\n",
+            "        0: 0\n",
+            "        1: 2\n",
+            "      basetime_ns: 1000\n",
+            "      control_list:\n",
+            "        - operation: SetGates\n",
+            "          time_interval_ns: 10\n",
+            "          traffic_classes: [0]\n",
+            "        - operation: SetGates\n",
+            "          time_interval_ns: 20\n",
+            "          traffic_classes: [2]\n",
         );
 
         let mut config = YAMLConfiguration::default();
@@ -243,6 +260,7 @@ mod tests {
             version: VERSION.to_owned(),
             apps: Some(apps),
             ptp: None,
+            interfaces: None,
         };
 
         let yaml = serde_yaml::to_string(&config)?;
