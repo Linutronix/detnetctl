@@ -130,6 +130,7 @@ apps:
       vid: 5
     pcp: 3
     addresses: [[10.5.1.1, 24]]
+    priority: 2
   ptp4l:
     logical_interface: enp86s0.7
     physical_interface: enp86s0
@@ -140,6 +141,18 @@ apps:
       destination_address: 01:80:c2:00:00:0e
       vid: 7
     pcp: 4
+    priority: 4
+interfaces:
+  enp86s0:
+    schedule:
+      number_of_traffic_classes: 4
+      control_list:
+        - time_interval_ns: 10000
+          traffic_classes: [0]
+        - time_interval_ns: 89040
+          traffic_classes: [1]
+        - time_interval_ns: 960
+          traffic_classes: [2]
 ptp:
   active_instance: 1
   instances:

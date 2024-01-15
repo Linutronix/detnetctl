@@ -85,7 +85,7 @@
 //! let mut facade = Facade::new(shutdown.clone())?;
 //! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
 //! configuration.lock().await.read(File::open(filepath)?)?;
-//! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup::new(3)));
+//! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup));
 //! let mut dispatcher = Arc::new(Mutex::new(DummyDispatcher));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
 //! let mut ptp = Arc::new(Mutex::new(PtpManager::new()));

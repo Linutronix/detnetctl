@@ -19,18 +19,29 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::fmt;
 use std::net::IpAddr;
 
 #[cfg(test)]
 use mockall::automock;
 
 /// State of a network link
+#[derive(Clone, Copy, Debug)]
 pub enum LinkState {
     /// Link is active
     Up,
 
     /// Link is inactive
     Down,
+}
+
+impl fmt::Display for LinkState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Up => write!(f, "up"),
+            Self::Down => write!(f, "down"),
+        }
+    }
 }
 
 /// Defines how to setup the link

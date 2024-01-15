@@ -24,7 +24,7 @@ The features are introduced one by one below, but you should be able to mix and 
 - [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
 - [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature, skip at runtime via `--no-ptp-config`
-- [Queue setup with detd](#queue-setup-with-detd) - requires `detd` feature, skip at runtime via `--no-queue-setup`
+- [TAPRIO Queue setup](#taprio-queue-setup) - requires `netlink` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, if requested with `--sysrepo`
 
 ## License
@@ -47,15 +47,15 @@ Arguments:
           file and sysrepo is merged
 
 Options:
-  -o, --oneshot                    Oneshot setup, i.e. do not spawn D-Bus service
-      --no-queue-setup <PRIORITY>  Skip queue setup and use the given priority for all streams
-      --no-dispatcher              Skip installing eBPFs - no interference protection!
-      --bpf-debug-output           Print eBPF debug output to kernel tracing
-      --no-interface-setup         Skip setting up the link
-      --no-ptp-config              Skip PTP configuration
-  -s, --sysrepo                    Load Sysrepo configuration
-  -h, --help                       Print help
-  -V, --version                    Print version
+  -o, --oneshot             Oneshot setup, i.e. do not spawn D-Bus service
+      --no-queue-setup      Skip queue setup
+      --no-dispatcher       Skip installing eBPFs - no interference protection!
+      --bpf-debug-output    Print eBPF debug output to kernel tracing
+      --no-interface-setup  Skip setting up the link
+      --no-ptp-config       Skip PTP configuration
+  -s, --sysrepo             Load Sysrepo configuration
+  -h, --help                Print help
+  -V, --version             Print version
 ```
 
 ## Oneshot Dry-Run (Minimal Feature Set)
@@ -75,7 +75,7 @@ cargo build --no-default-features
 In the detnetctl directory run the following command
 
 ```console
-./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher --no-interface-setup --no-ptp-config --oneshot config/yaml/example.yml
+./target/debug/detnetctl --no-queue-setup --no-dispatcher --no-interface-setup --no-ptp-config --oneshot config/yaml/example.yml
 ```
 
 This will only read the configurations from the configuration file, performs a dry run setup as well as pretending to installing protection for `app0` and prints out for example the following output:
@@ -83,6 +83,90 @@ This will only read the configurations from the configuration file, performs a d
 ```console
 Setup of DetNet system
   Fetched from configuration module: {
+    "enp86s0": TsnInterfaceConfig {
+        schedule: Some(
+            Schedule {
+                number_of_traffic_classes: Some(
+                    4,
+                ),
+                priority_map: Some(
+                    {
+                        0: 0,
+                        1: 0,
+                        2: 1,
+                        3: 1,
+                        4: 2,
+                        5: 2,
+                        6: 3,
+                        7: 3,
+                    },
+                ),
+                basetime_ns: Some(
+                    0,
+                ),
+                control_list: Some(
+                    [
+                        GateControlEntry {
+                            operation: Some(
+                                SetGates,
+                            ),
+                            time_interval_ns: Some(
+                                99040,
+                            ),
+                            traffic_classes: Some(
+                                [
+                                    3,
+                                ],
+                            ),
+                        },
+                        GateControlEntry {
+                            operation: Some(
+                                SetGates,
+                            ),
+                            time_interval_ns: Some(
+                                960,
+                            ),
+                            traffic_classes: Some(
+                                [
+                                    2,
+                                ],
+                            ),
+                        },
+                    ],
+                ),
+            },
+        ),
+        taprio: Some(
+            TaprioConfig {
+                mode: Some(
+                    FullOffload,
+                ),
+                clock: None,
+                txtime_delay: None,
+                queues: Some(
+                    [
+                        QueueMapping {
+                            count: 1,
+                            offset: 0,
+                        },
+                        QueueMapping {
+                            count: 1,
+                            offset: 1,
+                        },
+                        QueueMapping {
+                            count: 1,
+                            offset: 2,
+                        },
+                        QueueMapping {
+                            count: 1,
+                            offset: 3,
+                        },
+                    ],
+                ),
+            },
+        ),
+    },
+} {
     "app0": AppConfig {
         logical_interface: Some(
             "enp86s0.5",
@@ -123,6 +207,9 @@ Setup of DetNet system
         cgroup: Some(
             "/user.slice/",
         ),
+        priority: Some(
+            7,
+        ),
     },
     "app1": AppConfig {
         logical_interface: Some(
@@ -155,13 +242,13 @@ Setup of DetNet system
         ),
         addresses: None,
         cgroup: None,
+        priority: Some(
+            5,
+        ),
     },
 }
   Interface enp86s0 down
-  Result of queue setup: QueueSetupResponse {
-    logical_interface: "enp86s0.5",
-    priority: 3,
-}
+  Queues set up
   Dispatcher installed for stream StreamIdentification {
     destination_address: Some(
         MacAddress("48:21:0b:56:db:da"),
@@ -169,17 +256,10 @@ Setup of DetNet system
     vid: Some(
         5,
     ),
-} with priority 3 on enp86s0
+} with priority 7 on enp86s0
   with protection for cgroup "/user.slice/"
   VLAN interface enp86s0.5 properly configured
   Added 10.5.1.1/24 to enp86s0.5
-  Interface enp86s0 up
-  Interface enp86s0.5 up
-  Interface enp86s0 down
-  Result of queue setup: QueueSetupResponse {
-    logical_interface: "enp86s0.3",
-    priority: 3,
-}
   Dispatcher installed for stream StreamIdentification {
     destination_address: Some(
         MacAddress("48:21:0b:56:db:da"),
@@ -187,12 +267,13 @@ Setup of DetNet system
     vid: Some(
         3,
     ),
-} with priority 3 on enp86s0
+} with priority 5 on enp86s0
   VLAN interface enp86s0.3 properly configured
   No IP address configured, since none was provided
   Interface enp86s0 up
+  Interface enp86s0.5 up
   Interface enp86s0.3 up
-  Finished after 99.4µs
+  Finished after 2.9ms
 ```
 
 ## D-Bus Interface
@@ -232,11 +313,14 @@ apps:
     physical_interface: enp86s0
     stream:
       vid: null
+interfaces:
+  enp86s0:
+    schedule: null
 ```
 
 Start the service with
 ```console
-sudo ./target/debug/detnetctl --no-queue-setup 2 --no-dispatcher --no-interface-setup  myconfig.yml
+sudo ./target/debug/detnetctl --no-queue-setup --no-dispatcher --no-interface-setup  myconfig.yml
 ```
 
 `sudo` is required here, since the D-Bus policy above only allows `root` to own `org.detnet.detnetctl`. You can adapt the policy accordingly if you like.
@@ -263,6 +347,9 @@ apps:
     addresses: [[10.5.1.1, 24]]
     stream:
       vid: 5
+interfaces:
+  enp86s0:
+    schedule: null
 ```
 
 ### Prepare second computer
@@ -289,7 +376,7 @@ cargo build --no-default-features --features dbus,netlink
 ### Run
 Start the service with
 ```console
-sudo ./target/debug/detnetctl --no-queue-setup 3 --no-dispatcher myconfig.yml 
+sudo ./target/debug/detnetctl --no-queue-setup --no-dispatcher myconfig.yml 
 ```
 And in a second terminal
 ```console
@@ -321,6 +408,9 @@ apps:
       vid: 5
       destination_address: 48:21:0b:56:db:da
     pcp: 3
+interfaces:
+  enp86s0:
+    schedule: null
 ```
 
 ### Build
@@ -336,7 +426,7 @@ cargo build --no-default-features --features dbus,netlink,bpf
 ### Run
 Start the service with
 ```console
-sudo ./target/debug/detnetctl --no-queue-setup 3 --bpf-debug-output myconfig.yml
+sudo ./target/debug/detnetctl --no-queue-setup --bpf-debug-output myconfig.yml
 ```
 Then in a second terminal start the sample application with
 ```console
@@ -391,7 +481,7 @@ The most important setting that ensures the configuration is applied correctly i
 
 Then start detnetctl for YAML configuration as
 ```console
-sudo ./target/debug/detnetctl --no-queue-setup 3 myconfig.yml
+sudo ./target/debug/detnetctl --no-queue-setup myconfig.yml
 ```
 
 At the start, the settings will be sent to ptp4l/phc2sys. It might take up to 1 minute until they are fully applied.
@@ -403,16 +493,98 @@ Since the PTP status depends on the interface to use, provide the VLAN (!) inter
 You should see the PTP status printed every few seconds.
 
 
-## Queue setup with detd
+## TAPRIO Queue Setup
 
 In order to actually distribute the TSN streams into different timeslots according to Enhancements for Scheduled Traffic (EST) aka IEEE 802.1Qbv, detnetctl can set up the queues / qdiscs according to the configuration to enable TSN communication using TAPRIO Qdiscs.
 
-This requires a at least one network card supported by [detd](https://github.com/Avnu/detd) (e.g. Intel® Ethernet Controller I225-LM).
+You usually want to use a network card with hardware support for TAPRIO (e.g. Intel® Ethernet Controller I225-LM), but the is also a software offload option available.
 
-Hint: detd requires proper time synchronization between the TAI clock and the PHC (e.g. via phc2sys), otherwise it might set the basetime in the future and lead to packet drops until that.
+### App to Priority to Traffic Class to Queue Mapping
+In order to avoid interference, the configuration needs to be set up in a way that traffic that could disturb each other should not end up in the same queue. If nothing else is specified for an app, its traffic gets assigned to the best-effort priority 0 shared with many other traffic sources.
+
+The following mapping is the default one applicable to the I225 NIC that has four hardware queues, i.e. two priorities share one queue, respectively:
+
+<table>
+<thead>
+  <tr>
+    <th>Priority</th>
+    <th>Traffic Class</th>
+    <th>Queue</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>0</td>
+    <td rowspan="2">0</td>
+    <td rowspan="2">0</td>
+  </tr>
+  <tr>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td rowspan="2">1</td>
+    <td rowspan="2">1</td>
+  </tr>
+  <tr>
+    <td>3</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td rowspan="2">2</td>
+    <td rowspan="2">2</td>
+  </tr>
+  <tr>
+    <td>5</td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td rowspan="2">3</td>
+    <td rowspan="2">3</td>
+  </tr>
+  <tr>
+    <td>7</td>
+  </tr>
+</tbody>
+</table>
+
+In the default, there is a 1:1 mapping between queue and traffic class, so the number of traffic classes corresponds to the number of queues, but it can be changed e.g. like this
+
+```yaml
+interfaces:
+  enp86s0:
+    schedule:
+      number_of_traffic_classes: 2
+    taprio:
+      queues:
+        - count: 2
+          offset: 0
+        - count: 2
+          offset: 2
+```
+
+The mapping between priorities and traffic classes corresponds to the default mapping according to IEEE 802.1Q-2022 corresponding to the configured `number_of_traffic_classes`. But also that can be changed like
+
+```yaml
+interfaces:
+  enp86s0:
+    schedule:
+      number_of_traffic_classes: 2
+      priority_map:
+        0: 0
+        1: 0
+        2: 0
+        3: 1
+        4: 0
+        5: 0
+        6: 1
+        7: 0
+```
 
 ### Configuration
-In order for detd to calculate the size and position of the timeslot, the configuration needs to be extended:
+
+Apart from the priority, the schedule needs to be configured, like
+
 ```yaml
 version: 0.3.0
 apps:
@@ -424,21 +596,28 @@ apps:
       vid: 5
       destination_address: 48:21:0b:56:db:da 
     pcp: 3
-    period_ns: 100000
-    offset_ns: 0
-    size_bytes: 1000
+    priority: 2
+interfaces:
+  enp86s0:
+    schedule:
+      number_of_traffic_classes: 4
+      control_list:
+        - time_interval_ns: 5000
+          traffic_classes: [0]
+        - time_interval_ns: 5000
+          traffic_classes: [1]
 ```
+
+There are several other configuration options:
+
+The `basetime_ns` option (default 0) of the `schedule` can be used to align the schedule in time (in nanoseconds relative to Unix epoch). This is relevant when aligning the schedules from several nodes (common in real-world deployments, but often unnecessary for smaller demos).
+
+The `mode` option of `taprio` has `FullOffload` as default, but `Software` can be used without hardware support and `TxTimeAssist` to emulate TAPRIO in software, but send the packets with TX timestamps to the NIC, which requires NIC support and the `txtime_delay` option. Also `clock` is to be set (with the options `Tai`, `Realtime`, `Monotonic` and `Boottime`) unless full offload is used.
 
 ### Build
 
-1. [Install and run detd](https://github.com/Avnu/detd)
-2. Install build dependencies
 ```console
-sudo apt install protobuf-compiler
-```
-3. Build detnetctl
-```console
-cargo build --no-default-features --features dbus,netlink,bpf,ptp,detd
+cargo build --no-default-features --features dbus,netlink,bpf,ptp
 ```
 
 ### Run
@@ -446,10 +625,21 @@ cargo build --no-default-features --features dbus,netlink,bpf,ptp,detd
 sudo ./target/debug/detnetctl myconfig.yml
 ```
 
-Note that currently detd does not reset the TAPRIO configuration, so to retry you also have to restart detd if it would otherwise lead to conflicts.
-
 For the `simple` example, there should be no noticable difference when now transmitting via the TAPRIO Qdisc. For a more complex example that tracks the timestamps have a look at the [timestamp example](timestamp_example/index.html).
 
+### Reset
+When changing the TAPRIO qdisc after one was already installed, you might often get the following error
+```console
+Error: Setting up the queue failed
+
+Caused by:
+    UnknownErrno: Unknown errno (524) Changing the traffic mapping of a running schedule is not supported
+```
+
+This is expected behavior, because the TAPRIO qdisc is protected against certain on-the-fly changes that might lead to packet drops. To reset it manually (and accept potential drops), you can for example execute
+```console
+sudo tc qdisc replace dev enp86s0 root pfifo_fast
+```
 
 ## Configuration via sysrepo (YANG/NETCONF)
 
@@ -470,13 +660,13 @@ libyang2-tools: 2.1.30.1
 netopeer2:      2.1.49
 libnetconf2-3:  2.1.28
 ```
-2. Clone submodule to get YANG schema definitions
+2. Clone submodule to get YANG schema definitions (`--recursive` is not necessary, no modules from recursive submodules are used at the moment and they are huge).
 ```console
-git submodule update --init --recursive
+git submodule update --init
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf,ptp,detd,sysrepo
+cargo build --no-default-features --features dbus,netlink,bpf,ptp,sysrepo
 ```
 or equivalent
 ```console
@@ -513,7 +703,7 @@ sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
 Note that an adapted version of ieee802-dot1q-sched.yang is loaded due to a potential bug in the standard:
 <https://mailarchive.ietf.org/arch/msg/netmod/IxJ3uPRQYJgVb91fuhfhz4TDLB0/>
 
-Restart `detd` as explained above, then start detnetctl as
+Start detnetctl as
 ```console
 sudo ./target/debug/detnetctl --sysrepo
 ```

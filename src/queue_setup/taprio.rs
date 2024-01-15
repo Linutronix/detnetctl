@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use log::warn;
 use netlink_packet_core::ExtendedAckAttribute;
 use nix::errno;
@@ -12,17 +13,23 @@ use std::process::Command;
 
 use crate::configuration::{Mode, Schedule, TaprioConfig, TsnInterfaceConfig};
 use crate::interface_setup::NetlinkSetup;
+use crate::queue_setup::QueueSetup;
 
 /// Setup TAPRIO Qdisc
 pub struct TaprioSetup;
 
-impl TaprioSetup {
+#[async_trait]
+impl QueueSetup for TaprioSetup {
     /// Setup TAPRIO schedule for the given interface via netlink
     ///
     /// # Errors
     ///
     /// Will return `Err` if it was not possible to setup the schedule.
-    pub async fn setup(interface_name: &str, interface_config: &TsnInterfaceConfig) -> Result<()> {
+    async fn apply_config(
+        &self,
+        interface_name: &str,
+        interface_config: &TsnInterfaceConfig,
+    ) -> Result<()> {
         let schedule = interface_config.schedule()?;
         let taprio = interface_config.taprio()?;
         validate_are_some!(
@@ -101,7 +108,9 @@ impl TaprioSetup {
 
         Ok(())
     }
+}
 
+impl TaprioSetup {
     /// Assemble tc command for the given schedule and interface.
     /// Usually `setup` is preferred that uses netlink directly.
     ///

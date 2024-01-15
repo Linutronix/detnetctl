@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Custom build steps for eBPF and detd
+//! Custom build steps for eBPF
 
-use std::io::Result;
 #[cfg(feature = "bpf")]
 use {
     libbpf_cargo::SkeletonBuilder,
@@ -12,13 +11,9 @@ use {
 
 #[cfg(feature = "bpf")]
 const BPF_SRC: &str = "./src/dispatcher/bpf/network_dispatcher.bpf.c";
-#[cfg(feature = "detd")]
-const DETD_PROTO_SRC: &str = "./src/queue_setup/detdipc.proto";
 
-fn main() -> Result<()> {
+fn main() {
     build_bpf();
-    build_detd()?;
-    Ok(())
 }
 
 #[cfg(all(feature = "bpf", feature = "libbpf_with_sotoken"))]
@@ -41,16 +36,3 @@ fn build_bpf() {
 
 #[cfg(not(feature = "bpf"))]
 const fn build_bpf() {}
-
-#[cfg(feature = "detd")]
-fn build_detd() -> Result<()> {
-    prost_build::compile_protos(&[DETD_PROTO_SRC], &["src/"])?;
-    println!("cargo:rerun-if-changed={DETD_PROTO_SRC}");
-    Ok(())
-}
-
-#[cfg(not(feature = "detd"))]
-#[allow(clippy::unnecessary_wraps)]
-const fn build_detd() -> Result<()> {
-    Ok(())
-}
