@@ -1,5 +1,4 @@
 # SPDX-FileCopyrightText: 2023 Linutronix GmbH
-#
 # SPDX-License-Identifier: 0BSD
 
 version: 0.2.0
@@ -16,6 +15,7 @@ apps:
     pcp: 3
     addresses: [[10.5.1.1, 24]]
     cgroup: /user.slice/
+    priority: 7
   app1:
     logical_interface: enp86s0.3
     physical_interface: enp86s0
@@ -26,6 +26,16 @@ apps:
       destination_address: 48:21:0b:56:db:da
       vid: 3
     pcp: 2
+    priority: 5
+interfaces:
+  enp86s0:
+    schedule:
+      number_of_traffic_classes: 4
+      control_list:
+        - time_interval_ns: 99040
+          traffic_classes: [3]
+        - time_interval_ns: 960
+          traffic_classes: [2]
 ptp:
   active_instance: 1
   instances:

@@ -144,7 +144,9 @@ pub struct StreamIdentification {
 }
 
 mod schedule;
-pub use schedule::{GateControlEntry, GateOperation, Schedule, ScheduleBuilder};
+pub use schedule::{
+    GateControlEntry, GateControlEntryBuilder, GateOperation, Schedule, ScheduleBuilder,
+};
 
 mod taprio;
 pub use self::taprio::{Clock, Mode, QueueMapping, TaprioConfig, TaprioConfigBuilder};

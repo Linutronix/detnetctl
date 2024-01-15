@@ -43,9 +43,9 @@ struct Cli {
     #[arg(short, long)]
     oneshot: bool,
 
-    /// Skip queue setup and use the given priority for all streams
-    #[arg(long, value_name = "PRIORITY")]
-    no_queue_setup: Option<u32>,
+    /// Skip queue setup
+    #[arg(long)]
+    no_queue_setup: bool,
 
     /// Skip installing eBPFs - no interference protection!
     #[arg(long)]
@@ -133,9 +133,10 @@ pub async fn main() -> Result<()> {
         }
     }
 
-    let queue_setup = match cli.no_queue_setup {
-        Some(priority) => Arc::new(Mutex::new(DummyQueueSetup::new(priority))),
-        None => new_detd_gateway()?,
+    let queue_setup = if cli.no_queue_setup {
+        Arc::new(Mutex::new(DummyQueueSetup))
+    } else {
+        new_taprio_setup()?
     };
 
     let dispatcher = if cli.no_dispatcher {
@@ -294,16 +295,16 @@ fn new_sysrepo_config_arc_mutex() -> Result<Arc<Mutex<dyn Configuration + Send>>
     Err(feature_missing_error("sysrepo", "a YAML file"))
 }
 
-#[cfg(feature = "detd")]
-use detnetctl::queue_setup::DetdGateway;
-#[cfg(feature = "detd")]
-fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
-    Ok(Arc::new(Mutex::new(DetdGateway::new(None, None))))
+#[cfg(feature = "netlink")]
+use detnetctl::queue_setup::TaprioSetup;
+#[cfg(feature = "netlink")]
+fn new_taprio_setup() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
+    Ok(Arc::new(Mutex::new(TaprioSetup)))
 }
 
-#[cfg(not(feature = "detd"))]
-fn new_detd_gateway() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
-    Err(feature_missing_error("detd", "--no-queue-setup"))
+#[cfg(not(feature = "netlink"))]
+fn new_taprio_setup() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
+    Err(feature_missing_error("netlink", "--no-queue-setup"))
 }
 
 #[cfg(feature = "netlink")]
