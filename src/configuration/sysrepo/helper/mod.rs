@@ -92,7 +92,6 @@ impl SysrepoReader {
             ("ietf-if-extensions", None, vec!["sub-interfaces"]),
             ("ieee802-dot1q-types", Some("2023-10-26"), vec![]),
             ("ietf-detnet", Some("2024-01-16"), vec![]),
-            ("tsn-interface-configuration", None, vec![]),
             ("ieee802-dot1cb-stream-identification", None, vec![]),
             ("ieee1588-ptp-tt", None, vec![]),
             ("ieee802-dot1q-tsn-types", Some("2022-10-29"), vec![]),
@@ -119,7 +118,7 @@ impl SysrepoReader {
                     DataParserFlags::STRICT,
                     DataValidationFlags::NO_STATE,
                 )
-                .expect("could not parse");
+                .unwrap_or_else(|_| panic!("could not parse {filename}"));
 
                 Ok(tree)
             });

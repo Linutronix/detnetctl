@@ -190,15 +190,6 @@ Setup of DetNet system
         physical_interface: Some(
             "enp86s0",
         ),
-        period_ns: Some(
-            100000,
-        ),
-        offset_ns: Some(
-            0,
-        ),
-        size_bytes: Some(
-            1000,
-        ),
         stream: Some(
             StreamIdentification {
                 destination_address: Some(
@@ -230,15 +221,6 @@ Setup of DetNet system
         ),
         physical_interface: Some(
             "enp86s0",
-        ),
-        period_ns: Some(
-            200000,
-        ),
-        offset_ns: Some(
-            0,
-        ),
-        size_bytes: Some(
-            2000,
         ),
         stream: Some(
             StreamIdentification {
@@ -283,7 +265,7 @@ Setup of DetNet system
   Interface enp86s0 up
   Interface enp86s0.5 up
   Interface enp86s0.3 up
-  Finished after 735.7µs
+  Finished after 2.9ms
 ```
 
 ## D-Bus Interface
@@ -316,7 +298,7 @@ The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, s
 
 Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
 ```yaml
-version: 0.3.0
+version: 0.4.0
 apps:
   app0:
     logical_interface: enp86s0
@@ -349,7 +331,7 @@ Up to now the transmission took place directly via the physical interface. Now, 
 ### Configuration
 Adapt the configuration to include the interface configuration, e.g.
 ```yaml
-version: 0.3.0
+version: 0.4.0
 apps:
   app0:
     logical_interface: enp86s0.5
@@ -408,7 +390,7 @@ How the cgroups are managed is system-dependent. Today, this is usually the resp
 ### Configuration
 To properly identify the TSN stream in the dispatcher and to set the PCP, we now also need to add the destination MAC address and the PCP to the configuration:
 ```yaml
-version: 0.3.0
+version: 0.4.0
 apps:
   app0:
     logical_interface: enp86s0.5
@@ -595,7 +577,7 @@ interfaces:
 Apart from the priority, the schedule needs to be configured, like
 
 ```yaml
-version: 0.3.0
+version: 0.4.0
 apps:
   app0:
     logical_interface: enp86s0.5
@@ -603,7 +585,7 @@ apps:
     addresses: [[10.5.1.1, 24]]
     stream:
       vid: 5
-      destination_address: 48:21:0b:56:db:da 
+      destination_address: 48:21:0b:56:db:da
     priority: 2
 interfaces:
   enp86s0:
@@ -705,7 +687,6 @@ sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-bridge.yang
 sudo sysrepoctl -i config/yang/ieee802-dot1q-sched.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-sched-bridge.yang
-sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
 ```
 
 Note that an adapted version of ieee802-dot1q-sched.yang is loaded due to a potential bug in the standard:

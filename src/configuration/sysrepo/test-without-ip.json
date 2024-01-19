@@ -1,23 +1,17 @@
 {
   "ietf-detnet:detnet": {
-    "traffic-profile": [
-      {
-        "name": "pf-1",
-        "traffic-spec": {
-          "interval": 2000000,
-          "max-pkts-per-interval": 10,
-          "max-payload-size": 1500
-        }
-      }
-    ],
     "app-flows": {
       "app-flow": [
         {
           "name": "app0",
-          "traffic-profile": "pf-1",
-          "ingress": {
-            "interface": ["enp86s0.5"]
-          }
+	  "ingress": {
+	    "interface": ["enp86s0.5"],
+            "tsn-app-flow": {
+              "destination-mac-address": "CB:CB:CB:CB:CB:CB",
+              "vlan-id": 5,
+              "pcp": 3
+            }
+	  }
         }
       ]
     },
@@ -77,33 +71,6 @@
       }
     ]
   },
-  "tsn-interface-configuration:tsn-interface-configuration": {
-    "interface-list": [
-      {
-        "mac-address": "AB-AB-AB-AB-AB-AB",
-        "interface-name": "enp86s0.5",
-        "config-list": [
-          {
-            "index": 0,
-            "time-aware-offset": 0
-          },
-          {
-            "index": 1,
-            "ieee802-vlan-tag": {
-              "priority-code-point": 3,
-              "vlan-id": 5
-            }
-          },
-          {
-            "index": 2,
-            "ieee802-mac-addresses": {
-              "destination-mac-address": "CB-CB-CB-CB-CB-CB"
-            }
-          }
-        ]
-      }
-    ]
-  },
   "ieee802-dot1cb-stream-identification:stream-identity": [
     {
       "index": 0,
@@ -128,7 +95,7 @@
       },
       "dmac-vlan-stream-identification": {
         "down": {
-          "priority": 2
+          "priority": 3
         }
       }
     }

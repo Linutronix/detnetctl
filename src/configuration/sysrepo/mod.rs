@@ -15,7 +15,6 @@ use crate::configuration::{
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
 };
-use eui48::MacAddress;
 use log::debug;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -30,8 +29,8 @@ pub struct SysrepoConfiguration {
 }
 
 struct AppFlow {
-    traffic_profile: Option<String>,
     logical_interface: Option<String>,
+    stream_id: Option<StreamIdentification>,
 }
 
 struct ServiceSublayer {
@@ -40,17 +39,6 @@ struct ServiceSublayer {
 
 struct ForwardingSublayer {
     outgoing_interface: Option<String>,
-}
-
-struct TSNInterfaceConfig {
-    offset_ns: Option<u32>,
-    destination_address: Option<MacAddress>,
-    vid: Option<u16>, // actually 12 bit
-}
-
-struct TrafficProfile {
-    period_ns: u32,
-    size_bytes: u32,
 }
 
 struct VLANInterface {
@@ -135,18 +123,18 @@ impl Configuration for SysrepoConfiguration {
     /// but only use the original (Destination MAC, VLAN ID) of the application
     /// for TSN stream identification.
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
-        let cfg = self.reader.get_config(
-            "/detnet | /tsn-interface-configuration | /interfaces | /stream-identity",
-        )?;
+        let cfg = self
+            .reader
+            .get_config("/detnet | /interfaces | /stream-identity")?;
         get_app_flow(&cfg, app_name)?
             .map(|app_flow| get_app_config_from_app_flow(&cfg, app_name, &app_flow))
             .transpose()
     }
 
     fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
-        let cfg = self.reader.get_config(
-            "/detnet | /tsn-interface-configuration | /interfaces | /stream-identity",
-        )?;
+        let cfg = self
+            .reader
+            .get_config("/detnet | /interfaces| /stream-identity")?;
         get_app_flows(&cfg)?
             .iter()
             .map(|(app_name, app_flow)| {
@@ -199,10 +187,7 @@ fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<Option<AppFlow>> {
     for app_flow in app_flows {
         if let Some(name) = app_flow.get_value_for_xpath::<String>("name")? {
             if name == app_name {
-                return Ok(Some(AppFlow {
-                    traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
-                    logical_interface: app_flow.get_value_for_xpath("ingress/interface")?,
-                }));
+                return Ok(Some(parse_app_flow(&app_flow)?));
             }
         }
     }
@@ -215,18 +200,27 @@ fn get_app_flows(tree: &DataTree) -> Result<Vec<(String, AppFlow)>> {
         .try_fold(vec![], |mut acc, app_flow| {
             match app_flow.get_value_for_xpath("name")? {
                 Some(name) => {
-                    acc.push((
-                        name,
-                        AppFlow {
-                            traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
-                            logical_interface: app_flow.get_value_for_xpath("ingress/interface")?,
-                        },
-                    ));
+                    acc.push((name, parse_app_flow(&app_flow)?));
                     Ok(acc)
                 }
                 None => Ok(acc),
             }
         })
+}
+
+fn parse_app_flow(app_flow: &DataNodeRef<'_>) -> Result<AppFlow> {
+    let destination_address = app_flow
+        .get_value_for_xpath::<String>("ingress/tsn-app-flow/destination-mac-address")?
+        .map(|addr| addr.parse())
+        .transpose()?;
+
+    Ok(AppFlow {
+        logical_interface: app_flow.get_value_for_xpath("ingress/interface")?,
+        stream_id: Some(StreamIdentification {
+            destination_address,
+            vid: app_flow.get_value_for_xpath("ingress/tsn-app-flow/vlan-id")?,
+        }),
+    })
 }
 
 fn get_app_config_from_app_flow(
@@ -240,18 +234,6 @@ fn get_app_config_from_app_flow(
         .map(|ofsl| get_forwarding_sublayer(tree, &ofsl))
         .transpose()?
         .flatten();
-    let traffic_profile = app_flow
-        .traffic_profile
-        .as_ref()
-        .map(|profile| get_traffic_profile(tree, profile))
-        .transpose()?
-        .flatten();
-    let tsn_interface_cfg = app_flow
-        .logical_interface
-        .as_ref()
-        .map(|iface| get_tsn_interface_config(tree, iface))
-        .transpose()?
-        .flatten();
     let logical_interface_cfg = app_flow
         .logical_interface
         .as_ref()
@@ -259,16 +241,15 @@ fn get_app_config_from_app_flow(
         .transpose()?
         .flatten();
 
-    let stream = StreamIdentification {
-        destination_address: tsn_interface_cfg
-            .as_ref()
-            .and_then(|cfg| cfg.destination_address),
-        vid: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.vid),
-    };
     let ilan_interface = forwarding_sublayer.and_then(|fsl| fsl.outgoing_interface);
     let stream_handling = ilan_interface
         .as_ref()
-        .map(|ilan| get_stream_handling(tree, ilan, &stream))
+        .and_then(|ilan| {
+            app_flow
+                .stream_id
+                .as_ref()
+                .map(|stream| get_stream_handling(tree, ilan, stream))
+        })
         .transpose()?
         .flatten();
 
@@ -277,10 +258,7 @@ fn get_app_config_from_app_flow(
         physical_interface: stream_handling
             .as_ref()
             .and_then(|s| s.outgoing_interface.clone()),
-        period_ns: traffic_profile.as_ref().map(|profile| profile.period_ns),
-        offset_ns: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.offset_ns),
-        size_bytes: traffic_profile.as_ref().map(|profile| profile.size_bytes),
-        stream: Some(stream),
+        stream: app_flow.stream_id.clone(),
         addresses: logical_interface_cfg
             .as_ref()
             .and_then(|iface| iface.addresses.clone()),
@@ -422,70 +400,6 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpIn
     Ok(None)
 }
 
-fn get_traffic_profile(
-    tree: &DataTree,
-    traffic_profile_name: &str,
-) -> Result<Option<TrafficProfile>> {
-    let traffic_profiles = tree.find_xpath("/detnet/traffic-profile")?;
-    for profile in traffic_profiles {
-        if let Some(name) = profile.get_value_for_xpath::<String>("name")? {
-            if name == traffic_profile_name {
-                let max_pkts_per_interval: u32 = profile
-                    .get_value_for_xpath("traffic-spec/max-pkts-per-interval")?
-                    .ok_or_else(|| {
-                        anyhow!("Size can not be calculated since max-pkts-per-interval is missing")
-                    })?;
-                let max_payload_size: u32 = profile
-                    .get_value_for_xpath("traffic-spec/max-payload-size")?
-                    .ok_or_else(|| {
-                        anyhow!("Size can not be calculated since max-payload-size is missing")
-                    })?;
-
-                return Ok(Some(TrafficProfile {
-                    period_ns: profile
-                        .get_value_for_xpath("traffic-spec/interval")?
-                        .ok_or_else(|| anyhow!("traffic-spec/interval is missing"))?,
-
-                    // TODO is that sufficient or do we need to incorporate inter-frame spacing, headers etc.?
-                    size_bytes: max_pkts_per_interval
-                        .checked_mul(max_payload_size)
-                        .ok_or_else(|| anyhow!("overflow of slot size"))?,
-                }));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-fn get_tsn_interface_config(
-    tree: &DataTree,
-    interface_name: &str,
-) -> Result<Option<TSNInterfaceConfig>> {
-    let interface_configs = tree.find_xpath("/tsn-interface-configuration/interface-list")?;
-    for interface_config in interface_configs {
-        if let Some(name) = interface_config.get_value_for_xpath::<String>("interface-name")? {
-            if name == interface_name {
-                const DSTADDRPATH: &str =
-                    "config-list/ieee802-mac-addresses/destination-mac-address";
-                const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
-                let destination_address = interface_config
-                    .get_value_for_xpath::<String>(DSTADDRPATH)?
-                    .map(|addr| addr.parse())
-                    .transpose()?;
-                return Ok(Some(TSNInterfaceConfig {
-                    offset_ns: interface_config
-                        .get_value_for_xpath("config-list/time-aware-offset")?,
-                    destination_address,
-                    vid: interface_config.get_value_for_xpath(VLANIDPATH)?,
-                }));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
 fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option<VLANInterface>> {
     let interfaces = tree.find_xpath("/interfaces/interface")?;
     for interface in interfaces {
@@ -494,8 +408,8 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option
                 let addresses = interface
                     .find_xpath("ipv4/address | ipv6/address")
                     .ok()
-                    .map(|addrs| {
-                        addrs
+                    .map(|addrs| -> Result<Option<Vec<(IpAddr, u8)>>> {
+                        let collected = addrs
                             .map(|address| -> Result<(IpAddr, u8)> {
                                 let ip = address
                                     .get_value_for_xpath::<String>("ip")?
@@ -508,9 +422,16 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option
 
                                 Ok((ip, prefix_length))
                             })
-                            .collect::<Result<Vec<(IpAddr, u8)>>>()
+                            .collect::<Result<Vec<(IpAddr, u8)>>>()?;
+
+                        if collected.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some(collected))
+                        }
                     })
-                    .transpose()?;
+                    .transpose()?
+                    .flatten();
 
                 return Ok(Some(VLANInterface { addresses }));
             }
@@ -732,9 +653,6 @@ mod tests {
             AppConfig {
                 logical_interface: Some(format!("{interface}.{vid}")),
                 physical_interface: Some(interface),
-                period_ns: Some(2_000_000),
-                offset_ns: Some(0),
-                size_bytes: Some(15000),
                 stream: Some(StreamIdentification {
                     destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                     vid: Some(vid),
@@ -767,16 +685,13 @@ mod tests {
             AppConfig {
                 logical_interface: Some(format!("{interface}.{vid}")),
                 physical_interface: Some(interface),
-                period_ns: Some(2_000_000),
-                offset_ns: Some(0),
-                size_bytes: Some(15000),
                 stream: Some(StreamIdentification {
                     destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                     vid: Some(vid),
                 }),
-                addresses: Some(vec![]),
+                addresses: None,
                 cgroup: None,
-                priority: Some(2),
+                priority: Some(3),
             }
         );
         Ok(())
@@ -790,19 +705,6 @@ mod tests {
         assert!(sysrepo_config
             .get_app_config("somemissingapp")
             .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn test_get_app_config_missing_time_aware_offset() {
-        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
-        );
-        assert!(sysrepo_config
-            .get_app_config("app0")
-            .unwrap()
-            .unwrap()
-            .offset_ns
             .is_none());
     }
 
