@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = ">=0.2.*,<=0.3.*";
+const VERSION_REQ: &str = "=0.4.*";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -124,7 +124,7 @@ mod tests {
     use const_format::concatcp;
     use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr};
-    const VERSION: &str = "0.2.0";
+    const VERSION: &str = "0.4.0";
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -136,23 +136,19 @@ mod tests {
             "  app0:\n",
             "    logical_interface: eth0.1\n",
             "    physical_interface: eth0\n",
-            "    period_ns: 100000\n",
-            "    offset_ns: 0\n",
-            "    size_bytes: 1000\n",
             "    stream:\n",
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
             "    addresses: [[192.168.0.3, 16]]\n",
+            "    priority: 2\n",
             "  app1:\n",
             "    logical_interface: eth3.1\n",
             "    physical_interface: eth3\n",
-            "    period_ns: 200000\n",
-            "    offset_ns: 10\n",
-            "    size_bytes: 2000\n",
             "    stream:\n",
             "      destination_address: AB:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
             "    addresses: [[192.168.0.7, 32]]\n",
+            "    priority: 3\n",
             "interfaces:\n",
             "  eth0:\n",
             "    schedule:\n",
@@ -230,9 +226,6 @@ mod tests {
         let app_0 = AppConfig {
             logical_interface: Some("eth0.1".to_owned()),
             physical_interface: Some("eth0".to_owned()),
-            period_ns: Some(1000 * 100),
-            offset_ns: Some(0),
-            size_bytes: Some(1000),
             stream: Some(StreamIdentification {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(1),
@@ -245,9 +238,6 @@ mod tests {
         let app_1 = AppConfig {
             logical_interface: Some("eth1.2".to_owned()),
             physical_interface: Some("eth1".to_owned()),
-            period_ns: Some(1000 * 120),
-            offset_ns: Some(10),
-            size_bytes: Some(2000),
             stream: Some(StreamIdentification {
                 destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(2),
@@ -295,11 +285,9 @@ mod tests {
             "  app0:\n",
             "    logical_interface: eth0.1\n",
             "    physical_interface: eth0\n",
-            "    period_ns: this is no integer\n",
-            "    offset_ns: 0\n",
-            "    size_bytes: 1000\n",
-            "    destination_address: cb:cb:cb:cb:cb:cb\n",
-            "    vid: 1\n",
+            "    stream:\n",
+            "      destination_address: cb:cb:cb:cb:cb:cb\n",
+            "      vid: this is no integer\n"
         );
 
         let mut config = YAMLConfiguration::default();

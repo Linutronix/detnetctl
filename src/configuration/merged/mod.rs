@@ -110,7 +110,7 @@ mod tests {
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    const VERSION: &str = "0.2.0";
+    const VERSION: &str = "0.4.0";
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -118,10 +118,7 @@ mod tests {
         let vid = 5;
         let expected = AppConfig {
             logical_interface: Some(format!("{interface}.{vid}")),
-            physical_interface: Some(interface),
-            period_ns: Some(2_000_000),
-            offset_ns: Some(0),
-            size_bytes: Some(15000),
+            physical_interface: Some(interface.clone()),
             stream: Some(StreamIdentification {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
@@ -140,7 +137,7 @@ mod tests {
             "./src/configuration/sysrepo/test-successful.json",
         );
         let mut sysrepo_config_wo_ip = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-missing-time-aware-offset.json",
+            "./src/configuration/sysrepo/test-without-ip.json",
         );
 
         assert_eq!(sysrepo_config.get_app_config("app0")?.unwrap(), expected);
@@ -151,17 +148,27 @@ mod tests {
             expected
         );
 
-        let yaml = concatcp!(
-            "version: ",
-            VERSION,
-            "\n",
-            "apps:\n",
-            "  app0:\n",
-            "    offset_ns: 0\n",
+        println!(
+            "{:?}",
+            sysrepo_config_wo_ip.get_app_config("app0")?.unwrap()
         );
+
+        let yaml = format!(
+            concat!(
+                "version: {0}\n",
+                "apps:\n",
+                "  app0:\n",
+                "    logical_interface: {1}.{2}\n",
+                "    physical_interface: {1}\n",
+                "    addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
+            ),
+            VERSION, interface, vid
+        );
+        println!("{yaml}");
 
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;
+        println!("{config:?}");
 
         let mut merged = MergedConfiguration::new(Box::new(sysrepo_config_wo_ip), Box::new(config));
 

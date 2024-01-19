@@ -76,19 +76,6 @@ pub struct AppConfig {
     /// Physical interface corresponding to the logical interface
     physical_interface: Option<String>,
 
-    /// Reference time period for traffic specification
-    period_ns: Option<u32>,
-
-    /// Time slot offset within period
-    ///
-    /// It COULD be calculated locally if latency and jitter are not relevant,
-    /// otherwise a network-wide calculation (central or decentral) is required
-    /// so that packets can optimally directly be forwarded WITHIN the period.
-    offset_ns: Option<u32>,
-
-    /// Used to calculate length of the time slot
-    size_bytes: Option<u32>,
-
     /// TSN stream identification
     stream: Option<StreamIdentification>,
 

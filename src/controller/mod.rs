@@ -381,9 +381,6 @@ mod tests {
         let app_config = AppConfigBuilder::new()
             .logical_interface(format!("{interface}.{vid}"))
             .physical_interface(interface)
-            .period_ns(0)
-            .offset_ns(0)
-            .size_bytes(0)
             .stream(
                 StreamIdentificationBuilder::new()
                     .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
@@ -397,9 +394,6 @@ mod tests {
             app_config,
             logical_interface,
             physical_interface,
-            period_ns,
-            offset_ns,
-            size_bytes,
             stream,
             addresses
         )
