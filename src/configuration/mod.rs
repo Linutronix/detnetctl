@@ -40,6 +40,7 @@ use mockall::automock;
 
 /// Contains the configuration for a TSN/DetNet application
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
     pub logical_interface: String,

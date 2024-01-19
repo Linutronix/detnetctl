@@ -17,6 +17,7 @@ pub struct YAMLConfiguration {
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Config {
     apps: Option<AppConfigurations>,
     ptp: Option<PtpConfigurations>,
@@ -91,6 +92,7 @@ impl YAMLConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::Configuration;
+    use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
@@ -157,6 +159,21 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "unknown field `foo`")]
+    fn test_get_app_config_additional_field() {
+        let yaml = concat!(
+            "foo: bar\n",
+            "apps:\n",
+            "  app0:\n",
+            "    logical_interface: eth0\n",
+            "    physical_interface: eth0\n"
+        );
+
+        let mut config = YAMLConfiguration::default();
+        config.read(yaml.as_bytes()).unwrap();
+    }
+
+    #[test]
     fn test_get_app_config_happy_with_serialization() -> Result<()> {
         let app_0 = configuration::AppConfig {
             logical_interface: "eth0.1".to_owned(),
@@ -210,11 +227,10 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "missing field `logical_interface`")]
-    fn test_read_fails() {
+    fn test_missing_field() {
         let yaml = concat!(
             "apps:\n",
             "  app0:\n",
-            "    typo_llllogical_interface: eth0.1\n",
             "    physical_interface: eth0\n",
             "    period_ns: 100000\n",
             "    offset_ns: 0\n",
@@ -226,5 +242,13 @@ mod tests {
 
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn validate_example_yaml() {
+        let mut config = YAMLConfiguration::default();
+        config
+            .read(File::open("./config/yaml/example.yml").unwrap())
+            .unwrap();
     }
 }

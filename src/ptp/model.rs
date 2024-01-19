@@ -369,6 +369,7 @@ impl FromStr for TimeSource {
 /// Configuration for PTP Grandmaster
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
+#[serde(deny_unknown_fields)]
 pub struct PtpConfig {
     /// Enumeration that denotes the traceability, synchronization
     /// state and expected performance of the time or frequency
