@@ -484,7 +484,7 @@ sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-ethertypes@2019-03
 sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-routing-types@2017-12-04.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ietf/RFC/ietf-packet-fields@2019-03-04.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-types.yang
-sudo sysrepoctl -i config/yang/schemas/experimental/ietf-extracted-YANG-modules/ietf-detnet@2022-10-04.yang
+sudo sysrepoctl -i config/yang/ietf-detnet.yang
 sudo sysrepoctl -i config/yang/schemas/standard/iana/iana-if-type@2023-01-26.yang
 sudo sysrepoctl -i config/yang/schemas/experimental/ietf-extracted-YANG-modules/ietf-if-extensions@2023-01-26.yang -e sub-interfaces
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-tsn-types.yang

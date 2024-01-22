@@ -87,17 +87,17 @@ impl SysrepoReader {
             .expect("Failed to set YANG search directory");
 
         let modules = &[
-            ("iana-if-type", vec![]),
-            ("ietf-ip", vec![]),
-            ("ietf-if-extensions", vec!["sub-interfaces"]),
-            ("ietf-detnet", vec![]),
-            ("tsn-interface-configuration", vec![]),
-            ("ieee1588-ptp-tt", vec![]),
+            ("iana-if-type", None, vec![]),
+            ("ietf-ip", None, vec![]),
+            ("ietf-if-extensions", None, vec!["sub-interfaces"]),
+            ("ietf-detnet", Some("2024-01-16"), vec![]),
+            ("tsn-interface-configuration", None, vec![]),
+            ("ieee1588-ptp-tt", None, vec![]),
         ];
 
-        for (module_name, features) in modules {
+        for (module_name, revision, features) in modules {
             libyang_ctx
-                .load_module(module_name, None, features)
+                .load_module(module_name, *revision, features)
                 .expect("Failed to load module");
         }
 
