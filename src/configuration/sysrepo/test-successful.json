@@ -61,7 +61,32 @@
     "interface": [
       {
         "name": "enp86s0",
-        "type": "iana-if-type:ethernetCsmacd"
+        "type": "iana-if-type:ethernetCsmacd",
+        "ieee802-dot1q-bridge:bridge-port": {
+          "traffic-class": {
+            "traffic-class-table": {
+              "number-of-traffic-classes": 4
+            }
+          },
+          "ieee802-dot1q-sched-bridge:gate-parameter-table": {
+            "admin-control-list": {
+              "gate-control-entry": [
+                {
+                  "index": 0,
+                  "operation-name": "ieee802-dot1q-sched:set-gate-states",
+                  "time-interval-value": 5000,
+                  "gate-states-value": 1
+                },
+                {
+                  "index": 1,
+                  "operation-name": "ieee802-dot1q-sched:set-gate-states",
+                  "time-interval-value": 5000,
+                  "gate-states-value": 2
+                }
+              ]
+            }
+          }
+        }
       },
       {
         "name": "enp86s0.5",

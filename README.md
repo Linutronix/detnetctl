@@ -492,10 +492,13 @@ sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1cb-stream-identification-types.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1cb-stream-identification.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-bridge.yang
-sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-sched.yang
+sudo sysrepoctl -i config/yang/ieee802-dot1q-sched.yang
 sudo sysrepoctl -i config/yang/schemas/standard/ieee/published/802.1/ieee802-dot1q-sched-bridge.yang
 sudo sysrepoctl -i config/yang/tsn-interface-configuration.yang
 ```
+
+Note that an adapted version of ieee802-dot1q-sched.yang is loaded due to a potential bug in the standard:
+<https://mailarchive.ietf.org/arch/msg/netmod/IxJ3uPRQYJgVb91fuhfhz4TDLB0/>
 
 Restart `detd` as explained above, then start detnetctl as
 ```console
