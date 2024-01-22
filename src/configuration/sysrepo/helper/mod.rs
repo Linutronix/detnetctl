@@ -90,9 +90,14 @@ impl SysrepoReader {
             ("iana-if-type", None, vec![]),
             ("ietf-ip", None, vec![]),
             ("ietf-if-extensions", None, vec!["sub-interfaces"]),
+            ("ieee802-dot1q-types", Some("2023-10-26"), vec![]),
             ("ietf-detnet", Some("2024-01-16"), vec![]),
             ("tsn-interface-configuration", None, vec![]),
             ("ieee1588-ptp-tt", None, vec![]),
+            ("ieee802-dot1q-tsn-types", Some("2022-10-29"), vec![]),
+            ("ieee802-dot1q-bridge", Some("2023-10-26"), vec![]),
+            ("ieee802-dot1q-sched", Some("2024-01-30"), vec![]),
+            ("ieee802-dot1q-sched-bridge", Some("2023-10-26"), vec![]),
         ];
 
         for (module_name, revision, features) in modules {
