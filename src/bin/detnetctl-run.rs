@@ -140,7 +140,7 @@ fn move_to_individual_child_cgroup(pid: u32, app_name: &str) -> Result<()> {
 
     let _id = proxy.match_signal(
         move |h: OrgFreedesktopSystemd1ManagerJobRemoved, _: &Connection, _: &Message| {
-            let _ = tx.send(h.job.to_string());
+            drop(tx.send(h.job.to_string()));
             true
         },
     );

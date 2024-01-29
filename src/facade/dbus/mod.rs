@@ -266,7 +266,7 @@ async fn command_processor(
                 };
 
                 // Send back the response
-                let _ = responder.send(response);
+                drop(responder.send(response));
             }
 
             Command::GetPtpStatus {
@@ -282,7 +282,7 @@ async fn command_processor(
                         Duration::nanoseconds(max_master_offset_ns.try_into().unwrap_or(i64::MAX)),
                     )
                     .await;
-                    let _ = responder.send(response.and_then(|status| {
+                    drop(responder.send(response.and_then(|status| {
                         Ok((
                             status.issues.bits(),
                             status
@@ -309,9 +309,9 @@ async fn command_processor(
                                 .num_nanoseconds()
                                 .ok_or_else(|| anyhow!("Master offset out of range"))?,
                         ))
-                    }));
+                    })));
                 } else {
-                    let _ = responder.send(Err(anyhow!("No PTP status callback protected")));
+                    drop(responder.send(Err(anyhow!("No PTP status callback protected"))));
                 }
             }
         }

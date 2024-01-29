@@ -175,7 +175,7 @@ mod tests {
 
         let result = gateway.as_file().apply_config(app_config);
 
-        let _ = detddummy.join();
+        drop(detddummy.join());
 
         result
     }

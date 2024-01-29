@@ -100,6 +100,7 @@ ffi_unwind_calls = "warn"
 future_incompatible = "warn"
 # fuzzy_provenance_casts = "deny" # TODO currently unstable, enable when stable
 let_underscore_lock = "warn"
+let_underscore_drop = "warn"
 # lossy_provenance_casts = "deny" # TODO currently unstable, enable when stable
 macro_use_extern_crate = "warn"
 meta_variable_misuse = "warn"
