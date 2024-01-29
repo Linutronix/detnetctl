@@ -622,7 +622,7 @@ mod tests {
         Err(anyhow!("cgroup not found"))
     }
 
-    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<fs::File>>>
+    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
     where
         P: AsRef<Path>,
     {

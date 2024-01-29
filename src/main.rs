@@ -19,7 +19,6 @@
     )
 )]
 #![allow(clippy::unnecessary_wraps)] // wraps are necessary for certain combinations of feature flags
-extern crate detnetctl;
 
 use anyhow::{anyhow, Error, Result};
 use clap::Parser;
