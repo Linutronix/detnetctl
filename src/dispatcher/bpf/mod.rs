@@ -120,7 +120,7 @@ pub struct BPFDispatcher<'a> {
     debug_output: bool,
 }
 
-impl<'a> Dispatcher for BPFDispatcher<'a> {
+impl Dispatcher for BPFDispatcher<'_> {
     fn configure_stream(
         &mut self,
         interface: &str,
@@ -163,7 +163,7 @@ impl<'a> Dispatcher for BPFDispatcher<'a> {
     }
 }
 
-impl<'a> BPFDispatcher<'a> {
+impl BPFDispatcher<'_> {
     /// Create a new `BPFDispatcher`
     pub fn new(debug_output: bool) -> Self {
         set_print(Some((PrintLevel::Debug, print_to_log)));
@@ -242,13 +242,13 @@ impl<'a> BPFDispatcher<'a> {
     }
 }
 
-impl<'a> Default for BPFDispatcher<'a> {
+impl Default for BPFDispatcher<'_> {
     fn default() -> Self {
         Self::new(false)
     }
 }
 
-impl<'a> BPFInterface<'a> {
+impl BPFInterface<'_> {
     pub fn configure_stream(
         &mut self,
         stream_identification: &StreamIdentification,

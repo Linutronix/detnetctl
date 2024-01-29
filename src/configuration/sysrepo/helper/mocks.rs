@@ -13,6 +13,8 @@ use yang2::data::DataTree;
 mock! {
     pub SrConn {
         pub fn new(opts: u32) -> Result<Self, i32>;
+
+        #[allow(single_use_lifetimes)] // mockall crate does not seem to be fully Rust RFC 2115 compliant
         pub fn start_session<'a>(&'a mut self, ds: sysrepo::SrDatastore) -> Result<&'a mut MockSrSession, i32>;
     }
 }

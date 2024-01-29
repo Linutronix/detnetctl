@@ -91,6 +91,7 @@ pub struct PtpStatus {
 
 /// Defines how to configure and request the status of PTP
 #[async_trait]
+#[allow(single_use_lifetimes)] // async_trait leads to false positive with this lint
 #[cfg_attr(test, automock)]
 pub trait Ptp {
     /// Apply the given configuration

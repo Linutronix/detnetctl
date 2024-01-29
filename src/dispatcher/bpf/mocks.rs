@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(clippy::pedantic, clippy::nursery, single_use_lifetimes)]
 use anyhow::Result;
 use libbpf_rs::MapFlags;
 use libbpf_rs::TcAttachPoint;
