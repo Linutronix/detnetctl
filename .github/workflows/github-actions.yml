@@ -1,0 +1,17 @@
+name: Clippy
+on: [push]
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        uses: awalsh128/cache-apt-pkgs-action@v1.3.1
+        with:
+          packages: libelf-dev clang libdbus-1-dev protobuf-compiler
+      - name: Run clippy
+        run: |
+          # TODO for the moment do not use sysrepo feature, upstream packages are still too old
+          cargo clippy --all-targets --no-default-features --features dbus,bpf,detd,netlink,ptp --color=always -- -D warnings
+
