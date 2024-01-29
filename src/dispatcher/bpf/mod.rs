@@ -180,7 +180,7 @@ impl<'a> BPFDispatcher<'a> {
     fn with_interface(
         &mut self,
         interface: &str,
-        f: impl FnOnce(&mut BPFInterface) -> Result<()>,
+        f: impl FnOnce(&mut BPFInterface<'_>) -> Result<()>,
     ) -> Result<()> {
         if let Some(existing_interface) = self.interfaces.get_mut(interface) {
             f(existing_interface)

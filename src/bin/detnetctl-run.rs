@@ -84,7 +84,7 @@ pub struct OrgFreedesktopSystemd1ManagerJobRemoved {
 }
 
 impl arg::AppendAll for OrgFreedesktopSystemd1ManagerJobRemoved {
-    fn append(&self, i: &mut arg::IterAppend) {
+    fn append(&self, i: &mut arg::IterAppend<'_>) {
         arg::RefArg::append(&self.id, i);
         arg::RefArg::append(&self.job, i);
         arg::RefArg::append(&self.unit, i);
@@ -93,7 +93,7 @@ impl arg::AppendAll for OrgFreedesktopSystemd1ManagerJobRemoved {
 }
 
 impl arg::ReadAll for OrgFreedesktopSystemd1ManagerJobRemoved {
-    fn read(i: &mut arg::Iter) -> Result<Self, arg::TypeMismatchError> {
+    fn read(i: &mut arg::Iter<'_>) -> Result<Self, arg::TypeMismatchError> {
         Ok(Self {
             id: i.read()?,
             job: i.read()?,
@@ -124,7 +124,7 @@ fn start_transient_unit(
             "StartTransientUnit",
             (unit_name, mode, properties, aux),
         )
-        .map(|(o,): (dbus::Path,)| Ok(o.to_string()))?
+        .map(|(o,): (dbus::Path<'_>,)| Ok(o.to_string()))?
 }
 
 fn move_to_individual_child_cgroup(pid: u32, app_name: &str) -> Result<()> {

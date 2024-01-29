@@ -94,6 +94,7 @@ const_format = "0.2.32"
 # but apply to the current state and might be removed later if needed.
 [lints.rust]
 absolute_paths_not_starting_with_crate = "warn"
+elided_lifetimes_in_paths = "warn"
 explicit_outlives_requirements = "warn"
 ffi_unwind_calls = "warn"
 future_incompatible = "warn"
