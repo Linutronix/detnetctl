@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
-//
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Custom build steps for eBPF and detd
 
 use std::io::Result;
 #[cfg(feature = "bpf")]

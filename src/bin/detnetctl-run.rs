@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
-//
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Helper for starting a program in a separate cgroup
+//! and passing that to detnetctl.
 
 use anyhow::{anyhow, Error, Result};
 use clap::Parser;
@@ -76,7 +78,7 @@ pub async fn main() -> Result<()> {
 }
 
 #[derive(Debug)]
-pub struct OrgFreedesktopSystemd1ManagerJobRemoved {
+struct OrgFreedesktopSystemd1ManagerJobRemoved {
     pub id: u32,
     pub job: dbus::Path<'static>,
     pub unit: String,
