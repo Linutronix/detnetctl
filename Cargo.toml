@@ -93,7 +93,31 @@ const_format = "0.2.32"
 # Some of these lints might be unreasonable for a growing code base,
 # but apply to the current state and might be removed later if needed.
 [lints.rust]
+absolute_paths_not_starting_with_crate = "warn"
+explicit_outlives_requirements = "warn"
+ffi_unwind_calls = "warn"
+future_incompatible = "warn"
+# fuzzy_provenance_casts = "deny" # TODO currently unstable, enable when stable
+let_underscore_lock = "warn"
+# lossy_provenance_casts = "deny" # TODO currently unstable, enable when stable
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_abi = "warn"
+# multiple_supertrait_upcastable = "warn" # TODO currently unstable, enable when stable
+# must_not_suspend = "warn" # TODO currently unstable, enable when stable
 non_ascii_idents = "deny"
+nonstandard_style = "warn"
+rust_2021_incompatible_closure_captures = "warn"
+rust_2021_incompatible_or_patterns = "warn"
+rust_2021_prefixes_incompatible_syntax = "warn"
+rust_2021_prelude_collisions = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+# unnameable_types = "warn" # TODO currently unstable, enable when stable
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+unused_tuple_struct_fields = "warn"
+variant_size_differences = "warn"
 
 [lints.clippy]
 all = "deny"
