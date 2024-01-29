@@ -47,14 +47,14 @@ enum Command {
     },
 }
 
-pub struct DBus {
+pub(crate) struct DBus {
     c: Arc<SyncConnection>,
     resource_handle: Arc<tokio::task::JoinHandle<()>>,
     shutdown: Shutdown,
 }
 
 impl DBus {
-    pub fn new(shutdown: Shutdown) -> Result<Self> {
+    pub(crate) fn new(shutdown: Shutdown) -> Result<Self> {
         // Connect to system D-Bus
         let (resource, c) = connection::new_system_sync()?;
 
@@ -73,7 +73,7 @@ impl DBus {
         })
     }
 
-    pub async fn setup(
+    pub(crate) async fn setup(
         &self,
         protect: ProtectCallback,
         get_ptp_status: Option<PtpStatusCallback>,
@@ -385,8 +385,8 @@ mod tests {
     type CatchedResponse = Arc<Mutex<Option<Message>>>;
 
     struct DBusTester {
-        pub msg: Message,
-        pub protect_called: bool,
+        msg: Message,
+        protect_called: bool,
     }
 
     impl DBusTester {

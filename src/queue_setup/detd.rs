@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use prost::Message;
 use std::path::{Path, PathBuf};
 
+#[allow(unreachable_pub)] // this is generated code
 pub mod detdipc {
     include!(concat!(env!("OUT_DIR"), "/detdipc.rs"));
 }

@@ -11,7 +11,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 #[cfg(not(test))]
-#[allow(clippy::pedantic, clippy::nursery, clippy::restriction)] // this is generated code
+#[allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::restriction,
+    unreachable_pub
+)] // this is generated code
 mod network_dispatcher {
     include!(concat!(env!("OUT_DIR"), "/network_dispatcher.skel.rs"));
 }
@@ -59,7 +64,7 @@ impl Stream {
     }
 
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 7] {
+    fn to_bytes(&self) -> [u8; 7] {
         let mut result: [u8; 7] = [0; 7];
         result[0] = self.restrictions;
         result[1..3].copy_from_slice(&self.shifted_pcp.to_ne_bytes()[..]);
@@ -67,7 +72,7 @@ impl Stream {
         result
     }
 
-    pub fn from_bytes(bytes: [u8; 7]) -> Result<Self> {
+    fn from_bytes(bytes: [u8; 7]) -> Result<Self> {
         Ok(Self {
             restrictions: bytes[0],
             shifted_pcp: u16::from_ne_bytes(
@@ -249,7 +254,7 @@ impl Default for BPFDispatcher<'_> {
 }
 
 impl BPFInterface<'_> {
-    pub fn configure_stream(
+    fn configure_stream(
         &mut self,
         stream_identification: &StreamIdentification,
         priority: u32,
@@ -318,7 +323,7 @@ impl BPFInterface<'_> {
         Ok(())
     }
 
-    pub fn protect_stream(
+    fn protect_stream(
         &mut self,
         stream_identification: &StreamIdentification,
         cgroup: Option<Arc<Path>>,
@@ -351,11 +356,7 @@ impl BPFInterface<'_> {
         Ok(())
     }
 
-    pub fn configure_best_effort(
-        &mut self,
-        priority: u32,
-        cgroup: Option<Arc<Path>>,
-    ) -> Result<()> {
+    fn configure_best_effort(&mut self, priority: u32, cgroup: Option<Arc<Path>>) -> Result<()> {
         self.update_stream_maps(0, priority, 0 /* best-effort PCP */, cgroup)
     }
 

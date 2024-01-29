@@ -96,7 +96,7 @@ mod serialize_mac_address {
     use serde::{self, Deserialize, Deserializer, Serializer};
 
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn serialize<S>(addr: &Option<MacAddress>, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<S>(addr: &Option<MacAddress>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -104,7 +104,7 @@ mod serialize_mac_address {
         serializer.serialize_str(&s)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<MacAddress>, D::Error>
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Option<MacAddress>, D::Error>
     where
         D: Deserializer<'de>,
     {

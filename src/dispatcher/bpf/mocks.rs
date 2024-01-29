@@ -9,104 +9,104 @@ use libbpf_rs::TcAttachPoint;
 use mockall::mock;
 
 mock! {
-    pub NetworkDispatcherSkelBuilder {
-        pub fn open(mut self) -> libbpf_rs::Result<MockOpenNetworkDispatcherSkel>;
+    pub(crate) NetworkDispatcherSkelBuilder {
+        pub(crate) fn open(mut self) -> libbpf_rs::Result<MockOpenNetworkDispatcherSkel>;
     }
 }
 
-pub mod network_dispatcher_rodata_types {
+pub(crate) mod network_dispatcher_rodata_types {
     #[derive(Debug, Copy, Clone)]
     #[repr(C)]
-    pub struct rodata {
-        pub debug_output: bool,
+    pub(crate) struct rodata {
+        pub(crate) debug_output: bool,
     }
 }
 
 mock! {
-    pub OpenNetworkDispatcherSkel {
-        pub fn load(mut self) -> libbpf_rs::Result<MockNetworkDispatcherSkel<'static>>;
-        pub fn rodata(&mut self) -> &mut network_dispatcher_rodata_types::rodata;
+    pub(crate) OpenNetworkDispatcherSkel {
+        pub(crate) fn load(mut self) -> libbpf_rs::Result<MockNetworkDispatcherSkel<'static>>;
+        pub(crate) fn rodata(&mut self) -> &mut network_dispatcher_rodata_types::rodata;
     }
 }
 
 mock! {
-    pub NetworkDispatcherSkel<'a> {
-        pub fn progs(&self) -> MockNetworkDispatcherProgs;
-        pub fn maps_mut(&mut self) -> MockNetworkDispatcherMapsMut;
-        pub fn maps(&mut self) -> MockNetworkDispatcherMaps;
+    pub(crate) NetworkDispatcherSkel<'a> {
+        pub(crate) fn progs(&self) -> MockNetworkDispatcherProgs;
+        pub(crate) fn maps_mut(&mut self) -> MockNetworkDispatcherMapsMut;
+        pub(crate) fn maps(&mut self) -> MockNetworkDispatcherMaps;
     }
 }
 
 mock! {
-    pub NetworkDispatcherProgs {
-        pub fn tc_egress(&self) -> MockProgram;
+    pub(crate) NetworkDispatcherProgs {
+        pub(crate) fn tc_egress(&self) -> MockProgram;
     }
 }
 
 mock! {
-    pub NetworkDispatcherMapsMut {
-        pub fn num_streams(&mut self) -> &mut MockMap;
-        pub fn stream_handles(&mut self) -> &mut MockMap;
-        pub fn streams(&mut self) -> &mut MockMap;
-        pub fn stream_cgroups(&mut self) -> &mut MockMap;
+    pub(crate) NetworkDispatcherMapsMut {
+        pub(crate) fn num_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn stream_handles(&mut self) -> &mut MockMap;
+        pub(crate) fn streams(&mut self) -> &mut MockMap;
+        pub(crate) fn stream_cgroups(&mut self) -> &mut MockMap;
     }
 }
 
 mock! {
-    pub NetworkDispatcherMaps {
-        pub fn num_streams(&mut self) -> &mut MockMap;
-        pub fn stream_handles(&mut self) -> &mut MockMap;
-        pub fn streams(&mut self) -> &mut MockMap;
-        pub fn stream_cgroups(&mut self) -> &mut MockMap;
+    pub(crate) NetworkDispatcherMaps {
+        pub(crate) fn num_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn stream_handles(&mut self) -> &mut MockMap;
+        pub(crate) fn streams(&mut self) -> &mut MockMap;
+        pub(crate) fn stream_cgroups(&mut self) -> &mut MockMap;
     }
 }
 
 mock! {
-    pub Map {
-        pub fn update(&self, key: &[u8], value: &[u8], flags: MapFlags) -> Result<()>;
-        pub fn lookup(&self, key: &[u8], flags: MapFlags) -> Result<Option<Vec<u8>>>;
-        pub fn info(&self) -> Result<MockMapInfo>;
+    pub(crate) Map {
+        pub(crate) fn update(&self, key: &[u8], value: &[u8], flags: MapFlags) -> Result<()>;
+        pub(crate) fn lookup(&self, key: &[u8], flags: MapFlags) -> Result<Option<Vec<u8>>>;
+        pub(crate) fn info(&self) -> Result<MockMapInfo>;
     }
 }
 
-pub struct MockMapInfo {
-    pub info: MockInnerMapInfo,
+pub(crate) struct MockMapInfo {
+    pub(crate) info: MockInnerMapInfo,
 }
 
-pub struct MockInnerMapInfo {
-    pub max_entries: u32,
+pub(crate) struct MockInnerMapInfo {
+    pub(crate) max_entries: u32,
 }
 
 mock! {
-    pub Program {
-        pub fn as_fd(&self) -> i32;
+    pub(crate) Program {
+        pub(crate) fn as_fd(&self) -> i32;
     }
 }
 
-pub struct MockTcHookBuilder; // not with mock! since it does not properly support "-> &mut Self"
+pub(crate) struct MockTcHookBuilder; // not with mock! since it does not properly support "-> &mut Self"
 
 impl MockTcHookBuilder {
-    pub fn new(_fd: i32) -> Self {
+    pub(crate) fn new(_fd: i32) -> Self {
         Self {}
     }
 
-    pub fn ifindex(&mut self, _ifindex: i32) -> &mut Self {
+    pub(crate) fn ifindex(&mut self, _ifindex: i32) -> &mut Self {
         self
     }
 
-    pub fn replace(&mut self, _replace: bool) -> &mut Self {
+    pub(crate) fn replace(&mut self, _replace: bool) -> &mut Self {
         self
     }
 
-    pub fn handle(&mut self, _handle: u32) -> &mut Self {
+    pub(crate) fn handle(&mut self, _handle: u32) -> &mut Self {
         self
     }
 
-    pub fn priority(&mut self, _priority: u32) -> &mut Self {
+    pub(crate) fn priority(&mut self, _priority: u32) -> &mut Self {
         self
     }
 
-    pub fn hook(&self, _attach_point: TcAttachPoint) -> MockTcHook {
+    pub(crate) fn hook(&self, _attach_point: TcAttachPoint) -> MockTcHook {
         let mut tc_hook = MockTcHook::default();
         tc_hook.expect_create().times(1).returning(|| Ok(()));
         tc_hook.expect_attach().times(1).returning(|| Ok(()));
@@ -115,8 +115,8 @@ impl MockTcHookBuilder {
 }
 
 mock! {
-    pub TcHook {
-        pub fn create(&mut self) -> Result<()>;
-        pub fn attach(&mut self) -> Result<()>;
+    pub(crate) TcHook {
+        pub(crate) fn create(&mut self) -> Result<()>;
+        pub(crate) fn attach(&mut self) -> Result<()>;
     }
 }

@@ -119,6 +119,7 @@ trivial_casts = "warn"
 trivial_numeric_casts = "warn"
 # unnameable_types = "warn" # TODO currently unstable, enable when stable
 unsafe_op_in_unsafe_fn = "warn"
+unreachable_pub = "warn"
 unused = "warn"
 unused_lifetimes = "warn"
 unused_qualifications = "warn"

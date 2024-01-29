@@ -79,10 +79,10 @@ pub async fn main() -> Result<()> {
 
 #[derive(Debug)]
 struct OrgFreedesktopSystemd1ManagerJobRemoved {
-    pub id: u32,
-    pub job: dbus::Path<'static>,
-    pub unit: String,
-    pub result: String,
+    id: u32,
+    job: dbus::Path<'static>,
+    unit: String,
+    result: String,
 }
 
 impl arg::AppendAll for OrgFreedesktopSystemd1ManagerJobRemoved {

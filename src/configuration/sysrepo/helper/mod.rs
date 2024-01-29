@@ -24,7 +24,7 @@ use yang2::data::{DataFormat, DataParserFlags, DataValidationFlags};
 use {mocks::MockSrConn as SrConn, mocks::MockSrSession as SrSession};
 
 /// Reads configuration from sysrepo
-pub struct SysrepoReader {
+pub(crate) struct SysrepoReader {
     ctx: Arc<Mutex<SysrepoContext>>,
 }
 
@@ -46,7 +46,7 @@ impl SysrepoReader {
     ///
     /// Will return `Err` if no proper connection can be set up to Sysrepo,
     /// usually because the service is not running.
-    pub fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         let ds = sysrepo::SrDatastore::Running;
 
         sysrepo::log_stderr(sysrepo::SrLogLevel::Debug);
@@ -77,7 +77,7 @@ impl SysrepoReader {
     }
 
     #[cfg(test)]
-    pub fn mock_from_file(file: &str) -> Self {
+    pub(crate) fn mock_from_file(file: &str) -> Self {
         let sr = SrConn::default();
         let mut sess = SrSession::default();
         let mut libyang_ctx =
@@ -127,7 +127,7 @@ impl SysrepoReader {
         }
     }
 
-    pub fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
+    pub(crate) fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
         let mut lock = self
             .ctx
             .lock()
@@ -140,7 +140,7 @@ impl SysrepoReader {
     }
 }
 
-pub trait FromDataValue {
+pub(crate) trait FromDataValue {
     fn try_from_data_value(value: DataValue) -> Result<Self>
     where
         Self: Sized;
@@ -209,7 +209,7 @@ impl FromDataValue for bool {
     }
 }
 
-pub trait GetValueForXPath {
+pub(crate) trait GetValueForXPath {
     /// Get the value for this `XPath`.
     ///
     /// Assumes the `XPath` points to a single value. If there are multiple
