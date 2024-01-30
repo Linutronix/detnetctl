@@ -39,7 +39,8 @@ use {
     mocks::MockTcHook as TcHook, mocks::MockTcHookBuilder as TcHookBuilder,
 };
 
-use crate::dispatcher::{Dispatcher, StreamIdentification};
+use crate::configuration::StreamIdentification;
+use crate::dispatcher::Dispatcher;
 
 #[derive(Debug)]
 struct Stream {
@@ -95,16 +96,9 @@ impl StreamIdentification {
     /// # Errors
     /// Currently returns error if any of the attributes are None
     pub fn to_bytes(&self) -> Result<[u8; 8]> {
-        let destination_address = self.destination_address.ok_or_else(|| {
-            anyhow!("Streams without destination address can currently not be handled")
-        })?;
-        let vlan_identifier = self
-            .vlan_identifier
-            .ok_or_else(|| anyhow!("Streams without VLAN ID can currently not be handled"))?;
-
         let mut result: [u8; 8] = [0; 8];
-        result[0..6].copy_from_slice(destination_address.as_bytes());
-        result[6..8].copy_from_slice(&vlan_identifier.to_ne_bytes());
+        result[0..6].copy_from_slice(self.destination_address()?.as_bytes());
+        result[6..8].copy_from_slice(&self.vid()?.to_ne_bytes());
         Ok(result)
     }
 }
@@ -404,6 +398,7 @@ fn print_to_log(level: PrintLevel, msg: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::configuration::StreamIdentificationBuilder;
     use anyhow::anyhow;
     use eui48::MacAddress;
     use mocks::MockMap as Map;
@@ -424,14 +419,14 @@ mod tests {
     const INTERFACE: &str = "eth12";
     const PCP: u8 = 3;
     const PRIORITY: u32 = 6;
-    const STREAM_ID: StreamIdentification = StreamIdentification {
-        destination_address: Some(MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb])),
-        vlan_identifier: Some(3),
-    };
-    const STREAM_ID2: StreamIdentification = StreamIdentification {
-        destination_address: STREAM_ID.destination_address,
-        vlan_identifier: Some(7),
-    };
+    const DESTINATION: MacAddress = MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
+
+    fn generate_stream_identification(vid: u16) -> StreamIdentification {
+        StreamIdentificationBuilder::new()
+            .destination_address(DESTINATION)
+            .vid(vid)
+            .build()
+    }
 
     fn generate_skel_builder(cgroup: Arc<Path>) -> NetworkDispatcherSkelBuilder {
         let mut builder = NetworkDispatcherSkelBuilder::default();
@@ -536,7 +531,7 @@ mod tests {
         maps_mut.expect_stream_handles().returning(|| {
             let mut map = Map::default();
             map.expect_update().times(1).returning(|key, value, _| {
-                let stream_id_bytes = STREAM_ID.to_bytes().unwrap();
+                let stream_id_bytes = generate_stream_identification(3).to_bytes().unwrap();
                 assert_eq!(key, stream_id_bytes);
                 assert_eq!(value, vec![1, 0]);
                 Ok(())
@@ -553,7 +548,7 @@ mod tests {
         maps.expect_stream_handles().returning(|| {
             let mut map = Map::default();
             map.expect_lookup().times(1).returning(|key, _flags| {
-                if key == STREAM_ID.to_bytes().unwrap() {
+                if key == generate_stream_identification(3).to_bytes().unwrap() {
                     Ok(Some(vec![1, 0]))
                 } else {
                     Ok(None)
@@ -601,7 +596,7 @@ mod tests {
 
         dispatcher.configure_stream(
             INTERFACE,
-            &STREAM_ID,
+            &generate_stream_identification(3),
             PRIORITY,
             Some(PCP),
             Some(Path::new(&cgroup).into()),
@@ -650,7 +645,7 @@ mod tests {
         dispatcher
             .configure_stream(
                 INTERFACE,
-                &STREAM_ID,
+                &generate_stream_identification(3),
                 PRIORITY,
                 Some(PCP),
                 Some(Path::new(&cgroup).into()),
@@ -673,7 +668,11 @@ mod tests {
             debug_output: false,
         };
 
-        dispatcher.protect_stream(INTERFACE, &STREAM_ID, Some(Path::new(&cgroup).into()))?;
+        dispatcher.protect_stream(
+            INTERFACE,
+            &generate_stream_identification(3),
+            Some(Path::new(&cgroup).into()),
+        )?;
         Ok(())
     }
 
@@ -694,7 +693,11 @@ mod tests {
         };
 
         dispatcher
-            .protect_stream(INTERFACE, &STREAM_ID2, Some(Path::new(&cgroup).into()))
+            .protect_stream(
+                INTERFACE,
+                &generate_stream_identification(7),
+                Some(Path::new(&cgroup).into()),
+            )
             .unwrap();
     }
 }

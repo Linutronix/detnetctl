@@ -57,10 +57,12 @@ impl QueueSetup for DetdGateway {
             period_ns,
             offset_ns,
             size_bytes,
-            destination_address,
-            vid,
+            stream,
             pcp
         )?;
+
+        let stream = config.stream()?;
+        validate_are_some!(stream, destination_address, vid)?;
 
         if *config.offset_ns()? > *config.period_ns()? {
             return Err(anyhow!("Not possible to setup if offset > period!"));
@@ -75,8 +77,8 @@ impl QueueSetup for DetdGateway {
             period: *config.period_ns()?,
             size: *config.size_bytes()?,
             interface: config.physical_interface()?.clone(),
-            dmac: config.destination_address()?.to_hex_string(),
-            vid: u32::from(*config.vid()?),
+            dmac: stream.destination_address()?.to_hex_string(),
+            vid: u32::from(*stream.vid()?),
             pcp: u32::from(*config.pcp()?),
             txmin: *config.offset_ns()?,
 
@@ -123,7 +125,7 @@ impl QueueSetup for DetdGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::AppConfigBuilder;
+    use crate::configuration::{AppConfigBuilder, StreamIdentificationBuilder};
     use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use std::time::Duration;
@@ -174,8 +176,12 @@ mod tests {
             .period_ns(1000 * 100)
             .offset_ns(offset)
             .size_bytes(1000)
-            .destination_address("8a:de:82:a1:59:5a".parse().unwrap())
-            .vid(3)
+            .stream(
+                StreamIdentificationBuilder::new()
+                    .destination_address("8a:de:82:a1:59:5a".parse().unwrap())
+                    .vid(3)
+                    .build(),
+            )
             .pcp(4)
             .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
             .build()

@@ -6,7 +6,7 @@
 #![cfg_attr(not(feature = "detd"), doc = "```ignore")]
 #![cfg_attr(feature = "detd", doc = "```no_run")]
 //! use detnetctl::queue_setup::{QueueSetup, DetdGateway};
-//! use detnetctl::configuration::AppConfigBuilder;
+//! use detnetctl::configuration::{AppConfigBuilder, StreamIdentificationBuilder};
 //!
 //! let app_config = AppConfigBuilder::new()
 //!     .logical_interface("eth0.3".to_owned())
@@ -14,8 +14,12 @@
 //!     .period_ns(1000*100)
 //!     .offset_ns(0)
 //!     .size_bytes(1000)
-//!     .destination_address("8a:de:82:a1:59:5a".parse()?)
-//!     .vid(3)
+//!     .stream(
+//!         StreamIdentificationBuilder::new()
+//!         .destination_address("8a:de:82:a1:59:5a".parse()?)
+//!         .vid(3)
+//!         .build()
+//!     )
 //!     .pcp(4)
 //!     .addresses(vec![
 //!         ("192.168.3.3".parse()?, 16)

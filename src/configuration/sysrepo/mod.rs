@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::configuration::{
     schedule::{GateControlEntry, GateControlEntryBuilder, GateOperation},
-    AppConfig, Configuration, Schedule, ScheduleBuilder, TsnInterfaceConfig,
+    AppConfig, Configuration, Schedule, ScheduleBuilder, StreamIdentification, TsnInterfaceConfig,
 };
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
@@ -277,10 +277,12 @@ fn get_app_config_from_app_flow(
         period_ns: traffic_profile.as_ref().map(|profile| profile.period_ns),
         offset_ns: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.offset_ns),
         size_bytes: traffic_profile.as_ref().map(|profile| profile.size_bytes),
-        destination_address: tsn_interface_cfg
-            .as_ref()
-            .and_then(|cfg| cfg.destination_address),
-        vid: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.vid),
+        stream: Some(StreamIdentification {
+            destination_address: tsn_interface_cfg
+                .as_ref()
+                .and_then(|cfg| cfg.destination_address),
+            vid: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.vid),
+        }),
         pcp: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.pcp),
         addresses: logical_interface
             .as_ref()
@@ -638,8 +640,10 @@ mod tests {
                 period_ns: Some(2_000_000),
                 offset_ns: Some(0),
                 size_bytes: Some(15000),
-                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                vid: Some(vid),
+                stream: Some(StreamIdentification {
+                    destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
+                    vid: Some(vid),
+                }),
                 pcp: Some(3),
                 addresses: Some(vec![
                     (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
@@ -671,8 +675,10 @@ mod tests {
                 period_ns: Some(2_000_000),
                 offset_ns: Some(0),
                 size_bytes: Some(15000),
-                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                vid: Some(vid),
+                stream: Some(StreamIdentification {
+                    destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
+                    vid: Some(vid),
+                }),
                 pcp: Some(3),
                 addresses: Some(vec![]),
                 cgroup: None,

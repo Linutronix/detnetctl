@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: 0BSD
 
-version: 0.1.0
+version: 0.2.0
 apps:
   app0:
     logical_interface: enp86s0.5
@@ -10,8 +10,9 @@ apps:
     period_ns: 100000
     offset_ns: 0
     size_bytes: 1000
-    destination_address: 48:21:0b:56:db:da
-    vid: 5
+    stream:
+      destination_address: 48:21:0b:56:db:da
+      vid: 5
     pcp: 3
     addresses: [[10.5.1.1, 24]]
     cgroup: /user.slice/
@@ -21,8 +22,9 @@ apps:
     period_ns: 200000
     offset_ns: 0
     size_bytes: 2000
-    destination_address: 48:21:0b:56:db:da
-    vid: 3
+    stream:
+      destination_address: 48:21:0b:56:db:da
+      vid: 3
     pcp: 2
 ptp:
   active_instance: 1

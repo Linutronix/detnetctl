@@ -43,7 +43,7 @@
 //! ```
 
 use crate::configuration::{AppConfig, Configuration};
-use crate::dispatcher::{Dispatcher, StreamIdentification};
+use crate::dispatcher::Dispatcher;
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
 use anyhow::{anyhow, Context, Result};
@@ -176,16 +176,13 @@ impl Protection for Controller {
             .ok_or_else(|| anyhow!("No configuration found for {app_name}"))?;
         println!("  Fetched from configuration module: {app_config:#?}");
 
-        let stream_id = StreamIdentification {
-            destination_address: app_config.destination_address_opt().copied(),
-            vlan_identifier: app_config.vid_opt().copied(),
-        };
+        let stream_id = app_config.stream()?;
 
         let physical_interface = app_config.physical_interface()?;
 
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
-            .protect_stream(physical_interface, &stream_id, Some(cgroup.into()))
+            .protect_stream(physical_interface, stream_id, Some(cgroup.into()))
             .context("Installing protection via the dispatcher failed")?;
         println!("  Protection installed for stream {stream_id:#?} on {physical_interface}");
 
@@ -216,11 +213,8 @@ async fn setup(
         .context("Setting up the queue failed")?;
     println!("  Result of queue setup: {queue_setup_response:#?}");
 
-    // Assemble stream identification
-    let stream_id = StreamIdentification {
-        destination_address: app_config.destination_address_opt().copied(),
-        vlan_identifier: app_config.vid_opt().copied(),
-    };
+    // Get stream identification
+    let stream_id = app_config.stream()?;
 
     // Setup BPF Hooks
     // It is important to use the physical interface (eth0) and not the logical interface (eth0.2)
@@ -231,7 +225,7 @@ async fn setup(
     locked_dispatcher
         .configure_stream(
             physical_interface,
-            &stream_id,
+            stream_id,
             queue_setup_response.priority,
             app_config.pcp_opt().copied(),
             app_config
@@ -249,7 +243,7 @@ async fn setup(
     }
 
     // Setup logical interface
-    if let Some(vid) = app_config.vid_opt() {
+    if let Some(vid) = stream_id.vid_opt() {
         interface_setup
             .setup_vlan_interface(physical_interface, logical_interface, *vid)
             .await
@@ -291,7 +285,9 @@ async fn set_interfaces_up(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{AppConfig, AppConfigBuilder, MockConfiguration};
+    use crate::configuration::{
+        AppConfig, AppConfigBuilder, MockConfiguration, StreamIdentificationBuilder,
+    };
     use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
     use crate::queue_setup::{MockQueueSetup, QueueSetupResponse};
@@ -307,8 +303,12 @@ mod tests {
             .period_ns(0)
             .offset_ns(0)
             .size_bytes(0)
-            .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
-            .vid(vid)
+            .stream(
+                StreamIdentificationBuilder::new()
+                    .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
+                    .vid(vid)
+                    .build(),
+            )
             .pcp(4)
             .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
             .build();
@@ -320,8 +320,7 @@ mod tests {
             period_ns,
             offset_ns,
             size_bytes,
-            destination_address,
-            vid,
+            stream,
             pcp,
             addresses
         )
