@@ -5,37 +5,28 @@
 //! Dispatches TSN streams into queues and protects against interference between applications
 #![cfg_attr(not(feature = "bpf"), doc = "```ignore")]
 #![cfg_attr(feature = "bpf", doc = "```no_run")]
-//! use detnetctl::dispatcher::{Dispatcher, BPFDispatcher, StreamIdentification};
+//! use detnetctl::configuration::StreamIdentificationBuilder;
+//! use detnetctl::dispatcher::{Dispatcher, BPFDispatcher};
 //! use std::path::Path;
 //! let mut dispatcher = BPFDispatcher::new(false);
 //! let cgroup = Path::new("/sys/fs/cgroup/system.slice/some.service/");
-//! let stream_id = StreamIdentification {
-//!     destination_address: Some("CB:CB:CB:CB:CB:CB".parse()?),
-//!     vlan_identifier: Some(5)
-//! };
+//! let stream_id = StreamIdentificationBuilder::new()
+//!     .destination_address("CB:CB:CB:CB:CB:CB".parse()?)
+//!     .vid(5)
+//!     .build();
+//!
 //! dispatcher.configure_stream("eth0", &stream_id, 5, Some(3),
 //!                             Some(cgroup.into()))?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use crate::configuration::StreamIdentification;
 use anyhow::Result;
-use eui48::MacAddress;
 use std::path::Path;
 use std::sync::Arc;
 
 #[cfg(test)]
 use mockall::automock;
-
-/// Stream identification
-/// Currently only IEEE 802.1CB-2017 null stream identification is supported
-#[derive(Debug)]
-pub struct StreamIdentification {
-    /// Destination MAC address
-    pub destination_address: Option<MacAddress>,
-
-    /// VLAN Identifier
-    pub vlan_identifier: Option<u16>,
-}
 
 /// Defines how to request interference protection
 #[cfg_attr(test, automock)]

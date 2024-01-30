@@ -89,12 +89,8 @@ pub struct AppConfig {
     /// Used to calculate length of the time slot
     size_bytes: Option<u32>,
 
-    /// Destination MAC address
-    #[serde(default, with = "serialize_mac_address")]
-    destination_address: Option<MacAddress>,
-
-    /// VLAN-Identifier
-    vid: Option<u16>, // actually 12 bit
+    /// TSN stream identification
+    stream: Option<StreamIdentification>,
 
     /// Priority Code Point
     pcp: Option<u8>, // actually 3 bit
@@ -104,6 +100,30 @@ pub struct AppConfig {
 
     /// Allow only processes within this cgroup to generate traffic for this app
     cgroup: Option<PathBuf>,
+}
+
+/// Stream identification
+/// Currently only IEEE 802.1CB-2017 null stream identification is supported
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    ReplaceNoneOptions,
+    OptionsGetters,
+    OptionsBuilder,
+)]
+#[serde(deny_unknown_fields)]
+pub struct StreamIdentification {
+    /// Destination MAC address
+    #[serde(default, with = "serialize_mac_address")]
+    destination_address: Option<MacAddress>,
+
+    /// VLAN Identifier
+    #[serde(default)]
+    vid: Option<u16>, // actually 12 bit
 }
 
 mod schedule;

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = "<=0.1.0";
+const VERSION_REQ: &str = ">=0.2.*,<=0.3.*";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -120,11 +120,11 @@ impl YAMLConfiguration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::Configuration;
+    use crate::configuration::{Configuration, StreamIdentification};
     use const_format::concatcp;
     use std::fs::File;
     use std::net::{IpAddr, Ipv4Addr};
-    const VERSION: &str = "0.1.0";
+    const VERSION: &str = "0.2.0";
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -139,8 +139,9 @@ mod tests {
             "    period_ns: 100000\n",
             "    offset_ns: 0\n",
             "    size_bytes: 1000\n",
-            "    destination_address: cb:cb:cb:cb:cb:cb\n",
-            "    vid: 1\n",
+            "    stream:\n",
+            "      destination_address: cb:cb:cb:cb:cb:cb\n",
+            "      vid: 1\n",
             "    pcp: 2\n",
             "    addresses: [[192.168.0.3, 16]]\n",
             "  app1:\n",
@@ -149,8 +150,9 @@ mod tests {
             "    period_ns: 200000\n",
             "    offset_ns: 10\n",
             "    size_bytes: 2000\n",
-            "    destination_address: AB:cb:cb:cb:cb:cb\n",
-            "    vid: 1\n",
+            "    stream:\n",
+            "      destination_address: AB:cb:cb:cb:cb:cb\n",
+            "      vid: 1\n",
             "    pcp: 2\n",
             "    addresses: [[192.168.0.7, 32]]\n",
             "interfaces:\n",
@@ -233,8 +235,10 @@ mod tests {
             period_ns: Some(1000 * 100),
             offset_ns: Some(0),
             size_bytes: Some(1000),
-            destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-            vid: Some(1),
+            stream: Some(StreamIdentification {
+                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
+                vid: Some(1),
+            }),
             pcp: Some(2),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
             cgroup: None,
@@ -246,8 +250,10 @@ mod tests {
             period_ns: Some(1000 * 120),
             offset_ns: Some(10),
             size_bytes: Some(2000),
-            destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
-            vid: Some(2),
+            stream: Some(StreamIdentification {
+                destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
+                vid: Some(2),
+            }),
             pcp: Some(3),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2)), 32)]),
             cgroup: None,

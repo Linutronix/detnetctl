@@ -104,8 +104,13 @@ impl Configuration for MergedConfiguration {
 #[cfg(all(test, feature = "sysrepo"))]
 mod tests {
     use super::*;
-    use crate::configuration::{Configuration, SysrepoConfiguration, YAMLConfiguration};
+    use crate::configuration::{
+        Configuration, StreamIdentification, SysrepoConfiguration, YAMLConfiguration,
+    };
+    use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    const VERSION: &str = "0.2.0";
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -117,8 +122,10 @@ mod tests {
             period_ns: Some(2_000_000),
             offset_ns: Some(0),
             size_bytes: Some(15000),
-            destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-            vid: Some(vid),
+            stream: Some(StreamIdentification {
+                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
+                vid: Some(vid),
+            }),
             pcp: Some(3),
             addresses: Some(vec![
                 (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
@@ -144,8 +151,10 @@ mod tests {
             expected
         );
 
-        let yaml = concat!(
-            "version: 0.0.1\n",
+        let yaml = concatcp!(
+            "version: ",
+            VERSION,
+            "\n",
             "apps:\n",
             "  app0:\n",
             "    offset_ns: 0\n",
@@ -169,7 +178,13 @@ mod tests {
 
         assert!(sysrepo_config.get_ptp_active_instance()?.is_none());
 
-        let yaml = concat!("version: 0.0.2\n", "ptp:\n", "  active_instance: 1\n",);
+        let yaml = concatcp!(
+            "version: ",
+            VERSION,
+            "\n",
+            "ptp:\n",
+            "  active_instance: 1\n",
+        );
 
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;
