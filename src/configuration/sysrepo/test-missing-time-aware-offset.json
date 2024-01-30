@@ -14,7 +14,10 @@
       "app-flow": [
         {
           "name": "app0",
-          "traffic-profile": "pf-1"
+          "traffic-profile": "pf-1",
+          "ingress": {
+            "interface": ["enp86s0.5"]
+          }
         }
       ]
     },
@@ -50,7 +53,7 @@
           "name": "fsl-1",
           "outgoing": {
             "interface": {
-              "outgoing-interface": "enp86s0.5"
+              "outgoing-interface": "ilan0"
             }
           }
         }
@@ -67,22 +70,26 @@
         "name": "enp86s0.5",
         "type": "iana-if-type:l2vlan",
         "ietf-if-extensions:parent-interface": "enp86s0",
-	"ietf-ip:ipv4": {
-	  "address": [
-	    {
-	      "ip": "192.168.2.1",
-	      "prefix-length": 24
-	    }
-	  ]
-	},
-	"ietf-ip:ipv6": {
-	  "address": [
-	    {
-	      "ip": "fd2a:bc93:8476:634::",
-	      "prefix-length": 64
-	    }
-	  ]
-	}
+        "ietf-ip:ipv4": {
+          "address": [
+            {
+              "ip": "192.168.2.1",
+              "prefix-length": 24
+            }
+          ]
+        },
+        "ietf-ip:ipv6": {
+          "address": [
+            {
+              "ip": "fd2a:bc93:8476:634::",
+              "prefix-length": 64
+            }
+          ]
+        }
+      },
+      {
+        "name": "ilan0",
+        "type": "iana-if-type:ilan"
       }
     ]
   },
@@ -108,6 +115,35 @@
         ]
       }
     ]
-  }
+  },
+  "ieee802-dot1cb-stream-identification:stream-identity": [
+    {
+      "index": 0,
+      "handle": 1,
+      "in-facing": {
+        "input-port": [
+          "ilan0"
+        ]
+      },
+      "null-stream-identification": {
+        "destination-mac": "CB-CB-CB-CB-CB-CB",
+        "vlan": 5
+      }
+    },
+    {
+      "index": 1,
+      "handle": 1,
+      "out-facing": {
+        "output-port": [
+          "enp86s0"
+        ]
+      },
+      "dmac-vlan-stream-identification": {
+        "down": {
+          "priority": 3
+        }
+      }
+    }
+  ]
 }
 

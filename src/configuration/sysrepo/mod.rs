@@ -15,6 +15,7 @@ use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
 };
 use eui48::MacAddress;
+use log::debug;
 use std::net::IpAddr;
 use std::str::FromStr;
 use yang2::data::{Data, DataNodeRef, DataTree};
@@ -29,6 +30,7 @@ pub struct SysrepoConfiguration {
 
 struct AppFlow {
     traffic_profile: Option<String>,
+    logical_interface: Option<String>,
 }
 
 struct ServiceSublayer {
@@ -52,9 +54,14 @@ struct TrafficProfile {
 }
 
 struct VLANInterface {
-    name: String,
-    physical_interface: Option<String>,
     addresses: Option<Vec<(IpAddr, u8)>>,
+}
+
+#[derive(Default)]
+struct StreamHandling {
+    tsn_handle: Option<u32>,
+    outgoing_interface: Option<String>,
+    priority: Option<u8>,
 }
 
 impl Configuration for SysrepoConfiguration {
@@ -115,38 +122,19 @@ impl Configuration for SysrepoConfiguration {
 
     /// Get and parse configuration
     ///
-    /// IP/MPLS over TSN is explicitly out of scope of the current version of the DetNet YANG model
-    /// (see
-    /// <https://datatracker.ietf.org/meeting/110/materials/slides-110-detnet-sessb-detnet-configuration-yang-model-walkthrough-02.pdf>
-    /// for the draft-ietf-detnet-yang-09 walkthough, but does not seem to have changed in the more recent drafts).
-    /// The tsn-app-flow in the YANG model is NOT for IP over TSN, but for TSN over MPLS (RFC 9024)!
-    /// For the link to the Ethernet layer there was a placeholder in the older drafts
-    /// and starting with <https://datatracker.ietf.org/doc/html/draft-ietf-detnet-yang-10> it was
-    /// apparently decided to use only the interface as reference to the Ethernet layer.
+    /// According to RFC 9023 (Deterministic Networking (DetNet) Data Plane:
+    /// IP over IEEE 802.1 Time-Sensitive Networking (TSN)) section 4.1,
+    /// using DetNet over TSN requires the usage of a TSN stream identification
+    /// according to IEEE 802.1CB after the packet has left the DetNet stack.
+    /// Therefore, in the case of DetNet over TSN, the forwarding layer of the
+    /// DetNet YANG model only provides an internal LAN interface (IANA type 247)
+    /// that links it to the TSN stream identification where the final output
+    /// interface is specified.
     ///
-    /// In order to implement "over TSN" use cases there are two alternatives:
-    /// 1. Enhance the DetNet YANG model to cover the "over TSN" use cases.
-    /// 2. Specify all TSN details via the TSN YANG models and only provide
-    ///    a link from the DetNet YANG model. This seems to be the perferred option
-    ///    in the WG to keep the separation. For this using only the interface
-    ///    is proposed without changes to the DetNet YANG model.
-    ///    (-> <https://mailarchive.ietf.org/arch/msg/detnet/DpTC_K8_Ce5ztww-9Yi08RmqAS0/>)
-    ///
-    /// This might be feasible since apparently (according to IEEE 802.1q) there is a 1:1 mapping
-    /// between (VLAN) interface and time aware offset. This implies each stream needs
-    /// a dedicated interface and the interface could be used as handle to link the DetNet flow
-    /// (interface is referenced for the app-flow as well as for next hops within the network)
-    /// with the TSN interface configuration or even the TSN stream.
-    /// It needs to be investigated if that is sufficient!
-    ///
-    /// At the moment we use only the interface configuration from the TSN configuration
-    /// and use the traffic specification from the DetNet configuration. By this, it is sufficient
-    /// to link to the interface from the DetNet layer and not to the talker itself.
-    ///
-    /// Still, it is required to get the parent interface (e.g. enp1s0) of the VLAN interface (e.g. enp1s0.5)
-    /// to set up the NIC. This is currently done via the parent-interface specified by
-    /// <https://datatracker.ietf.org/doc/draft-ietf-netmod-intf-ext-yang/>
-    /// (sub-interfaces feature needs to be enabled via 'sysrepoctl -c ietf-if-extensions -e sub-interfaces')
+    /// For the moment, we neither support Mask-and-Match Stream identification,
+    /// nor an active Stream identification that actually replaces L2 headers,
+    /// but only use the original (Destination MAC, VLAN ID) of the application
+    /// for TSN stream identification.
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
         let cfg = self.reader.get_config(
             "/detnet | /tsn-interface-configuration | /interfaces | /stream-identity",
@@ -214,6 +202,7 @@ fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<Option<AppFlow>> {
             if name == app_name {
                 return Ok(Some(AppFlow {
                     traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                    logical_interface: app_flow.get_value_for_xpath("ingress/interface")?,
                 }));
             }
         }
@@ -231,6 +220,7 @@ fn get_app_flows(tree: &DataTree) -> Result<Vec<(String, AppFlow)>> {
                         name,
                         AppFlow {
                             traffic_profile: app_flow.get_value_for_xpath("traffic-profile")?,
+                            logical_interface: app_flow.get_value_for_xpath("ingress/interface")?,
                         },
                     ));
                     Ok(acc)
@@ -257,37 +247,47 @@ fn get_app_config_from_app_flow(
         .map(|profile| get_traffic_profile(tree, profile))
         .transpose()?
         .flatten();
-    let outgoing_interface = forwarding_sublayer.and_then(|fsl| fsl.outgoing_interface);
-    let tsn_interface_cfg = outgoing_interface
+    let tsn_interface_cfg = app_flow
+        .logical_interface
         .as_ref()
         .map(|iface| get_tsn_interface_config(tree, iface))
         .transpose()?
         .flatten();
-    let logical_interface = outgoing_interface
+    let logical_interface_cfg = app_flow
+        .logical_interface
         .as_ref()
         .map(|iface| get_logical_interface(tree, iface))
         .transpose()?
         .flatten();
 
-    Ok(AppConfig {
-        logical_interface: logical_interface.as_ref().map(|iface| iface.name.clone()),
-        physical_interface: logical_interface
+    let stream = StreamIdentification {
+        destination_address: tsn_interface_cfg
             .as_ref()
-            .and_then(|iface| iface.physical_interface.clone()),
+            .and_then(|cfg| cfg.destination_address),
+        vid: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.vid),
+    };
+    let ilan_interface = forwarding_sublayer.and_then(|fsl| fsl.outgoing_interface);
+    let stream_handling = ilan_interface
+        .as_ref()
+        .map(|ilan| get_stream_handling(tree, ilan, &stream))
+        .transpose()?
+        .flatten();
+
+    Ok(AppConfig {
+        logical_interface: app_flow.logical_interface.clone(),
+        physical_interface: stream_handling
+            .as_ref()
+            .and_then(|s| s.outgoing_interface.clone()),
         period_ns: traffic_profile.as_ref().map(|profile| profile.period_ns),
         offset_ns: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.offset_ns),
         size_bytes: traffic_profile.as_ref().map(|profile| profile.size_bytes),
-        stream: Some(StreamIdentification {
-            destination_address: tsn_interface_cfg
-                .as_ref()
-                .and_then(|cfg| cfg.destination_address),
-            vid: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.vid),
-        }),
+        stream: Some(stream),
         pcp: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.pcp),
-        addresses: logical_interface
+        addresses: logical_interface_cfg
             .as_ref()
             .and_then(|iface| iface.addresses.clone()),
         cgroup: None,
+        priority: stream_handling.and_then(|s| s.priority),
     })
 }
 
@@ -516,11 +516,7 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option
                     })
                     .transpose()?;
 
-                return Ok(Some(VLANInterface {
-                    name: interface_name.to_owned(),
-                    physical_interface: interface.get_value_for_xpath("parent-interface")?,
-                    addresses,
-                }));
+                return Ok(Some(VLANInterface { addresses }));
             }
         }
     }
@@ -617,11 +613,76 @@ fn parse_schedule(tree: &DataNodeRef<'_>) -> Result<Schedule> {
     Ok(schedule.build())
 }
 
+fn get_stream_handling(
+    tree: &DataTree,
+    ilan_interface: &str,
+    stream: &StreamIdentification,
+) -> Result<Option<StreamHandling>> {
+    let mut result = StreamHandling::default();
+
+    // First we need to find out the tsn_handle
+    for stream_identity in tree.find_xpath("/stream-identity")? {
+        for port in stream_identity.get_values_for_xpath::<String>("in-facing/input-port")? {
+            if ilan_interface == port? {
+                let potential_stream = stream_identity
+                    .find_xpath("null-stream-identification")?
+                    .next()
+                    .map(|stream_id| -> Result<StreamIdentification> {
+                        Ok(StreamIdentification {
+                            destination_address: stream_id
+                                .get_value_for_xpath::<String>("destination-mac")?
+                                .map(|addr| addr.parse())
+                                .transpose()?,
+                            vid: stream_id.get_value_for_xpath("vlan")?,
+                        })
+                    })
+                    .transpose()?;
+                if Some(stream) == potential_stream.as_ref() {
+                    result.tsn_handle = stream_identity.get_value_for_xpath("handle")?;
+                    break;
+                }
+            }
+        }
+
+        if result.tsn_handle.is_some() {
+            break;
+        }
+    }
+
+    if result.tsn_handle.is_none() {
+        // The corresponding data can also reasonably be provided via YAML, so just log as debug
+        debug!("No matching tsn_handle can be found in the IEEE 802.1CB stream identification YANG configuration for interface {ilan_interface:?} and stream {stream:?}");
+        return Ok(None);
+    }
+
+    // Secondly, we look for the other leg with the same handle to get
+    // the outgoing interface and priority
+    for stream_identity in tree.find_xpath("/stream-identity")? {
+        if result.tsn_handle == stream_identity.get_value_for_xpath("handle")? {
+            let mut ports =
+                stream_identity.get_values_for_xpath::<String>("out-facing/output-port")?;
+            result.outgoing_interface = ports.next().transpose()?;
+
+            if ports.next().is_some() {
+                return Err(anyhow!(
+                    "Currently only a single out-facing/output-port is supported!"
+                ));
+            }
+
+            result.priority = stream_identity
+                .get_value_for_xpath("dmac-vlan-stream-identification/down/priority")?;
+        }
+    }
+
+    Ok(Some(result))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::configuration::{AppConfig, Configuration};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use test_log::test;
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -653,6 +714,7 @@ mod tests {
                     )
                 ]),
                 cgroup: None,
+                priority: Some(3),
             }
         );
         Ok(())
@@ -682,6 +744,7 @@ mod tests {
                 pcp: Some(3),
                 addresses: Some(vec![]),
                 cgroup: None,
+                priority: Some(2),
             }
         );
         Ok(())

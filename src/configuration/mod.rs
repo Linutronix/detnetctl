@@ -100,6 +100,23 @@ pub struct AppConfig {
 
     /// Allow only processes within this cgroup to generate traffic for this app
     cgroup: Option<PathBuf>,
+
+    /// Priority
+    /// With the TSN dispatcher, it does not need to be set as SO_PRIORITY.
+    /// Its purpose is to define the link `app -> priority -> traffic_class -> gate`.
+    priority: Option<u8>,
+}
+
+impl FillDefaults for AppConfig {
+    /// Fill unset fields with defaults.
+    /// Only `priority` is set to 0 (best-effort) if not provided.
+    fn fill_defaults(&mut self) -> Result<()> {
+        if self.priority.is_none() {
+            self.priority = Some(0);
+        }
+
+        Ok(())
+    }
 }
 
 /// Stream identification

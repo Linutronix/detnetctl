@@ -14,7 +14,10 @@
       "app-flow": [
         {
           "name": "app0",
-          "traffic-profile": "pf-1"
+          "traffic-profile": "pf-1",
+          "ingress": {
+            "interface": ["enp86s0.5"]
+          }
         }
       ]
     },
@@ -50,7 +53,7 @@
           "name": "fsl-1",
           "outgoing": {
             "interface": {
-              "outgoing-interface": "enp86s0.5"
+              "outgoing-interface": "ilan0"
             }
           }
         }
@@ -75,6 +78,10 @@
             }
           ]
         }
+      },
+      {
+        "name": "ilan0",
+        "type": "iana-if-type:ilan"
       }
     ]
   },
@@ -105,6 +112,35 @@
       }
     ]
   },
+  "ieee802-dot1cb-stream-identification:stream-identity": [
+    {
+      "index": 0,
+      "handle": 1,
+      "in-facing": {
+        "input-port": [
+          "ilan0"
+        ]
+      },
+      "null-stream-identification": {
+        "destination-mac": "48-21-0b-56-db-da",
+        "vlan": 5
+      }
+    },
+    {
+      "index": 1,
+      "handle": 1,
+      "out-facing": {
+        "output-port": [
+          "enp86s0"
+        ]
+      },
+      "dmac-vlan-stream-identification": {
+        "down": {
+          "priority": 3
+        }
+      }
+    }
+  ],
   "ieee1588-ptp-tt:ptp": {
     "instances": {
       "instance": [
@@ -116,8 +152,8 @@
               "clock-accuracy": "ieee1588-ptp-tt:ca-time-accurate-to-gt-10-s",
               "offset-scaled-log-variance": 65535
             },
-	    "domain-number": 0,
-	    "sdo-id": 256
+            "domain-number": 0,
+            "sdo-id": 256
           },
           "time-properties-ds": {
             "current-utc-offset": 37,
