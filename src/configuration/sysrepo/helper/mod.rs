@@ -93,6 +93,7 @@ impl SysrepoReader {
             ("ieee802-dot1q-types", Some("2023-10-26"), vec![]),
             ("ietf-detnet", Some("2024-01-16"), vec![]),
             ("tsn-interface-configuration", None, vec![]),
+            ("ieee802-dot1cb-stream-identification", None, vec![]),
             ("ieee1588-ptp-tt", None, vec![]),
             ("ieee802-dot1q-tsn-types", Some("2022-10-29"), vec![]),
             ("ieee802-dot1q-bridge", Some("2023-10-26"), vec![]),
@@ -223,6 +224,12 @@ pub(crate) trait GetValueForXPath {
     /// Returns Ok(None) if either there is no match for the `XPath`
     /// or there is no associated value for the match.
     fn get_value_for_xpath<T: FromDataValue>(&self, xpath: &str) -> Result<Option<T>>;
+
+    /// Gets all values for this `XPath`.
+    fn get_values_for_xpath<T: FromDataValue>(
+        &self,
+        xpath: &str,
+    ) -> Result<impl Iterator<Item = Result<T>>>;
 }
 
 impl GetValueForXPath for DataNodeRef<'_> {
@@ -244,5 +251,19 @@ impl GetValueForXPath for DataNodeRef<'_> {
             })
             .transpose()?
             .flatten())
+    }
+
+    fn get_values_for_xpath<T: FromDataValue>(
+        &self,
+        xpath: &str,
+    ) -> Result<impl Iterator<Item = Result<T>>> {
+        let elements = self.find_xpath(xpath)?;
+
+        Ok(elements.filter_map(move |element| {
+            element.value().map(|value| {
+                T::try_from_data_value(value)
+                    .with_context(|| format!("Converting value for {xpath} failed"))
+            })
+        }))
     }
 }

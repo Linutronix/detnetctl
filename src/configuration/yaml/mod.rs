@@ -242,6 +242,7 @@ mod tests {
             pcp: Some(2),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
             cgroup: None,
+            priority: Some(3),
         };
 
         let app_1 = AppConfig {
@@ -257,6 +258,7 @@ mod tests {
             pcp: Some(3),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2)), 32)]),
             cgroup: None,
+            priority: None,
         };
 
         let mut apps = AppConfigurations::default();
