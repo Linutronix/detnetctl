@@ -5,6 +5,7 @@
 use crate::configuration;
 use crate::queue_setup::{QueueSetup, QueueSetupResponse};
 use anyhow::{anyhow, Context, Result};
+use options_struct_derive::validate_are_some;
 use prost::Message;
 use std::path::{Path, PathBuf};
 
@@ -49,7 +50,19 @@ impl DetdGateway {
 
 impl QueueSetup for DetdGateway {
     fn apply_config(&self, config: &configuration::AppConfig) -> Result<QueueSetupResponse> {
-        if config.offset_ns > config.period_ns {
+        validate_are_some!(
+            config,
+            logical_interface,
+            physical_interface,
+            period_ns,
+            offset_ns,
+            size_bytes,
+            destination_address,
+            vid,
+            pcp
+        )?;
+
+        if *config.offset_ns()? > *config.period_ns()? {
             return Err(anyhow!("Not possible to setup if offset > period!"));
         }
         let socket = UnixDatagram::bind(self.local_socket_path.as_path())
@@ -59,39 +72,16 @@ impl QueueSetup for DetdGateway {
             .context("Failed to connect to detd")?;
 
         let request = detdipc::StreamQosRequest {
-            period: config
-                .period_ns
-                .ok_or_else(|| anyhow!("Period is required for detd!"))?,
-            size: config
-                .size_bytes
-                .ok_or_else(|| anyhow!("Size is required for detd!"))?,
-            interface: config
-                .physical_interface
-                .as_ref()
-                .ok_or_else(|| anyhow!("physical_interface missing"))?
-                .clone(),
-            dmac: config
-                .destination_address
-                .ok_or_else(|| anyhow!("Destination address is required for detd!"))?
-                .to_hex_string(),
-            vid: u32::from(
-                config
-                    .vid
-                    .ok_or_else(|| anyhow!("VLAN ID is required for detd!"))?,
-            ),
-            pcp: u32::from(
-                config
-                    .pcp
-                    .ok_or_else(|| anyhow!("PCP is required for detd!"))?,
-            ),
-            txmin: config
-                .offset_ns
-                .ok_or_else(|| anyhow!("Offset is required for detd!"))?,
+            period: *config.period_ns()?,
+            size: *config.size_bytes()?,
+            interface: config.physical_interface()?.clone(),
+            dmac: config.destination_address()?.to_hex_string(),
+            vid: u32::from(*config.vid()?),
+            pcp: u32::from(*config.pcp()?),
+            txmin: *config.offset_ns()?,
 
             // currently unused by detd (https://github.com/Avnu/detd/blob/e94346dfe9bd595f601ba02f27b12db79339bf88/detd/service.py#L228)
-            txmax: config
-                .offset_ns
-                .ok_or_else(|| anyhow!("Offset is required for detd!"))?,
+            txmax: *config.offset_ns()?,
 
             // currently only false supported by detd (https://github.com/Avnu/detd/blob/e94346dfe9bd595f601ba02f27b12db79339bf88/detd/service.py#L301)
             setup_socket: false,
@@ -117,12 +107,7 @@ impl QueueSetup for DetdGateway {
             ));
         }
 
-        if &response.vlan_interface
-            != config
-                .logical_interface
-                .as_ref()
-                .ok_or_else(|| anyhow!("logical_interface missing"))?
-        {
+        if &response.vlan_interface != config.logical_interface()? {
             return Err(anyhow!(
                 "Interface returned from NIC setup does not match VLAN interface in configuration!"
             ));
@@ -138,6 +123,7 @@ impl QueueSetup for DetdGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::configuration::AppConfigBuilder;
     use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use std::time::Duration;
@@ -182,18 +168,17 @@ mod tests {
     }
 
     fn generate_app_config(offset: u32) -> configuration::AppConfig {
-        configuration::AppConfig {
-            logical_interface: Some("eth0.3".to_owned()),
-            physical_interface: Some("eth0".to_owned()),
-            period_ns: Some(1000 * 100),
-            offset_ns: Some(offset),
-            size_bytes: Some(1000),
-            destination_address: Some("8a:de:82:a1:59:5a".parse().unwrap()),
-            vid: Some(3),
-            pcp: Some(4),
-            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
-            cgroup: None,
-        }
+        AppConfigBuilder::new()
+            .logical_interface("eth0.3".to_owned())
+            .physical_interface("eth0".to_owned())
+            .period_ns(1000 * 100)
+            .offset_ns(offset)
+            .size_bytes(1000)
+            .destination_address("8a:de:82:a1:59:5a".parse().unwrap())
+            .vid(3)
+            .pcp(4)
+            .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
+            .build()
     }
 
     #[test]

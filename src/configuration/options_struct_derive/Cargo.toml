@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 [package]
-name = "replace_none_options_derive"
+name = "options_struct_derive"
 version = "0.1.0"
 edition = "2021"
 

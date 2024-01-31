@@ -49,6 +49,7 @@ use crate::queue_setup::QueueSetup;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::lock::Mutex;
+use options_struct_derive::validate_are_some;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -111,6 +112,10 @@ impl Setup for Controller {
             .context("Fetching the configuration failed")?;
         println!("  Fetched from configuration module: {app_configs:#?}");
 
+        for app_config in app_configs.values() {
+            validate_are_some!(app_config, physical_interface, logical_interface)?;
+        }
+
         for (_app_name, app_config) in app_configs {
             let locked_interface_setup = interface_setup.lock().await;
 
@@ -123,7 +128,10 @@ impl Setup for Controller {
             .await; // No ? since we need to ensure that the link is up again even after error
 
             let if_up_result = set_interfaces_up(
-                vec![app_config.physical_interface, app_config.logical_interface],
+                vec![
+                    app_config.physical_interface()?,
+                    app_config.logical_interface()?,
+                ],
                 &*locked_interface_setup,
             )
             .await;
@@ -169,14 +177,11 @@ impl Protection for Controller {
         println!("  Fetched from configuration module: {app_config:#?}");
 
         let stream_id = StreamIdentification {
-            destination_address: app_config.destination_address,
-            vlan_identifier: app_config.vid,
+            destination_address: app_config.destination_address_opt().copied(),
+            vlan_identifier: app_config.vid_opt().copied(),
         };
 
-        let physical_interface = app_config
-            .physical_interface
-            .as_ref()
-            .ok_or_else(|| anyhow!("Physical interface not provided"))?;
+        let physical_interface = app_config.physical_interface()?;
 
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
@@ -194,14 +199,8 @@ async fn setup(
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
-    let physical_interface = app_config
-        .physical_interface
-        .as_ref()
-        .ok_or_else(|| anyhow!("Physical interface not provided"))?;
-    let logical_interface = app_config
-        .logical_interface
-        .as_ref()
-        .ok_or_else(|| anyhow!("Logical interface not provided"))?;
+    let physical_interface = app_config.physical_interface()?;
+    let logical_interface = app_config.logical_interface()?;
 
     interface_setup
         .set_link_state(LinkState::Down, physical_interface)
@@ -219,8 +218,8 @@ async fn setup(
 
     // Assemble stream identification
     let stream_id = StreamIdentification {
-        destination_address: app_config.destination_address,
-        vlan_identifier: app_config.vid,
+        destination_address: app_config.destination_address_opt().copied(),
+        vlan_identifier: app_config.vid_opt().copied(),
     };
 
     // Setup BPF Hooks
@@ -234,10 +233,9 @@ async fn setup(
             physical_interface,
             &stream_id,
             queue_setup_response.priority,
-            app_config.pcp,
+            app_config.pcp_opt().copied(),
             app_config
-                .cgroup
-                .as_ref()
+                .cgroup_opt()
                 .map(|c| <PathBuf as AsRef<Path>>::as_ref(c).into()),
         )
         .context("Installing protection via the dispatcher failed")?;
@@ -246,21 +244,21 @@ async fn setup(
         stream_id, queue_setup_response.priority, physical_interface
     );
 
-    if let Some(cgroup) = &app_config.cgroup {
+    if let Some(cgroup) = app_config.cgroup_opt() {
         println!("  with protection for cgroup {cgroup:?}");
     }
 
     // Setup logical interface
-    if let Some(vid) = app_config.vid {
+    if let Some(vid) = app_config.vid_opt() {
         interface_setup
-            .setup_vlan_interface(physical_interface, logical_interface, vid)
+            .setup_vlan_interface(physical_interface, logical_interface, *vid)
             .await
             .context("Setting up VLAN interface failed")?;
         println!("  VLAN interface {logical_interface} properly configured");
     }
 
     // Add address to logical interface
-    if let Some(addresses) = &app_config.addresses {
+    if let Some(addresses) = app_config.addresses_opt() {
         for (ip, prefix_length) in addresses {
             interface_setup
                 .add_address(*ip, *prefix_length, logical_interface)
@@ -276,19 +274,15 @@ async fn setup(
 }
 
 async fn set_interfaces_up(
-    interfaces: Vec<Option<String>>,
+    interfaces: Vec<&String>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
     for interface in interfaces {
-        let iface = interface
-            .as_ref()
-            .ok_or_else(|| anyhow!("Interface not provided"))?;
-
         interface_setup
-            .set_link_state(LinkState::Up, iface)
+            .set_link_state(LinkState::Up, interface)
             .await
-            .with_context(|| format!("Setting interface {iface} up failed"))?;
-        println!("  Interface {iface} up");
+            .with_context(|| format!("Setting interface {interface} up failed"))?;
+        println!("  Interface {interface} up");
     }
 
     Ok(())
@@ -297,7 +291,7 @@ async fn set_interfaces_up(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{AppConfig, MockConfiguration};
+    use crate::configuration::{AppConfig, AppConfigBuilder, MockConfiguration};
     use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
     use crate::queue_setup::{MockQueueSetup, QueueSetupResponse};
@@ -307,18 +301,33 @@ mod tests {
     use std::path::PathBuf;
 
     fn generate_app_config(interface: String, vid: u16) -> AppConfig {
-        AppConfig {
-            logical_interface: Some(format!("{interface}.{vid}")),
-            physical_interface: Some(interface),
-            period_ns: Some(0),
-            offset_ns: Some(0),
-            size_bytes: Some(0),
-            destination_address: Some("8b:de:82:a1:59:5a".parse().unwrap()),
-            vid: Some(vid),
-            pcp: Some(4),
-            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
-            cgroup: None,
-        }
+        let app_config = AppConfigBuilder::new()
+            .logical_interface(format!("{interface}.{vid}"))
+            .physical_interface(interface)
+            .period_ns(0)
+            .offset_ns(0)
+            .size_bytes(0)
+            .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
+            .vid(vid)
+            .pcp(4)
+            .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
+            .build();
+
+        validate_are_some!(
+            app_config,
+            logical_interface,
+            physical_interface,
+            period_ns,
+            offset_ns,
+            size_bytes,
+            destination_address,
+            vid,
+            pcp,
+            addresses
+        )
+        .unwrap();
+
+        app_config
     }
 
     fn configuration_happy(interface: String, vid: u16) -> MockConfiguration {
@@ -351,7 +360,7 @@ mod tests {
         let mut queue_setup = MockQueueSetup::new();
         queue_setup.expect_apply_config().returning(move |config| {
             Ok(QueueSetupResponse {
-                logical_interface: config.logical_interface.clone().unwrap(),
+                logical_interface: config.logical_interface().unwrap().to_string(),
                 priority,
             })
         });

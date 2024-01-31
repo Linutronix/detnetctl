@@ -24,6 +24,7 @@ use nix::sys::time::TimeSpec;
 use nix::time::{clock_gettime, ClockId};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
+use options_struct_derive::validate_are_some;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::fmt;
@@ -278,34 +279,39 @@ impl Ptp for PtpManager {
     async fn apply_config(&self, config: &PtpInstanceConfig) -> Result<()> {
         println!("Applying PTP configuration {config:#?}");
 
-        let missing = |v| move || anyhow!("{} missing", v);
+        validate_are_some!(
+            config,
+            clock_class,
+            clock_accuracy,
+            offset_scaled_log_variance,
+            current_utc_offset,
+            current_utc_offset_valid,
+            leap59,
+            leap61,
+            time_traceable,
+            frequency_traceable,
+            ptp_timescale,
+            time_source,
+            gptp_profile
+        )?;
 
         let mut time_flags = FlagSet::<TimeFlags>::new_truncated(0);
-        if config.leap61.ok_or_else(missing("leap61"))? {
+        if *config.leap61()? {
             time_flags |= TimeFlags::Leap61;
         }
-        if config.leap59.ok_or_else(missing("leap59"))? {
+        if *config.leap59()? {
             time_flags |= TimeFlags::Leap59;
         }
-        if config
-            .current_utc_offset_valid
-            .ok_or_else(missing("current_utc_offset_valid"))?
-        {
+        if *config.current_utc_offset_valid()? {
             time_flags |= TimeFlags::UtcOffValid;
         }
-        if config.ptp_timescale.ok_or_else(missing("ptp_timescale"))? {
+        if *config.ptp_timescale()? {
             time_flags |= TimeFlags::PtpTimescale;
         }
-        if config
-            .time_traceable
-            .ok_or_else(missing("time_traceable"))?
-        {
+        if *config.time_traceable()? {
             time_flags |= TimeFlags::TimeTraceable;
         }
-        if config
-            .frequency_traceable
-            .ok_or_else(missing("frequency traceable"))?
-        {
+        if *config.frequency_traceable()? {
             time_flags |= TimeFlags::FreqTraceable;
         }
 
@@ -313,39 +319,30 @@ impl Ptp for PtpManager {
             .checked_sub(u16::try_from(mem::size_of::<ManagementTlv>())?)
             .ok_or_else(|| anyhow!("Negative data length"))?;
 
-        let gptp_profile = config.gptp_profile.ok_or_else(missing("gptp_profile"))?;
+        let gptp_profile = config.gptp_profile()?;
 
         let msg = GrandmasterSettingsNp {
             mgt: ManagementTlv::new(
                 GrandmasterSettingsNp::MESSAGE_ID,
-                gptp_profile,
+                *gptp_profile,
                 &Action::Set,
                 data_length,
             )?,
             clock_quality: ClockQuality {
                 clock_class: config
-                    .clock_class
-                    .ok_or_else(missing("clock_class"))?
+                    .clock_class()?
                     .to_u8()
                     .ok_or_else(|| anyhow!("Cannot convert clock class"))?,
                 clock_accuracy: config
-                    .clock_accuracy
-                    .ok_or_else(missing("clock_accuracy"))?
+                    .clock_accuracy()?
                     .to_u8()
                     .ok_or_else(|| anyhow!("Cannot convert clock accuracy"))?,
-                offset_scaled_log_variance: config
-                    .offset_scaled_log_variance
-                    .ok_or_else(missing("offset_scaled_log_variance"))?
-                    .to_be(),
+                offset_scaled_log_variance: config.offset_scaled_log_variance()?.to_be(),
             },
-            utc_offset: config
-                .current_utc_offset
-                .ok_or_else(missing("utc_offset"))?
-                .to_be(),
+            utc_offset: config.current_utc_offset()?.to_be(),
             time_flags: time_flags.bits(),
             time_source: config
-                .time_source
-                .ok_or_else(missing("time_source"))?
+                .time_source()?
                 .to_u8()
                 .ok_or_else(|| anyhow!("Cannot covert time source"))?,
         };
@@ -356,7 +353,7 @@ impl Ptp for PtpManager {
         let uds_fd = UnixDatagram::bind("")?;
         let response: GrandmasterSettingsNp = send_wait_recv(&uds_fd, &dest_addr, &msg)
             .with_context(|| {
-                let has_gptp = if gptp_profile { "" } else { "No " };
+                let has_gptp = if *gptp_profile { "" } else { "No " };
                 format!("Sending grandmaster settings failed. ({has_gptp}gPTP profile configured. Does that match ptp4l?)")
             })?;
 
@@ -373,8 +370,8 @@ impl Ptp for PtpManager {
     ) -> Result<PtpStatus> {
         let mut utc_offset = DEFAULT_UTC_OFFSET;
         if let Some(config) = &self.applied_config {
-            if let Some(current_utc_offset) = config.current_utc_offset {
-                utc_offset = current_utc_offset;
+            if let Some(current_utc_offset) = config.current_utc_offset_opt() {
+                utc_offset = *current_utc_offset;
             }
         }
 

@@ -6,29 +6,29 @@
 #![cfg_attr(not(feature = "detd"), doc = "```ignore")]
 #![cfg_attr(feature = "detd", doc = "```no_run")]
 //! use detnetctl::queue_setup::{QueueSetup, DetdGateway};
-//! use detnetctl::configuration::AppConfig;
+//! use detnetctl::configuration::AppConfigBuilder;
 //!
-//! let app_config = AppConfig{
-//!     logical_interface: Some("eth0.3".to_owned()),
-//!     physical_interface: Some("eth0".to_owned()),
-//!     period_ns: Some(1000*100),
-//!     offset_ns: Some(0),
-//!     size_bytes: Some(1000),
-//!     destination_address: Some("8a:de:82:a1:59:5a".parse()?),
-//!     vid: Some(3),
-//!     pcp: Some(4),
-//!     addresses: Some(vec![
+//! let app_config = AppConfigBuilder::new()
+//!     .logical_interface("eth0.3".to_owned())
+//!     .physical_interface("eth0".to_owned())
+//!     .period_ns(1000*100)
+//!     .offset_ns(0)
+//!     .size_bytes(1000)
+//!     .destination_address("8a:de:82:a1:59:5a".parse()?)
+//!     .vid(3)
+//!     .pcp(4)
+//!     .addresses(vec![
 //!         ("192.168.3.3".parse()?, 16)
-//!     ]),
-//!     cgroup: None,
-//! };
+//!     ])
+//!     .build();
+//!
 //! let mut queue_setup = DetdGateway::new(None, None);
 //! let response = queue_setup.apply_config(&app_config)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
 use crate::configuration;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 #[cfg(test)]
 use mockall::automock;
@@ -85,11 +85,7 @@ impl DummyQueueSetup {
 impl QueueSetup for DummyQueueSetup {
     fn apply_config(&self, config: &configuration::AppConfig) -> Result<QueueSetupResponse> {
         Ok(QueueSetupResponse {
-            logical_interface: config
-                .logical_interface
-                .as_ref()
-                .ok_or_else(|| anyhow!("logical_interface missing"))?
-                .clone(),
+            logical_interface: config.logical_interface()?.clone(),
             priority: self.priority,
         })
     }

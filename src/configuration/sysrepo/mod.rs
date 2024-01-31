@@ -7,8 +7,10 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 
-use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig};
-use crate::ptp::{ClockAccuracy, ClockClass, TimeSource};
+use crate::configuration::{AppConfig, Configuration};
+use crate::ptp::{
+    ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
+};
 use eui48::MacAddress;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -323,27 +325,38 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpIn
                     })
                     .transpose()?;
 
-                return Ok(Some(PtpInstanceConfig {
-                    clock_class,
-                    clock_accuracy,
-                    offset_scaled_log_variance: instance.get_value_for_xpath(
-                        "default-ds/clock-quality/offset-scaled-log-variance",
-                    )?,
-                    current_utc_offset: instance
-                        .get_value_for_xpath("time-properties-ds/current-utc-offset")?,
-                    current_utc_offset_valid: instance
-                        .get_value_for_xpath("time-properties-ds/current-utc-offset-valid")?,
-                    leap59: instance.get_value_for_xpath("time-properties-ds/leap59")?,
-                    leap61: instance.get_value_for_xpath("time-properties-ds/leap61")?,
-                    time_traceable: instance
-                        .get_value_for_xpath("time-properties-ds/time-traceable")?,
-                    frequency_traceable: instance
-                        .get_value_for_xpath("time-properties-ds/frequency-traceable")?,
-                    ptp_timescale: instance
-                        .get_value_for_xpath("time-properties-ds/ptp-timescale")?,
-                    time_source,
-                    gptp_profile,
-                }));
+                return Ok(Some(
+                    PtpInstanceConfigBuilder::new()
+                        .clock_class_opt(clock_class)
+                        .clock_accuracy_opt(clock_accuracy)
+                        .offset_scaled_log_variance_opt(instance.get_value_for_xpath(
+                            "default-ds/clock-quality/offset-scaled-log-variance",
+                        )?)
+                        .current_utc_offset_opt(
+                            instance
+                                .get_value_for_xpath("time-properties-ds/current-utc-offset")?,
+                        )
+                        .current_utc_offset_valid_opt(
+                            instance.get_value_for_xpath(
+                                "time-properties-ds/current-utc-offset-valid",
+                            )?,
+                        )
+                        .leap59_opt(instance.get_value_for_xpath("time-properties-ds/leap59")?)
+                        .leap61_opt(instance.get_value_for_xpath("time-properties-ds/leap61")?)
+                        .time_traceable_opt(
+                            instance.get_value_for_xpath("time-properties-ds/time-traceable")?,
+                        )
+                        .frequency_traceable_opt(
+                            instance
+                                .get_value_for_xpath("time-properties-ds/frequency-traceable")?,
+                        )
+                        .ptp_timescale_opt(
+                            instance.get_value_for_xpath("time-properties-ds/ptp-timescale")?,
+                        )
+                        .time_source_opt(time_source)
+                        .gptp_profile_opt(gptp_profile)
+                        .build(),
+                ));
             }
         }
     }
@@ -459,7 +472,6 @@ fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option
 mod tests {
     use super::*;
     use crate::configuration::{AppConfig, Configuration};
-    use crate::ptp::PtpInstanceConfig;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -555,20 +567,20 @@ mod tests {
 
         assert_eq!(
             config.unwrap(),
-            PtpInstanceConfig {
-                clock_class: Some(ClockClass::Default),
-                clock_accuracy: Some(ClockAccuracy::TimeAccurateToGreaterThan10S),
-                offset_scaled_log_variance: Some(0xFFFF),
-                current_utc_offset: Some(37),
-                current_utc_offset_valid: Some(true),
-                leap59: Some(false),
-                leap61: Some(false),
-                time_traceable: Some(true),
-                frequency_traceable: Some(false),
-                ptp_timescale: Some(true),
-                time_source: Some(TimeSource::InternalOscillator),
-                gptp_profile: Some(true),
-            }
+            PtpInstanceConfigBuilder::new()
+                .clock_class(ClockClass::Default)
+                .clock_accuracy(ClockAccuracy::TimeAccurateToGreaterThan10S)
+                .offset_scaled_log_variance(0xFFFF)
+                .current_utc_offset(37)
+                .current_utc_offset_valid(true)
+                .leap59(false)
+                .leap61(false)
+                .time_traceable(true)
+                .frequency_traceable(false)
+                .ptp_timescale(true)
+                .time_source(TimeSource::InternalOscillator)
+                .gptp_profile(true)
+                .build()
         );
         Ok(())
     }
