@@ -450,12 +450,6 @@ pub struct PtpInstanceConfig {
     /// PTP Instance.
     pub time_source: Option<TimeSource>,
 
-    /// The IEEE Std 1588 domainNumber used by this
-    /// Link Port. This domain number is not configurable,
-    /// since its value is determined by the transport
-    /// mechanism of the Link Port.
-    pub domain_number: Option<u8>,
-
     /// If gptp_profile is true, use IEE 802.1AS (or gPTP) profile.
     pub gptp_profile: Option<bool>,
 }
