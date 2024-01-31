@@ -31,7 +31,7 @@
 use crate::ptp::PtpInstanceConfig;
 use anyhow::Result;
 use eui48::MacAddress;
-use replace_none_options_derive::ReplaceNoneOptions;
+use options_struct_derive::{OptionsBuilder, OptionsGetters, ReplaceNoneOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -47,48 +47,53 @@ pub trait ReplaceNoneOptions {
 use mockall::automock;
 
 /// Contains the configuration for a TSN/DetNet application
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, ReplaceNoneOptions)]
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    ReplaceNoneOptions,
+    OptionsGetters,
+    OptionsBuilder,
+)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
-    pub logical_interface: Option<String>,
+    logical_interface: Option<String>,
 
     /// Physical interface corresponding to the logical interface
-    pub physical_interface: Option<String>,
+    physical_interface: Option<String>,
 
     /// Reference time period for traffic specification
-    #[serde(default)]
-    pub period_ns: Option<u32>,
+    period_ns: Option<u32>,
 
     /// Time slot offset within period
     ///
     /// It COULD be calculated locally if latency and jitter are not relevant,
     /// otherwise a network-wide calculation (central or decentral) is required
     /// so that packets can optimally directly be forwarded WITHIN the period.
-    #[serde(default)]
-    pub offset_ns: Option<u32>,
+    offset_ns: Option<u32>,
 
     /// Used to calculate length of the time slot
-    #[serde(default)]
-    pub size_bytes: Option<u32>,
+    size_bytes: Option<u32>,
 
     /// Destination MAC address
     #[serde(default, with = "serialize_mac_address")]
-    pub destination_address: Option<MacAddress>,
+    destination_address: Option<MacAddress>,
 
     /// VLAN-Identifier
-    #[serde(default)]
-    pub vid: Option<u16>, // actually 12 bit
+    vid: Option<u16>, // actually 12 bit
 
     /// Priority Code Point
-    #[serde(default)]
-    pub pcp: Option<u8>, // actually 3 bit
+    pcp: Option<u8>, // actually 3 bit
 
     /// IP addresses and prefix lengths of the logical interface
-    pub addresses: Option<Vec<(IpAddr, u8)>>,
+    addresses: Option<Vec<(IpAddr, u8)>>,
 
     /// Allow only processes within this cgroup to generate traffic for this app
-    pub cgroup: Option<PathBuf>,
+    cgroup: Option<PathBuf>,
 }
 
 mod serialize_mac_address {
@@ -164,3 +169,41 @@ pub use self::sysrepo::SysrepoConfiguration;
 
 mod merged;
 pub use merged::MergedConfiguration;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use options_struct_derive::validate_are_some;
+
+    #[test]
+    fn validate_happy() {
+        let app_config = AppConfigBuilder::new()
+            .logical_interface("eth0.3".to_owned())
+            .build();
+
+        validate_are_some!(app_config, logical_interface).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Validation failed! physical_interface is missing for app_config")]
+    fn validate_fails() {
+        let app_config = AppConfigBuilder::new()
+            .logical_interface("eth0.3".to_owned())
+            .build();
+
+        validate_are_some!(app_config, physical_interface).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Required field physical_interface is missing in AppConfig")]
+    fn access_fails() {
+        let app_config = AppConfigBuilder::new()
+            .logical_interface("eth0.3".to_owned())
+            .build();
+
+        assert!(app_config.logical_interface_is_some());
+        assert!(!app_config.physical_interface_is_some());
+        app_config.logical_interface().unwrap();
+        app_config.physical_interface().unwrap();
+    }
+}
