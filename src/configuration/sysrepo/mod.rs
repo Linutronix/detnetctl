@@ -342,7 +342,6 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpIn
                     ptp_timescale: instance
                         .get_value_for_xpath("time-properties-ds/ptp-timescale")?,
                     time_source,
-                    domain_number: instance.get_value_for_xpath("default-ds/domain-number")?,
                     gptp_profile,
                 }));
             }
@@ -568,7 +567,6 @@ mod tests {
                 frequency_traceable: Some(false),
                 ptp_timescale: Some(true),
                 time_source: Some(TimeSource::InternalOscillator),
-                domain_number: Some(0),
                 gptp_profile: Some(true),
             }
         );

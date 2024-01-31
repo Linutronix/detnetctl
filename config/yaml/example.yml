@@ -39,5 +39,4 @@ ptp:
       frequency_traceable: false
       ptp_timescale: true
       time_source: 0xA0
-      domain_number: 0
       gptp_profile: true
