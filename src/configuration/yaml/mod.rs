@@ -8,7 +8,7 @@ use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig, TsnInter
 use anyhow::{anyhow, Context, Result};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::Read;
 
 const VERSION_REQ: &str = ">=0.2.*,<=0.3.*";
@@ -35,12 +35,12 @@ struct PtpConfig {
     instances: Option<PtpInstanceConfigurations>,
 }
 
-type AppConfigurations = HashMap<String, AppConfig>;
-type PtpInstanceConfigurations = HashMap<u32, PtpInstanceConfig>;
-type TsnInterfaceConfigs = HashMap<String, TsnInterfaceConfig>;
+type AppConfigurations = BTreeMap<String, AppConfig>;
+type PtpInstanceConfigurations = BTreeMap<u32, PtpInstanceConfig>;
+type TsnInterfaceConfigs = BTreeMap<String, TsnInterfaceConfig>;
 
 impl Configuration for YAMLConfiguration {
-    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
+    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
         Ok(self.config.interfaces.clone().unwrap_or_default())
     }
 

@@ -33,7 +33,7 @@ use anyhow::{anyhow, Result};
 use eui48::MacAddress;
 use options_struct_derive::{OptionsBuilder, OptionsGetters, ReplaceNoneOptions};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
@@ -229,7 +229,7 @@ pub trait Configuration {
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
-    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>>;
+    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>>;
 
     /// Get configuration for the given interface
     ///
@@ -252,7 +252,7 @@ pub trait Configuration {
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
-    fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>>;
+    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>>;
 
     /// Get the configured active PTP instance
     ///

@@ -5,7 +5,7 @@ use crate::configuration::{
     AppConfig, Configuration, PtpInstanceConfig, ReplaceNoneOptions, TsnInterfaceConfig,
 };
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::hash::Hash;
 
 /// Reads configuration from config and falls back to fallback for every option being `None`.
@@ -39,9 +39,9 @@ fn merge_structs<T: ReplaceNoneOptions>(config: Option<T>, fallback: Option<T>) 
     }
 }
 
-fn merge_maps<T, U>(mut map: HashMap<T, U>, fallback: HashMap<T, U>) -> HashMap<T, U>
+fn merge_maps<T, U>(mut map: BTreeMap<T, U>, fallback: BTreeMap<T, U>) -> BTreeMap<T, U>
 where
-    T: Eq + Hash,
+    T: Eq + Hash + Ord,
     U: ReplaceNoneOptions,
 {
     for (key, value) in fallback {
@@ -59,7 +59,7 @@ where
 }
 
 impl Configuration for MergedConfiguration {
-    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
+    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
         Ok(merge_maps(
             self.config.get_interface_configs()?,
             self.fallback.get_interface_configs()?,
@@ -80,7 +80,7 @@ impl Configuration for MergedConfiguration {
         ))
     }
 
-    fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>> {
+    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
         Ok(merge_maps(
             self.config.get_app_configs()?,
             self.fallback.get_app_configs()?,

@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use log::{info, warn};
 use num_derive::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Default priority map (see IEEE 802.1Q-2022 Table 8-5)
 /// The mapping 0->1, 1->0 is on purpose (see Annex I)
@@ -45,7 +45,7 @@ pub struct Schedule {
     number_of_traffic_classes: Option<u8>,
 
     /// The traffic class to choose for each priority
-    priority_map: Option<HashMap<u8, u8>>,
+    priority_map: Option<BTreeMap<u8, u8>>,
 
     /// The base time (relative to Unix epoch) in nanoseconds.
     /// If not set, 0 will be used as default and a warning is logged.
@@ -301,7 +301,7 @@ impl FillDefaults for Schedule {
                 .iter()
                 .enumerate()
                 .map(|(i, v)| Ok((u8::try_from(i)?, *v)))
-                .collect::<Result<HashMap<u8, u8>>>()
+                .collect::<Result<BTreeMap<u8, u8>>>()
         };
 
         if let Some(priority_map) = &self.priority_map {
