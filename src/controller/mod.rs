@@ -292,7 +292,7 @@ mod tests {
     use crate::interface_setup::MockInterfaceSetup;
     use crate::queue_setup::{MockQueueSetup, QueueSetupResponse};
     use anyhow::anyhow;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
 
@@ -336,7 +336,7 @@ mod tests {
             .expect_get_app_config()
             .returning(move |_| Ok(Some(generate_app_config(interface.clone(), vid))));
         configuration.expect_get_app_configs().returning(move || {
-            Ok(HashMap::from([(
+            Ok(BTreeMap::from([(
                 String::from("app0"),
                 generate_app_config(interface2.clone(), vid),
             )]))

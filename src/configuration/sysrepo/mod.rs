@@ -5,7 +5,7 @@
 //! Provides sysrepo-based network configuration (for NETCONF integration)
 
 use anyhow::{anyhow, Context, Error, Result};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::configuration::{
     schedule::{GateControlEntry, GateControlEntryBuilder, GateOperation},
@@ -65,7 +65,7 @@ struct StreamHandling {
 }
 
 impl Configuration for SysrepoConfiguration {
-    fn get_interface_configs(&mut self) -> Result<HashMap<String, TsnInterfaceConfig>> {
+    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
         let tree = self.reader.get_config("/interfaces")?;
         let interfaces = tree.find_xpath(concat!(
             "/interfaces/interface[",
@@ -76,7 +76,7 @@ impl Configuration for SysrepoConfiguration {
 
         interfaces
             .into_iter()
-            .try_fold(HashMap::new(), |mut acc, interface| {
+            .try_fold(BTreeMap::new(), |mut acc, interface| {
                 if let Some(bridge_port) = interface
                     .find_xpath("ieee802-dot1q-bridge:bridge-port")?
                     .next()
@@ -144,7 +144,7 @@ impl Configuration for SysrepoConfiguration {
             .transpose()
     }
 
-    fn get_app_configs(&mut self) -> Result<HashMap<String, AppConfig>> {
+    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
         let cfg = self.reader.get_config(
             "/detnet | /tsn-interface-configuration | /interfaces | /stream-identity",
         )?;
@@ -538,7 +538,7 @@ fn parse_schedule(tree: &DataNodeRef<'_>) -> Result<Schedule> {
     );
 
     // --- priority_map ---
-    let mut priority_map = HashMap::<u8, u8>::default();
+    let mut priority_map = BTreeMap::<u8, u8>::default();
     if let Some(tcs) = tc_table {
         for prio in 0..8 {
             if let Some(tc) = tcs.get_value_for_xpath(&format!("priority{prio}"))? {
