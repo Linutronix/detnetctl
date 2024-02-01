@@ -120,20 +120,20 @@ sudo ./examples/utils/traffic.sh enp86s0 3Gbit
 version: 0.5.0
 apps:
   measurement:
-    logical_interface: enp86s0.5
+    bind_interface: enp86s0.5
     physical_interface: enp86s0
     stream:
       destination_address: 48:21:0b:56:db:da
       vid: 5
     priority: 2
   ptp4l:
-    logical_interface: enp86s0.7
+    bind_interface: enp86s0.7
     physical_interface: enp86s0
     stream:
       destination_address: 01:80:c2:00:00:0e
       vid: 7
     priority: 4
-interfaces:
+physical_interfaces:
   enp86s0:
     schedule:
       number_of_traffic_classes: 4

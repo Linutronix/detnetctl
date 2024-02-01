@@ -3,7 +3,7 @@
     "app-flows": {
       "app-flow": [
         {
-          "name": "app0",
+          "name": "stream0",
 	  "ingress": {
 	    "interface": ["enp86s0.5"],
             "tsn-app-flow": {
@@ -22,7 +22,7 @@
           "incoming": {
             "app-flow": {
               "flow": [
-                "app0"
+                "stream0"
               ]
             }
           },

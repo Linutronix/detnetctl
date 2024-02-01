@@ -14,10 +14,10 @@ pub fn generate_example_yaml() -> NamedTempFile {
     {
         let mut f = BufWriter::new(&file);
         let data = concat!(
-            "version: 0.5.0\n",
-            "apps:\n",
+            "version: 0.6.0\n",
+            "unbridged_apps:\n",
             "  app0:\n",
-            "    logical_interface: eth0.1\n",
+            "    bind_interface: eth0.1\n",
             "    physical_interface: eth0\n",
             "    stream:\n",
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
