@@ -122,7 +122,7 @@ impl Setup for Controller {
 
         for interface_config in interface_configs.values_mut() {
             interface_config.fill_defaults()?;
-            validate_are_some!(interface_config, schedule, taprio)?;
+            validate_are_some!(interface_config, schedule, taprio, pcp_encoding)?;
         }
 
         for app_config in app_configs.values_mut() {
@@ -267,7 +267,11 @@ async fn setup_before_interface_up(
                 physical_interface,
                 stream_id,
                 (*priority).into(),
-                app_config.pcp_opt().copied(),
+                Some(
+                    *interface_config
+                        .pcp_encoding()?
+                        .pcp_from_priority(*priority)?,
+                ),
                 app_config
                     .cgroup_opt()
                     .map(|c| <PathBuf as AsRef<Path>>::as_ref(c).into()),
@@ -386,7 +390,6 @@ mod tests {
                     .vid(vid)
                     .build(),
             )
-            .pcp(4)
             .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
             .build();
 
@@ -398,7 +401,6 @@ mod tests {
             offset_ns,
             size_bytes,
             stream,
-            pcp,
             addresses
         )
         .unwrap();

@@ -126,7 +126,6 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
             }),
-            pcp: Some(3),
             addresses: Some(vec![
                 (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
                 (

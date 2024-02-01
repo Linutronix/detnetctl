@@ -128,7 +128,6 @@ apps:
     stream:
       destination_address: 48:21:0b:56:db:da
       vid: 5
-    pcp: 3
     addresses: [[10.5.1.1, 24]]
     priority: 2
   ptp4l:
@@ -140,7 +139,6 @@ apps:
     stream:
       destination_address: 01:80:c2:00:00:0e
       vid: 7
-    pcp: 4
     priority: 4
 interfaces:
   enp86s0:

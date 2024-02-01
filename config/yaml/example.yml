@@ -12,7 +12,6 @@ apps:
     stream:
       destination_address: 48:21:0b:56:db:da
       vid: 5
-    pcp: 3
     addresses: [[10.5.1.1, 24]]
     cgroup: /user.slice/
     priority: 7
@@ -25,7 +24,6 @@ apps:
     stream:
       destination_address: 48:21:0b:56:db:da
       vid: 3
-    pcp: 2
     priority: 5
 interfaces:
   enp86s0:

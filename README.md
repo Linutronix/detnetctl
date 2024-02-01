@@ -165,6 +165,22 @@ Setup of DetNet system
                 ),
             },
         ),
+        pcp_encoding: Some(
+            PcpEncodingTable {
+                map: Some(
+                    {
+                        0: 0,
+                        1: 1,
+                        2: 2,
+                        3: 3,
+                        4: 4,
+                        5: 5,
+                        6: 6,
+                        7: 7,
+                    },
+                ),
+            },
+        ),
     },
 } {
     "app0": AppConfig {
@@ -192,9 +208,6 @@ Setup of DetNet system
                     5,
                 ),
             },
-        ),
-        pcp: Some(
-            3,
         ),
         addresses: Some(
             [
@@ -237,9 +250,6 @@ Setup of DetNet system
                 ),
             },
         ),
-        pcp: Some(
-            2,
-        ),
         addresses: None,
         cgroup: None,
         priority: Some(
@@ -273,7 +283,7 @@ Setup of DetNet system
   Interface enp86s0 up
   Interface enp86s0.5 up
   Interface enp86s0.3 up
-  Finished after 2.9ms
+  Finished after 735.7µs
 ```
 
 ## D-Bus Interface
@@ -407,7 +417,6 @@ apps:
     stream:
       vid: 5
       destination_address: 48:21:0b:56:db:da
-    pcp: 3
 interfaces:
   enp86s0:
     schedule: null
@@ -595,7 +604,6 @@ apps:
     stream:
       vid: 5
       destination_address: 48:21:0b:56:db:da 
-    pcp: 3
     priority: 2
 interfaces:
   enp86s0:

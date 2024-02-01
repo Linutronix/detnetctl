@@ -92,9 +92,6 @@ pub struct AppConfig {
     /// TSN stream identification
     stream: Option<StreamIdentification>,
 
-    /// Priority Code Point
-    pcp: Option<u8>, // actually 3 bit
-
     /// IP addresses and prefix lengths of the logical interface
     addresses: Option<Vec<(IpAddr, u8)>>,
 
@@ -151,6 +148,9 @@ pub use schedule::{
 mod taprio;
 pub use self::taprio::{Clock, Mode, QueueMapping, TaprioConfig, TaprioConfigBuilder};
 
+mod pcp;
+pub use self::pcp::{PcpEncodingTable, PcpEncodingTableBuilder};
+
 /// Contains the configuration for a TSN interface
 #[derive(
     Debug,
@@ -170,6 +170,9 @@ pub struct TsnInterfaceConfig {
     /// TAPRIO configuration
     /// (excluding the schedule itself)
     taprio: Option<TaprioConfig>,
+
+    /// PCP encoding table
+    pcp_encoding: Option<PcpEncodingTable>,
 }
 
 impl FillDefaults for TsnInterfaceConfig {
@@ -189,6 +192,14 @@ impl FillDefaults for TsnInterfaceConfig {
             let mut taprio = TaprioConfigBuilder::new().build();
             taprio.fill_defaults(num_tc)?;
             self.taprio = Some(taprio);
+        }
+
+        if let Some(pcp_encoding) = self.pcp_encoding.as_mut() {
+            pcp_encoding.fill_defaults()?;
+        } else {
+            let mut pcp_encoding = PcpEncodingTableBuilder::new().build();
+            pcp_encoding.fill_defaults()?;
+            self.pcp_encoding = Some(pcp_encoding);
         }
 
         Ok(())
