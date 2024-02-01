@@ -42,7 +42,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::{AppConfig, Configuration, FillDefaults, Interface};
+use crate::configuration::{Configuration, FillDefaults, Interface, UnbridgedApp};
 use crate::dispatcher::Dispatcher;
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
@@ -95,9 +95,9 @@ impl Controller {
 
 async fn fetch_configurations(
     configuration: Arc<Mutex<dyn Configuration + Send>>,
-) -> Result<(BTreeMap<String, Interface>, BTreeMap<String, AppConfig>)> {
+) -> Result<(BTreeMap<String, Interface>, BTreeMap<String, UnbridgedApp>)> {
     let mut config = configuration.lock().await;
-    Ok((config.get_interfaces()?, config.get_app_configs()?))
+    Ok((config.get_interfaces()?, config.get_unbridged_apps()?))
 }
 
 #[async_trait]
@@ -129,7 +129,7 @@ impl Setup for Controller {
             validate_are_some!(
                 app_config,
                 physical_interface,
-                logical_interface,
+                bind_interface,
                 stream,
                 priority
             )?;
@@ -165,7 +165,7 @@ impl Setup for Controller {
 
             let app_configs_for_interface = app_configs.iter().try_fold(
                 BTreeMap::default(),
-                |mut acc, (app_name, app_config)| -> Result<BTreeMap<&String, &AppConfig>> {
+                |mut acc, (app_name, app_config)| -> Result<BTreeMap<&String, &UnbridgedApp>> {
                     if app_config.physical_interface()? == &interface_name {
                         acc.insert(app_name, app_config);
                     }
@@ -203,7 +203,7 @@ impl Setup for Controller {
             // Set logical interfaces up
             for app_config in app_configs.values() {
                 set_interface_state(
-                    app_config.logical_interface()?,
+                    app_config.bind_interface()?,
                     LinkState::Up,
                     &*locked_interface_setup,
                 )
@@ -232,7 +232,7 @@ impl Protection for Controller {
         let app_config = configuration
             .lock()
             .await
-            .get_app_config(app_name)
+            .get_unbridged_app(app_name)
             .context("Fetching the configuration failed")?
             .ok_or_else(|| anyhow!("No configuration found for {app_name}"))?;
         println!("  Fetched from configuration module: {app_config:#?}");
@@ -254,7 +254,7 @@ impl Protection for Controller {
 async fn setup_before_interface_up(
     interface: &str,
     interface_config: &Interface,
-    app_configs: &BTreeMap<&String, &AppConfig>,
+    app_configs: &BTreeMap<&String, &UnbridgedApp>,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
@@ -271,7 +271,7 @@ async fn setup_before_interface_up(
     println!("  Queues set up");
 
     for app_config in app_configs.values() {
-        let logical_interface = app_config.logical_interface()?;
+        let bind_interface = app_config.bind_interface()?;
         let stream_id = app_config.stream()?;
         let priority = app_config.priority()?;
 
@@ -304,13 +304,13 @@ async fn setup_before_interface_up(
             println!("  with protection for cgroup {cgroup:?}");
         }
 
-        // Setup logical interface
+        // Setup bind interface
         if let Some(vid) = stream_id.vid_opt() {
             interface_setup
-                .setup_vlan_interface(interface, logical_interface, *vid)
+                .setup_vlan_interface(interface, bind_interface, *vid)
                 .await
                 .context("Setting up VLAN interface failed")?;
-            println!("  VLAN interface {logical_interface} properly configured");
+            println!("  VLAN interface {bind_interface} properly configured");
         }
     }
 
@@ -335,9 +335,9 @@ async fn set_interface_state(
 mod tests {
     use super::*;
     use crate::configuration::{
-        AppConfig, AppConfigBuilder, GateControlEntryBuilder, GateOperation, InterfaceBuilder,
-        MockConfiguration, Mode, QueueMapping, ScheduleBuilder, StreamIdentificationBuilder,
-        TaprioConfigBuilder,
+        GateControlEntryBuilder, GateOperation, InterfaceBuilder, MockConfiguration, Mode,
+        QueueMapping, ScheduleBuilder, StreamIdentificationBuilder, TaprioConfigBuilder,
+        UnbridgedAppBuilder,
     };
     use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
@@ -384,9 +384,9 @@ mod tests {
             .build()
     }
 
-    fn generate_app_config(interface: String, vid: u16) -> AppConfig {
-        let app_config = AppConfigBuilder::new()
-            .logical_interface(format!("{interface}.{vid}"))
+    fn generate_app_config(interface: String, vid: u16) -> UnbridgedApp {
+        let app_config = UnbridgedAppBuilder::new()
+            .bind_interface(format!("{interface}.{vid}"))
             .physical_interface(interface)
             .stream(
                 StreamIdentificationBuilder::new()
@@ -396,7 +396,7 @@ mod tests {
             )
             .build();
 
-        validate_are_some!(app_config, logical_interface, physical_interface, stream,).unwrap();
+        validate_are_some!(app_config, bind_interface, physical_interface, stream).unwrap();
 
         app_config
     }
@@ -415,14 +415,16 @@ mod tests {
             )]))
         });
         configuration
-            .expect_get_app_config()
+            .expect_get_unbridged_app()
             .returning(move |_| Ok(Some(generate_app_config(interface.clone(), vid))));
-        configuration.expect_get_app_configs().returning(move || {
-            Ok(BTreeMap::from([(
-                String::from("app0"),
-                generate_app_config(interface2.clone(), vid),
-            )]))
-        });
+        configuration
+            .expect_get_unbridged_apps()
+            .returning(move || {
+                Ok(BTreeMap::from([(
+                    String::from("app0"),
+                    generate_app_config(interface2.clone(), vid),
+                )]))
+            });
         configuration
     }
 
@@ -435,10 +437,10 @@ mod tests {
             .expect_get_interfaces()
             .returning(|| Err(anyhow!("failed")));
         configuration
-            .expect_get_app_config()
+            .expect_get_unbridged_app()
             .returning(|_| Err(anyhow!("failed")));
         configuration
-            .expect_get_app_configs()
+            .expect_get_unbridged_apps()
             .returning(|| Err(anyhow!("failed")));
         configuration
     }

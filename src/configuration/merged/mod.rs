@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::configuration::{
-    AppConfig, Configuration, Interface, PtpInstanceConfig, ReplaceNoneOptions,
+    BridgedApp, Configuration, Interface, PtpInstanceConfig, ReplaceNoneOptions, Stream,
+    UnbridgedApp,
 };
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -59,16 +60,42 @@ impl Configuration for MergedConfiguration {
         Ok(merged)
     }
 
-    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
-        let mut merged = self.config.get_app_config(app_name)?;
-        merged.replace_none_options(self.fallback.get_app_config(app_name)?);
+    fn get_unbridged_app(&mut self, app_name: &str) -> Result<Option<UnbridgedApp>> {
+        let mut merged = self.config.get_unbridged_app(app_name)?;
+        merged.replace_none_options(self.fallback.get_unbridged_app(app_name)?);
         Ok(merged)
     }
 
-    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
+    fn get_unbridged_apps(&mut self) -> Result<BTreeMap<String, UnbridgedApp>> {
         Ok(merge_maps(
-            self.config.get_app_configs()?,
-            self.fallback.get_app_configs()?,
+            self.config.get_unbridged_apps()?,
+            self.fallback.get_unbridged_apps()?,
+        ))
+    }
+
+    fn get_bridged_app(&mut self, app_name: &str) -> Result<Option<BridgedApp>> {
+        let mut merged = self.config.get_bridged_app(app_name)?;
+        merged.replace_none_options(self.fallback.get_bridged_app(app_name)?);
+        Ok(merged)
+    }
+
+    fn get_bridged_apps(&mut self) -> Result<BTreeMap<String, BridgedApp>> {
+        Ok(merge_maps(
+            self.config.get_bridged_apps()?,
+            self.fallback.get_bridged_apps()?,
+        ))
+    }
+
+    fn get_stream(&mut self, stream_name: &str) -> Result<Option<Stream>> {
+        let mut merged = self.config.get_stream(stream_name)?;
+        merged.replace_none_options(self.fallback.get_stream(stream_name)?);
+        Ok(merged)
+    }
+
+    fn get_streams(&mut self) -> Result<BTreeMap<String, Stream>> {
+        Ok(merge_maps(
+            self.config.get_streams()?,
+            self.fallback.get_streams()?,
         ))
     }
 
@@ -89,41 +116,47 @@ impl Configuration for MergedConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::{
-        Configuration, InterfaceBuilder, StreamIdentification, SysrepoConfiguration,
-        YAMLConfiguration,
+        Configuration, InterfaceBuilder, OutgoingL2Builder, StreamBuilder,
+        StreamIdentificationBuilder, SysrepoConfiguration, YAMLConfiguration,
     };
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    const VERSION: &str = "0.5.0";
+    const VERSION: &str = "0.6.0";
 
     #[test]
-    fn test_merged_app_config() -> Result<()> {
+    fn test_merged_streams() -> Result<()> {
         let interface = String::from("enp86s0");
         let vid = 5;
-        let expected = AppConfig {
-            logical_interface: Some(format!("{interface}.{vid}")),
-            physical_interface: Some(interface.clone()),
-            stream: Some(StreamIdentification {
-                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                vid: Some(vid),
-            }),
-            cgroup: None,
-            priority: Some(3),
-        };
+        let expected = StreamBuilder::new()
+            .incoming_interface(format!("{interface}.{vid}"))
+            .identification(
+                StreamIdentificationBuilder::new()
+                    .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                    .vid(vid)
+                    .build(),
+            )
+            .outgoing_l2(
+                OutgoingL2Builder::new()
+                    .outgoing_interface(interface.clone())
+                    .build(),
+            )
+            .build();
+
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
 
-        assert_eq!(sysrepo_config.get_app_config("app0")?.unwrap(), expected);
+        assert_eq!(sysrepo_config.get_stream("stream0")?.unwrap(), expected);
 
         let yaml = format!(
             concat!(
                 "version: {0}\n",
-                "apps:\n",
-                "  app0:\n",
-                "    logical_interface: {1}.{2}\n",
-                "    physical_interface: {1}\n",
+                "streams:\n",
+                "  stream0:\n",
+                "    incoming_interface: {1}.{2}\n",
+                "    outgoing_l2:\n",
+                "      outgoing_interface: {1}\n",
             ),
             VERSION, interface, vid
         );
@@ -133,7 +166,7 @@ mod tests {
 
         let mut merged = MergedConfiguration::new(Box::new(sysrepo_config), Box::new(config));
 
-        assert_eq!(merged.get_app_config("app0")?.unwrap(), expected);
+        assert_eq!(merged.get_stream("stream0")?.unwrap(), expected);
 
         Ok(())
     }
