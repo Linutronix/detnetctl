@@ -88,6 +88,56 @@
                 }
               ]
             }
+          },
+          "pcp-selection": "8P0D",
+          "pcp-encoding-table": {
+            "pcp-encoding-map": [
+              {
+                "pcp": "8P0D",
+                "priority-map": [
+		  {
+                    "priority": 0,
+                    "priority-code-point": 1,
+                    "dei": false
+                  },
+		  {
+                    "priority": 1,
+                    "priority-code-point": 2,
+                    "dei": false
+                  },
+		  {
+                    "priority": 2,
+                    "priority-code-point": 3,
+                    "dei": false
+                  },
+		  {
+                    "priority": 3,
+                    "priority-code-point": 4,
+                    "dei": false
+                  },
+		  {
+                    "priority": 4,
+                    "priority-code-point": 5,
+                    "dei": false
+                  },
+		  {
+                    "priority": 5,
+                    "priority-code-point": 6,
+                    "dei": false
+                  },
+		  {
+                    "priority": 6,
+                    "priority-code-point": 7,
+                    "dei": false
+                  },
+		  {
+                    "priority": 7,
+                    "priority-code-point": 7,
+                    "dei": false
+                  }
+                ]
+	      }
+            ]
           }
         }
       },

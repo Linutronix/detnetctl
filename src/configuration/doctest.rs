@@ -24,8 +24,7 @@ pub fn generate_example_yaml() -> NamedTempFile {
             "    size_bytes: 1000\n",
             "    stream:\n",
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
-            "      vid: 1\n",
-            "    pcp: 2\n");
+            "      vid: 1\n");
         f.write_all(data.as_bytes()).expect("Unable to write data");
         f.flush().expect("Flush failed");
     }

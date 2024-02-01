@@ -142,7 +142,6 @@ mod tests {
             "    stream:\n",
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
-            "    pcp: 2\n",
             "    addresses: [[192.168.0.3, 16]]\n",
             "  app1:\n",
             "    logical_interface: eth3.1\n",
@@ -153,7 +152,6 @@ mod tests {
             "    stream:\n",
             "      destination_address: AB:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
-            "    pcp: 2\n",
             "    addresses: [[192.168.0.7, 32]]\n",
             "interfaces:\n",
             "  eth0:\n",
@@ -239,7 +237,6 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(1),
             }),
-            pcp: Some(2),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
             cgroup: None,
             priority: Some(3),
@@ -255,7 +252,6 @@ mod tests {
                 destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(2),
             }),
-            pcp: Some(3),
             addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2)), 32)]),
             cgroup: None,
             priority: None,
@@ -304,7 +300,6 @@ mod tests {
             "    size_bytes: 1000\n",
             "    destination_address: cb:cb:cb:cb:cb:cb\n",
             "    vid: 1\n",
-            "    pcp: 2\n"
         );
 
         let mut config = YAMLConfiguration::default();

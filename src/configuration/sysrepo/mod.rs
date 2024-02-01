@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 
 use crate::configuration::{
     schedule::{GateControlEntry, GateControlEntryBuilder, GateOperation},
-    AppConfig, Configuration, Schedule, ScheduleBuilder, StreamIdentification, TsnInterfaceConfig,
+    AppConfig, Configuration, PcpEncodingTable, PcpEncodingTableBuilder, Schedule, ScheduleBuilder,
+    StreamIdentification, TsnInterfaceConfig,
 };
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
@@ -45,7 +46,6 @@ struct TSNInterfaceConfig {
     offset_ns: Option<u32>,
     destination_address: Option<MacAddress>,
     vid: Option<u16>, // actually 12 bit
-    pcp: Option<u8>,  // actually 3 bit
 }
 
 struct TrafficProfile {
@@ -85,6 +85,7 @@ impl Configuration for SysrepoConfiguration {
                         let tsn_interface_config = TsnInterfaceConfig {
                             schedule: Some(parse_schedule(&bridge_port)?),
                             taprio: None,
+                            pcp_encoding: Some(parse_pcp_encoding(&bridge_port)?),
                         };
                         acc.insert(name, tsn_interface_config);
                     }
@@ -101,16 +102,14 @@ impl Configuration for SysrepoConfiguration {
         for interface in interfaces {
             if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
                 if name == interface_name {
+                    let bridge_port = &interface
+                        .find_xpath("ieee802-dot1q-bridge:bridge-port")?
+                        .next()
+                        .ok_or_else(|| anyhow!("bridge-port section not found for interface"))?;
                     let tsn_interface_config = TsnInterfaceConfig {
-                        schedule: Some(parse_schedule(
-                            &interface
-                                .find_xpath("ieee802-dot1q-bridge:bridge-port")?
-                                .next()
-                                .ok_or_else(|| {
-                                    anyhow!("bridge-port section not found for interface")
-                                })?,
-                        )?),
+                        schedule: Some(parse_schedule(bridge_port)?),
                         taprio: None,
+                        pcp_encoding: Some(parse_pcp_encoding(bridge_port)?),
                     };
                     return Ok(Some(tsn_interface_config));
                 }
@@ -282,7 +281,6 @@ fn get_app_config_from_app_flow(
         offset_ns: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.offset_ns),
         size_bytes: traffic_profile.as_ref().map(|profile| profile.size_bytes),
         stream: Some(stream),
-        pcp: tsn_interface_cfg.as_ref().and_then(|cfg| cfg.pcp),
         addresses: logical_interface_cfg
             .as_ref()
             .and_then(|iface| iface.addresses.clone()),
@@ -471,7 +469,6 @@ fn get_tsn_interface_config(
                 const DSTADDRPATH: &str =
                     "config-list/ieee802-mac-addresses/destination-mac-address";
                 const VLANIDPATH: &str = "config-list/ieee802-vlan-tag/vlan-id";
-                const PCPPATH: &str = "config-list/ieee802-vlan-tag/priority-code-point";
                 let destination_address = interface_config
                     .get_value_for_xpath::<String>(DSTADDRPATH)?
                     .map(|addr| addr.parse())
@@ -481,7 +478,6 @@ fn get_tsn_interface_config(
                         .get_value_for_xpath("config-list/time-aware-offset")?,
                     destination_address,
                     vid: interface_config.get_value_for_xpath(VLANIDPATH)?,
-                    pcp: interface_config.get_value_for_xpath(PCPPATH)?,
                 }));
             }
         }
@@ -613,6 +609,44 @@ fn parse_schedule(tree: &DataNodeRef<'_>) -> Result<Schedule> {
     Ok(schedule.build())
 }
 
+fn parse_pcp_encoding(tree: &DataNodeRef<'_>) -> Result<PcpEncodingTable> {
+    const PCP_SELECTION: &str = "8P0D";
+
+    let mut table = PcpEncodingTableBuilder::new();
+    let pcp_selection: Option<String> = tree.get_value_for_xpath("pcp-selection")?;
+
+    if let Some(selection) = pcp_selection {
+        if selection != PCP_SELECTION {
+            return Err(anyhow!(
+                "Currently only {PCP_SELECTION} is supported for PCP mapping"
+            ));
+        }
+    }
+
+    let mappings = tree.find_xpath("pcp-encoding-table/pcp-encoding-map")?;
+    for mapping in mappings {
+        if let Some(selection) = mapping.get_value_for_xpath::<String>("pcp")? {
+            if selection == PCP_SELECTION {
+                let mut pcp_map = BTreeMap::<u8, u8>::default();
+                for entry in mapping.find_xpath("priority-map")? {
+                    if let Some(prio) = entry.get_value_for_xpath("priority")? {
+                        if let Some(pcp) = entry.get_value_for_xpath("priority-code-point")? {
+                            pcp_map.insert(prio, pcp);
+                        }
+                    }
+                }
+
+                if !pcp_map.is_empty() {
+                    table = table.map(pcp_map);
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(table.build())
+}
+
 fn get_stream_handling(
     tree: &DataTree,
     ilan_interface: &str,
@@ -680,7 +714,7 @@ fn get_stream_handling(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{AppConfig, Configuration};
+    use crate::configuration::{AppConfig, Configuration, TsnInterfaceConfigBuilder};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use test_log::test;
 
@@ -705,7 +739,6 @@ mod tests {
                     destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                     vid: Some(vid),
                 }),
-                pcp: Some(3),
                 addresses: Some(vec![
                     (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
                     (
@@ -741,7 +774,6 @@ mod tests {
                     destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                     vid: Some(vid),
                 }),
-                pcp: Some(3),
                 addresses: Some(vec![]),
                 cgroup: None,
                 priority: Some(2),
@@ -796,6 +828,53 @@ mod tests {
                 .ptp_timescale(true)
                 .time_source(TimeSource::InternalOscillator)
                 .gptp_profile(true)
+                .build()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_interface_config_happy() -> Result<()> {
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-successful.json",
+        );
+        let interface = String::from("enp86s0");
+        let config = sysrepo_config.get_interface_config(&interface)?;
+
+        assert_eq!(
+            config.unwrap(),
+            TsnInterfaceConfigBuilder::new()
+                .schedule(
+                    ScheduleBuilder::new()
+                        .number_of_traffic_classes(4)
+                        .control_list(vec![
+                            GateControlEntryBuilder::new()
+                                .operation(GateOperation::SetGates)
+                                .time_interval_ns(5000)
+                                .traffic_classes(vec![0])
+                                .build(),
+                            GateControlEntryBuilder::new()
+                                .operation(GateOperation::SetGates)
+                                .time_interval_ns(5000)
+                                .traffic_classes(vec![1])
+                                .build(),
+                        ])
+                        .build()
+                )
+                .pcp_encoding(
+                    PcpEncodingTableBuilder::new()
+                        .map(BTreeMap::from([
+                            (0, 1),
+                            (1, 2),
+                            (2, 3),
+                            (3, 4),
+                            (4, 5),
+                            (5, 6),
+                            (6, 7),
+                            (7, 7)
+                        ]))
+                        .build()
+                )
                 .build()
         );
         Ok(())
