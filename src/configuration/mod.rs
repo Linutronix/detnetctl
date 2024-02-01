@@ -16,7 +16,7 @@
 //!
 //! let mut yaml_config = YAMLConfiguration::new();
 //! yaml_config.read(File::open(filepath)?)?;
-//! let config = yaml_config.get_app_config("app0")?;
+//! let config = yaml_config.get_unbridged_app("app0")?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 //!
@@ -25,7 +25,7 @@
 #![cfg_attr(feature = "sysrepo", doc = "```no_run")]
 //! use detnetctl::configuration::{Configuration, SysrepoConfiguration};
 //! let mut sysrepo_config = SysrepoConfiguration::new()?;
-//! let config = sysrepo_config.get_app_config("app0");
+//! let config = sysrepo_config.get_flow("appflow0");
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 use crate::ptp::PtpInstanceConfig;
@@ -56,7 +56,7 @@ pub trait FillDefaults {
 #[cfg(test)]
 use mockall::automock;
 
-/// Contains the configuration for a TSN/DetNet application
+/// Contains the configuration for an unbridged TSN/DetNet application
 #[derive(
     Debug,
     PartialEq,
@@ -69,18 +69,18 @@ use mockall::automock;
     OptionsBuilder,
 )]
 #[serde(deny_unknown_fields)]
-pub struct AppConfig {
-    /// Logical interface for the application to bind to (usually a VLAN interface like eth0.2)
-    logical_interface: Option<String>,
+pub struct UnbridgedApp {
+    /// Interface for the application to bind to (usually a VLAN interface like eth0.2)
+    bind_interface: Option<String>,
 
-    /// Physical interface corresponding to the logical interface
+    /// Physical interface as parent of the bind interface
     physical_interface: Option<String>,
 
     /// TSN stream identification
     #[replace_none_options_recursively]
     stream: Option<StreamIdentification>,
 
-    /// IP addresses and prefix lengths of the logical interface
+    /// IP addresses and prefix lengths to be configured for the bind interface
     addresses: Option<Vec<(IpAddr, u8)>>,
 
     /// Allow only processes within this cgroup to generate traffic for this app
@@ -92,7 +92,7 @@ pub struct AppConfig {
     priority: Option<u8>,
 }
 
-impl FillDefaults for AppConfig {
+impl FillDefaults for UnbridgedApp {
     /// Fill unset fields with defaults.
     /// Only `priority` is set to 0 (best-effort) if not provided.
     fn fill_defaults(&mut self) -> Result<()> {
@@ -100,6 +100,92 @@ impl FillDefaults for AppConfig {
             self.priority = Some(0);
         }
 
+        Ok(())
+    }
+}
+
+/// Contains the configuration for a bridged TSN/DetNet application
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    ReplaceNoneOptions,
+    OptionsGetters,
+    OptionsBuilder,
+)]
+#[serde(deny_unknown_fields)]
+pub struct BridgedApp {
+    /// Interface for the application to bind to (usually a VLAN interface like veth0.2)
+    bind_interface: Option<String>,
+
+    /// TSN stream identification
+    #[replace_none_options_recursively]
+    stream: Option<StreamIdentification>,
+
+    /// Virtual interface as parent of the bind interface (e.g. veth0)
+    virtual_interface_app: Option<String>,
+
+    /// Network namespace on app side
+    netns_app: Option<String>,
+
+    /// Virtual interface towards the bridge (e.g. veth1) in default host network namespace
+    virtual_interface_bridge: Option<String>,
+
+    /// IP addresses and prefix lengths to be configured for the bind interface
+    addresses: Option<Vec<(IpAddr, u8)>>,
+}
+
+impl FillDefaults for BridgedApp {
+    /// Fill unset fields with defaults.
+    fn fill_defaults(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Contains the configuration for a DetNet flow
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    ReplaceNoneOptions,
+    OptionsGetters,
+    OptionsBuilder,
+)]
+#[serde(deny_unknown_fields)]
+pub struct Flow {
+    /// App flow specification for identifying an app flow (e.g. a TSN stream) before encapsulation
+    #[replace_none_options_recursively]
+    app: Option<AppFlow>,
+
+    /// Configuration for the next hop via a TSN
+    #[replace_none_options_recursively]
+    next_hop: Option<TsnNextHop>,
+}
+
+macro_rules! fill_struct_defaults {
+    ($parent:ident, $field:ident, $builder:ident) => {
+        if let Some(val) = $parent.$field.as_mut() {
+            val.fill_defaults()?;
+        } else {
+            let mut $field = $builder::new().build();
+            $field.fill_defaults()?;
+            $parent.$field = Some($field);
+        }
+    };
+}
+
+impl FillDefaults for Flow {
+    /// Fill unset fields with defaults.
+    /// For `app`, `service` and `forwarding` and `tsn_next_hop`, see the respective structs.
+    fn fill_defaults(&mut self) -> Result<()> {
+        fill_struct_defaults!(self, app, AppFlowBuilder);
+        fill_struct_defaults!(self, next_hop, TsnNextHopBuilder);
         Ok(())
     }
 }
@@ -128,6 +214,56 @@ pub struct StreamIdentification {
     vid: Option<u16>, // actually 12 bit
 }
 
+/// Configuration for the next hop via a TSN
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    ReplaceNoneOptions,
+    OptionsGetters,
+    OptionsBuilder,
+)]
+#[serde(deny_unknown_fields)]
+pub struct TsnNextHop {
+    /// Outgoing interface. Link to the respective TSN interface configuration.
+    outgoing_interface: Option<String>,
+
+    /// Priority
+    /// With the TSN dispatcher, it does not need to be set as `SO_PRIORITY`.
+    /// Its purpose is to define the link `flow -> priority -> traffic_class -> gate`.
+    priority: Option<u8>,
+
+    /// Source MAC address
+    #[serde(default, with = "serialize_mac_address")]
+    source: Option<MacAddress>,
+
+    /// Destination MAC address
+    #[serde(default, with = "serialize_mac_address")]
+    destination: Option<MacAddress>,
+
+    /// VLAN Identifier
+    #[serde(default)]
+    vid: Option<u16>, // actually 12 bit
+}
+
+impl FillDefaults for TsnNextHop {
+    /// Fill unset fields with defaults.
+    /// `priority` is set to 0 (best-effort) if not provided.
+    fn fill_defaults(&mut self) -> Result<()> {
+        if self.priority.is_none() {
+            self.priority = Some(0);
+        }
+
+        Ok(())
+    }
+}
+
+mod detnet;
+pub use self::detnet::{AppFlow, AppFlowBuilder};
+
 mod schedule;
 pub use schedule::{
     GateControlEntry, GateControlEntryBuilder, GateOperation, Schedule, ScheduleBuilder,
@@ -151,7 +287,7 @@ pub use self::pcp::{PcpEncodingTable, PcpEncodingTableBuilder};
     OptionsGetters,
     OptionsBuilder,
 )]
-pub struct TsnInterfaceConfig {
+pub struct PhysicalInterface {
     /// Qbv schedule
     schedule: Option<Schedule>,
 
@@ -163,32 +299,22 @@ pub struct TsnInterfaceConfig {
     pcp_encoding: Option<PcpEncodingTable>,
 }
 
-impl FillDefaults for TsnInterfaceConfig {
+impl FillDefaults for PhysicalInterface {
     fn fill_defaults(&mut self) -> Result<()> {
         if let Some(schedule) = self.schedule.as_mut() {
             schedule.fill_defaults()?;
-        } else {
-            let mut schedule = ScheduleBuilder::new().build();
-            schedule.fill_defaults()?;
-            self.schedule = Some(schedule);
-        }
 
-        let num_tc = *self.schedule()?.number_of_traffic_classes()?;
-        if let Some(taprio) = self.taprio.as_mut() {
-            taprio.fill_defaults(num_tc)?;
-        } else {
-            let mut taprio = TaprioConfigBuilder::new().build();
-            taprio.fill_defaults(num_tc)?;
-            self.taprio = Some(taprio);
-        }
+            let num_tc = *self.schedule()?.number_of_traffic_classes()?;
+            if let Some(taprio) = self.taprio.as_mut() {
+                taprio.fill_defaults(num_tc)?;
+            } else {
+                let mut taprio = TaprioConfigBuilder::new().build();
+                taprio.fill_defaults(num_tc)?;
+                self.taprio = Some(taprio);
+            }
+        } // else keep schedule and taprio as None if not provided!
 
-        if let Some(pcp_encoding) = self.pcp_encoding.as_mut() {
-            pcp_encoding.fill_defaults()?;
-        } else {
-            let mut pcp_encoding = PcpEncodingTableBuilder::new().build();
-            pcp_encoding.fill_defaults()?;
-            self.pcp_encoding = Some(pcp_encoding);
-        }
+        fill_struct_defaults!(self, pcp_encoding, PcpEncodingTableBuilder);
 
         Ok(())
     }
@@ -225,12 +351,12 @@ mod serialize_mac_address {
 /// Defines how to request the configuration
 #[cfg_attr(test, automock)]
 pub trait Configuration {
-    /// Get all interface configurations
+    /// Get all physical interface configurations
     ///
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>>;
+    fn get_physical_interfaces(&mut self) -> Result<BTreeMap<String, PhysicalInterface>>;
 
     /// Get configuration for the given interface
     ///
@@ -238,22 +364,53 @@ pub trait Configuration {
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
     /// If no interface was found for that `interface_name`, Ok(None) is returned.
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>>;
+    fn get_physical_interface(&mut self, interface_name: &str)
+        -> Result<Option<PhysicalInterface>>;
 
-    /// Get the configuration for a given `app_name`
+    /// Get the configuration for a given unbridged `app_name`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no `UnbridgedApp` is found for the name, Ok(None) is returned.
+    fn get_unbridged_app(&mut self, app_name: &str) -> Result<Option<UnbridgedApp>>;
+
+    /// Get the configuration for all provided unbridged apps
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    fn get_unbridged_apps(&mut self) -> Result<BTreeMap<String, UnbridgedApp>>;
+
+    /// Get the configuration for a given bridged `app_name`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no `BridgedApp` is found for the name, Ok(None) is returned.
+    fn get_bridged_app(&mut self, app_name: &str) -> Result<Option<BridgedApp>>;
+
+    /// Get the configuration for all provided bridged apps
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    fn get_bridged_apps(&mut self) -> Result<BTreeMap<String, BridgedApp>>;
+
+    /// Get the configuration for a given `flow_name`
     ///
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
     /// If no `AppConfig` is found for the name, Ok(None) is returned.
-    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>>;
+    fn get_flow(&mut self, flow_name: &str) -> Result<Option<Flow>>;
 
-    /// Get the configuration for all provided apps
+    /// Get the configuration for all provided flows
     ///
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
-    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>>;
+    fn get_flows(&mut self) -> Result<BTreeMap<String, Flow>>;
 
     /// Get the configured active PTP instance
     ///

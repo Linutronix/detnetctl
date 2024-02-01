@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::configuration::{
-    AppConfig, Configuration, PtpInstanceConfig, ReplaceNoneOptions, TsnInterfaceConfig,
+    BridgedApp, Configuration, Flow, PhysicalInterface, PtpInstanceConfig, ReplaceNoneOptions,
+    UnbridgedApp,
 };
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -46,29 +47,58 @@ where
 }
 
 impl Configuration for MergedConfiguration {
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
+    fn get_physical_interfaces(&mut self) -> Result<BTreeMap<String, PhysicalInterface>> {
         Ok(merge_maps(
-            self.config.get_interface_configs()?,
-            self.fallback.get_interface_configs()?,
+            self.config.get_physical_interfaces()?,
+            self.fallback.get_physical_interfaces()?,
         ))
     }
 
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
-        let mut merged = self.config.get_interface_config(interface_name)?;
-        merged.replace_none_options(self.fallback.get_interface_config(interface_name)?);
+    fn get_physical_interface(
+        &mut self,
+        interface_name: &str,
+    ) -> Result<Option<PhysicalInterface>> {
+        let mut merged = self.config.get_physical_interface(interface_name)?;
+        merged.replace_none_options(self.fallback.get_physical_interface(interface_name)?);
         Ok(merged)
     }
 
-    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
-        let mut merged = self.config.get_app_config(app_name)?;
-        merged.replace_none_options(self.fallback.get_app_config(app_name)?);
+    fn get_unbridged_app(&mut self, app_name: &str) -> Result<Option<UnbridgedApp>> {
+        let mut merged = self.config.get_unbridged_app(app_name)?;
+        merged.replace_none_options(self.fallback.get_unbridged_app(app_name)?);
         Ok(merged)
     }
 
-    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
+    fn get_unbridged_apps(&mut self) -> Result<BTreeMap<String, UnbridgedApp>> {
         Ok(merge_maps(
-            self.config.get_app_configs()?,
-            self.fallback.get_app_configs()?,
+            self.config.get_unbridged_apps()?,
+            self.fallback.get_unbridged_apps()?,
+        ))
+    }
+
+    fn get_bridged_app(&mut self, app_name: &str) -> Result<Option<BridgedApp>> {
+        let mut merged = self.config.get_bridged_app(app_name)?;
+        merged.replace_none_options(self.fallback.get_bridged_app(app_name)?);
+        Ok(merged)
+    }
+
+    fn get_bridged_apps(&mut self) -> Result<BTreeMap<String, BridgedApp>> {
+        Ok(merge_maps(
+            self.config.get_bridged_apps()?,
+            self.fallback.get_bridged_apps()?,
+        ))
+    }
+
+    fn get_flow(&mut self, flow_name: &str) -> Result<Option<Flow>> {
+        let mut merged = self.config.get_flow(flow_name)?;
+        merged.replace_none_options(self.fallback.get_flow(flow_name)?);
+        Ok(merged)
+    }
+
+    fn get_flows(&mut self) -> Result<BTreeMap<String, Flow>> {
+        Ok(merge_maps(
+            self.config.get_flows()?,
+            self.fallback.get_flows()?,
         ))
     }
 
@@ -89,34 +119,45 @@ impl Configuration for MergedConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::{
-        Configuration, StreamIdentification, SysrepoConfiguration, YAMLConfiguration,
+        AppFlowBuilder, Configuration, FlowBuilder, StreamIdentificationBuilder,
+        SysrepoConfiguration, TsnNextHopBuilder, YAMLConfiguration,
     };
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    const VERSION: &str = "0.4.0";
+    const VERSION: &str = "0.5.0";
 
     #[test]
-    fn test_get_app_config_happy() -> Result<()> {
+    fn test_get_flow_config_happy() -> Result<()> {
         let interface = String::from("enp86s0");
         let vid = 5;
-        let expected = AppConfig {
-            logical_interface: Some(format!("{interface}.{vid}")),
-            physical_interface: Some(interface.clone()),
-            stream: Some(StreamIdentification {
-                destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                vid: Some(vid),
-            }),
-            addresses: Some(vec![
-                (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
-                (
-                    IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
-                    64,
-                ),
-            ]),
-            cgroup: None,
-            priority: Some(3),
-        };
+        let expected = FlowBuilder::new()
+            .app(
+                AppFlowBuilder::new()
+                    .ingress_interface(format!("{interface}.{vid}"))
+                    .stream(
+                        StreamIdentificationBuilder::new()
+                            .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                            .vid(vid)
+                            .build(),
+                    )
+                    .addresses(vec![
+                        (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
+                        (
+                            IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
+                            64,
+                        ),
+                    ])
+                    .build(),
+            )
+            .next_hop(
+                TsnNextHopBuilder::new()
+                    .outgoing_interface(interface.clone())
+                    .priority(3)
+                    .build(),
+            )
+            .build();
+
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
@@ -124,27 +165,26 @@ mod tests {
             "./src/configuration/sysrepo/test-without-ip.json",
         );
 
-        assert_eq!(sysrepo_config.get_app_config("app0")?.unwrap(), expected);
+        assert_eq!(sysrepo_config.get_flow("appflow0")?.unwrap(), expected);
 
         // expected not to match because addresses are missing
         assert_ne!(
-            sysrepo_config_wo_ip.get_app_config("app0")?.unwrap(),
+            sysrepo_config_wo_ip.get_flow("appflow0")?.unwrap(),
             expected
         );
 
-        println!(
-            "{:?}",
-            sysrepo_config_wo_ip.get_app_config("app0")?.unwrap()
-        );
+        println!("{:?}", sysrepo_config_wo_ip.get_flow("appflow0")?.unwrap());
 
         let yaml = format!(
             concat!(
                 "version: {0}\n",
-                "apps:\n",
-                "  app0:\n",
-                "    logical_interface: {1}.{2}\n",
-                "    physical_interface: {1}\n",
-                "    addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
+                "flows:\n",
+                "  appflow0:\n",
+                "    app:\n",
+                "      ingress_interface: {1}.{2}\n",
+                "      addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
+                "    next_hop:\n",
+                "      outgoing_interface: {1}\n",
             ),
             VERSION, interface, vid
         );
@@ -156,7 +196,7 @@ mod tests {
 
         let mut merged = MergedConfiguration::new(Box::new(sysrepo_config_wo_ip), Box::new(config));
 
-        assert_eq!(merged.get_app_config("app0")?.unwrap(), expected);
+        assert_eq!(merged.get_flow("appflow0")?.unwrap(), expected);
 
         Ok(())
     }

@@ -31,7 +31,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::TsnInterfaceConfig;
+use crate::configuration::PhysicalInterface;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -57,7 +57,7 @@ pub trait QueueSetup {
     async fn apply_config(
         &self,
         interface_name: &str,
-        interface_config: &TsnInterfaceConfig,
+        interface_config: &PhysicalInterface,
     ) -> Result<()>;
 }
 
@@ -72,7 +72,7 @@ impl QueueSetup for DummyQueueSetup {
     async fn apply_config(
         &self,
         _interface_name: &str,
-        _interface_config: &TsnInterfaceConfig,
+        _interface_config: &PhysicalInterface,
     ) -> Result<()> {
         Ok(())
     }

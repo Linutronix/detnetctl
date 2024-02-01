@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 
 use crate::configuration::{
     schedule::{GateControlEntry, GateControlEntryBuilder, GateOperation},
-    AppConfig, Configuration, PcpEncodingTable, PcpEncodingTableBuilder, Schedule, ScheduleBuilder,
-    StreamIdentification, TsnInterfaceConfig,
+    AppFlowBuilder, BridgedApp, Configuration, Flow, FlowBuilder, PcpEncodingTable,
+    PcpEncodingTableBuilder, PhysicalInterface, Schedule, ScheduleBuilder, StreamIdentification,
+    TsnNextHopBuilder, UnbridgedApp,
 };
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
@@ -29,7 +30,7 @@ pub struct SysrepoConfiguration {
 }
 
 struct AppFlow {
-    logical_interface: Option<String>,
+    ingress_interface: Option<String>,
     stream_id: Option<StreamIdentification>,
 }
 
@@ -53,7 +54,7 @@ struct StreamHandling {
 }
 
 impl Configuration for SysrepoConfiguration {
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
+    fn get_physical_interfaces(&mut self) -> Result<BTreeMap<String, PhysicalInterface>> {
         let tree = self.reader.get_config("/interfaces")?;
         let interfaces = tree.find_xpath(concat!(
             "/interfaces/interface[",
@@ -70,12 +71,12 @@ impl Configuration for SysrepoConfiguration {
                     .next()
                 {
                     if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
-                        let tsn_interface_config = TsnInterfaceConfig {
+                        let physical_interface = PhysicalInterface {
                             schedule: Some(parse_schedule(&bridge_port)?),
                             taprio: None,
                             pcp_encoding: Some(parse_pcp_encoding(&bridge_port)?),
                         };
-                        acc.insert(name, tsn_interface_config);
+                        acc.insert(name, physical_interface);
                     }
                 }
 
@@ -83,7 +84,10 @@ impl Configuration for SysrepoConfiguration {
             })
     }
 
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
+    fn get_physical_interface(
+        &mut self,
+        interface_name: &str,
+    ) -> Result<Option<PhysicalInterface>> {
         let tree = self.reader.get_config("/interfaces")?;
         let interfaces = tree.find_xpath("/interfaces/interface")?;
 
@@ -94,12 +98,12 @@ impl Configuration for SysrepoConfiguration {
                         .find_xpath("ieee802-dot1q-bridge:bridge-port")?
                         .next()
                         .ok_or_else(|| anyhow!("bridge-port section not found for interface"))?;
-                    let tsn_interface_config = TsnInterfaceConfig {
+                    let physical_interface = PhysicalInterface {
                         schedule: Some(parse_schedule(bridge_port)?),
                         taprio: None,
                         pcp_encoding: Some(parse_pcp_encoding(bridge_port)?),
                     };
-                    return Ok(Some(tsn_interface_config));
+                    return Ok(Some(physical_interface));
                 }
             }
         }
@@ -107,7 +111,27 @@ impl Configuration for SysrepoConfiguration {
         Ok(None)
     }
 
-    /// Get and parse configuration
+    /// Currently, the apps themselves cannot be configured via sysrepo
+    fn get_unbridged_app(&mut self, _app_name: &str) -> Result<Option<UnbridgedApp>> {
+        Ok(None)
+    }
+
+    /// Currently, the apps themselves cannot be configured via sysrepo
+    fn get_unbridged_apps(&mut self) -> Result<BTreeMap<String, UnbridgedApp>> {
+        Ok(BTreeMap::default())
+    }
+
+    /// Currently, the apps themselves cannot be configured via sysrepo
+    fn get_bridged_app(&mut self, _app_name: &str) -> Result<Option<BridgedApp>> {
+        Ok(None)
+    }
+
+    /// Currently, the apps themselves cannot be configured via sysrepo
+    fn get_bridged_apps(&mut self) -> Result<BTreeMap<String, BridgedApp>> {
+        Ok(BTreeMap::default())
+    }
+
+    /// Get and parse flow configuration
     ///
     /// According to RFC 9023 (Deterministic Networking (DetNet) Data Plane:
     /// IP over IEEE 802.1 Time-Sensitive Networking (TSN)) section 4.1,
@@ -122,25 +146,25 @@ impl Configuration for SysrepoConfiguration {
     /// nor an active Stream identification that actually replaces L2 headers,
     /// but only use the original (Destination MAC, VLAN ID) of the application
     /// for TSN stream identification.
-    fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
+    fn get_flow(&mut self, flow_name: &str) -> Result<Option<Flow>> {
         let cfg = self
             .reader
             .get_config("/detnet | /interfaces | /stream-identity")?;
-        get_app_flow(&cfg, app_name)?
-            .map(|app_flow| get_app_config_from_app_flow(&cfg, app_name, &app_flow))
+        get_app_flow(&cfg, flow_name)?
+            .map(|app_flow| get_flow_config_from_app_flow(&cfg, flow_name, &app_flow))
             .transpose()
     }
 
-    fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
+    fn get_flows(&mut self) -> Result<BTreeMap<String, Flow>> {
         let cfg = self
             .reader
             .get_config("/detnet | /interfaces| /stream-identity")?;
         get_app_flows(&cfg)?
             .iter()
-            .map(|(app_name, app_flow)| {
+            .map(|(flow_name, app_flow)| {
                 Ok((
-                    String::from(app_name),
-                    get_app_config_from_app_flow(&cfg, app_name, app_flow)?,
+                    String::from(flow_name),
+                    get_flow_config_from_app_flow(&cfg, flow_name, app_flow)?,
                 ))
             })
             .collect()
@@ -179,14 +203,14 @@ impl SysrepoConfiguration {
     }
 }
 
-fn get_app_flow(tree: &DataTree, app_name: &str) -> Result<Option<AppFlow>> {
-    // It would be easier to put the provided app_name inside the XPath expression,
+fn get_app_flow(tree: &DataTree, flow_name: &str) -> Result<Option<AppFlow>> {
+    // It would be easier to put the provided flow_name inside the XPath expression,
     // but this could lead to a potential unsafe expression
     // (see https://owasp.org/www-community/attacks/XPATH_Injection - also for alternative implementations).
     let app_flows = tree.find_xpath("/detnet/app-flows/app-flow")?;
     for app_flow in app_flows {
         if let Some(name) = app_flow.get_value_for_xpath::<String>("name")? {
-            if name == app_name {
+            if name == flow_name {
                 return Ok(Some(parse_app_flow(&app_flow)?));
             }
         }
@@ -215,7 +239,7 @@ fn parse_app_flow(app_flow: &DataNodeRef<'_>) -> Result<AppFlow> {
         .transpose()?;
 
     Ok(AppFlow {
-        logical_interface: app_flow.get_value_for_xpath("ingress/interface")?,
+        ingress_interface: app_flow.get_value_for_xpath("ingress/interface")?,
         stream_id: Some(StreamIdentification {
             destination_address,
             vid: app_flow.get_value_for_xpath("ingress/tsn-app-flow/vlan-id")?,
@@ -223,21 +247,21 @@ fn parse_app_flow(app_flow: &DataNodeRef<'_>) -> Result<AppFlow> {
     })
 }
 
-fn get_app_config_from_app_flow(
+fn get_flow_config_from_app_flow(
     tree: &DataTree,
-    app_name: &str,
+    flow_name: &str,
     app_flow: &AppFlow,
-) -> Result<AppConfig> {
-    let service_sublayer = get_service_sublayer(tree, app_name)?;
+) -> Result<Flow> {
+    let service_sublayer = get_service_sublayer(tree, flow_name)?;
     let forwarding_sublayer = service_sublayer
         .and_then(|ssl| ssl.outgoing_forwarding_sublayer)
         .map(|ofsl| get_forwarding_sublayer(tree, &ofsl))
         .transpose()?
         .flatten();
-    let logical_interface_cfg = app_flow
-        .logical_interface
+    let ingress_interface_cfg = app_flow
+        .ingress_interface
         .as_ref()
-        .map(|iface| get_logical_interface(tree, iface))
+        .map(|iface| get_ingress_interface(tree, iface))
         .transpose()?
         .flatten();
 
@@ -253,18 +277,29 @@ fn get_app_config_from_app_flow(
         .transpose()?
         .flatten();
 
-    Ok(AppConfig {
-        logical_interface: app_flow.logical_interface.clone(),
-        physical_interface: stream_handling
-            .as_ref()
-            .and_then(|s| s.outgoing_interface.clone()),
-        stream: app_flow.stream_id.clone(),
-        addresses: logical_interface_cfg
-            .as_ref()
-            .and_then(|iface| iface.addresses.clone()),
-        cgroup: None,
-        priority: stream_handling.and_then(|s| s.priority),
-    })
+    Ok(FlowBuilder::new()
+        .app(
+            AppFlowBuilder::new()
+                .ingress_interface_opt(app_flow.ingress_interface.clone())
+                .stream_opt(app_flow.stream_id.clone())
+                .addresses_opt(
+                    ingress_interface_cfg
+                        .as_ref()
+                        .and_then(|iface| iface.addresses.clone()),
+                )
+                .build(),
+        )
+        .next_hop(
+            TsnNextHopBuilder::new()
+                .outgoing_interface_opt(
+                    stream_handling
+                        .as_ref()
+                        .and_then(|s| s.outgoing_interface.clone()),
+                )
+                .priority_opt(stream_handling.and_then(|s| s.priority))
+                .build(),
+        )
+        .build())
 }
 
 fn get_service_sublayer(
@@ -400,7 +435,7 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpIn
     Ok(None)
 }
 
-fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option<VLANInterface>> {
+fn get_ingress_interface(tree: &DataTree, interface_name: &str) -> Result<Option<VLANInterface>> {
     let interfaces = tree.find_xpath("/interfaces/interface")?;
     for interface in interfaces {
         if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
@@ -635,75 +670,96 @@ fn get_stream_handling(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{AppConfig, Configuration, TsnInterfaceConfigBuilder};
+    use crate::configuration::{
+        Configuration, PhysicalInterfaceBuilder, StreamIdentificationBuilder,
+    };
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use test_log::test;
 
     #[test]
-    fn test_get_app_config_happy() -> Result<()> {
+    fn test_get_flow_config_happy() -> Result<()> {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
-        let config = sysrepo_config.get_app_config("app0")?;
+        let config = sysrepo_config.get_flow("appflow0")?;
 
         let interface = String::from("enp86s0");
         let vid = 5;
         assert_eq!(
             config.unwrap(),
-            AppConfig {
-                logical_interface: Some(format!("{interface}.{vid}")),
-                physical_interface: Some(interface),
-                stream: Some(StreamIdentification {
-                    destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                    vid: Some(vid),
-                }),
-                addresses: Some(vec![
-                    (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
-                    (
-                        IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
-                        64
-                    )
-                ]),
-                cgroup: None,
-                priority: Some(3),
-            }
+            FlowBuilder::new()
+                .app(
+                    AppFlowBuilder::new()
+                        .ingress_interface(format!("{interface}.{vid}"))
+                        .stream(
+                            StreamIdentificationBuilder::new()
+                                .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                                .vid(vid)
+                                .build(),
+                        )
+                        .addresses(vec![
+                            (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
+                            (
+                                IpAddr::V6(Ipv6Addr::new(
+                                    0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0
+                                )),
+                                64
+                            )
+                        ])
+                        .build()
+                )
+                .next_hop(
+                    TsnNextHopBuilder::new()
+                        .outgoing_interface("enp86s0".to_owned())
+                        .priority(3)
+                        .build()
+                )
+                .build()
         );
         Ok(())
     }
 
     #[test]
-    fn test_get_app_config_happy_without_ip() -> Result<()> {
+    fn test_get_flow_config_happy_without_ip() -> Result<()> {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-without-ip.json",
         );
-        let config = sysrepo_config.get_app_config("app0")?;
+        let config = sysrepo_config.get_flow("appflow0")?;
 
         let interface = String::from("enp86s0");
         let vid = 5;
         assert_eq!(
             config.unwrap(),
-            AppConfig {
-                logical_interface: Some(format!("{interface}.{vid}")),
-                physical_interface: Some(interface),
-                stream: Some(StreamIdentification {
-                    destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                    vid: Some(vid),
-                }),
-                addresses: None,
-                cgroup: None,
-                priority: Some(3),
-            }
+            FlowBuilder::new()
+                .app(
+                    AppFlowBuilder::new()
+                        .ingress_interface(format!("{interface}.{vid}"))
+                        .stream(
+                            StreamIdentificationBuilder::new()
+                                .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                                .vid(vid)
+                                .build(),
+                        )
+                        .build()
+                )
+                .next_hop(
+                    TsnNextHopBuilder::new()
+                        .outgoing_interface("enp86s0".to_owned())
+                        .priority(3)
+                        .build()
+                )
+                .build()
         );
         Ok(())
     }
 
     #[test]
-    fn test_get_app_config_missing() {
+    fn test_get_flow_config_missing() {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
         assert!(sysrepo_config
-            .get_app_config("somemissingapp")
+            .get_flow("somemissingflow")
             .unwrap()
             .is_none());
     }
@@ -741,11 +797,11 @@ mod tests {
             "./src/configuration/sysrepo/test-successful.json",
         );
         let interface = String::from("enp86s0");
-        let config = sysrepo_config.get_interface_config(&interface)?;
+        let config = sysrepo_config.get_physical_interface(&interface)?;
 
         assert_eq!(
             config.unwrap(),
-            TsnInterfaceConfigBuilder::new()
+            PhysicalInterfaceBuilder::new()
                 .schedule(
                     ScheduleBuilder::new()
                         .number_of_traffic_classes(4)
