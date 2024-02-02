@@ -229,7 +229,7 @@ pub fn options_builder(input: TokenStream) -> TokenStream {
                     quote! {
                         #[doc=#doc_comment]
                         pub fn #field_name(mut self, #field_name: #field_type) -> #builder_name {
-                            self.obj.#field_name = Some(#field_name);
+                            self.obj.#field_name = #field_name;
                             self
                         }
                     }
