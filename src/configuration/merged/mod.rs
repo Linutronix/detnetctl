@@ -26,19 +26,6 @@ impl MergedConfiguration {
     }
 }
 
-/// If config is None, return fallback. Otherwise and if fallback is Some, merge the two.
-fn merge_structs<T: ReplaceNoneOptions>(config: Option<T>, fallback: Option<T>) -> Option<T> {
-    if let Some(mut c) = config {
-        if let Some(f) = fallback {
-            c.replace_none_options(f);
-        }
-
-        Some(c)
-    } else {
-        fallback
-    }
-}
-
 fn merge_maps<T, U>(mut map: BTreeMap<T, U>, fallback: BTreeMap<T, U>) -> BTreeMap<T, U>
 where
     T: Eq + Hash + Ord,
@@ -67,17 +54,15 @@ impl Configuration for MergedConfiguration {
     }
 
     fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
-        Ok(merge_structs(
-            self.config.get_interface_config(interface_name)?,
-            self.fallback.get_interface_config(interface_name)?,
-        ))
+        let mut merged = self.config.get_interface_config(interface_name)?;
+        merged.replace_none_options(self.fallback.get_interface_config(interface_name)?);
+        Ok(merged)
     }
 
     fn get_app_config(&mut self, app_name: &str) -> Result<Option<AppConfig>> {
-        Ok(merge_structs(
-            self.config.get_app_config(app_name)?,
-            self.fallback.get_app_config(app_name)?,
-        ))
+        let mut merged = self.config.get_app_config(app_name)?;
+        merged.replace_none_options(self.fallback.get_app_config(app_name)?);
+        Ok(merged)
     }
 
     fn get_app_configs(&mut self) -> Result<BTreeMap<String, AppConfig>> {
@@ -94,10 +79,9 @@ impl Configuration for MergedConfiguration {
     }
 
     fn get_ptp_config(&mut self, instance: u32) -> Result<Option<PtpInstanceConfig>> {
-        Ok(merge_structs(
-            self.config.get_ptp_config(instance)?,
-            self.fallback.get_ptp_config(instance)?,
-        ))
+        let mut merged = self.config.get_ptp_config(instance)?;
+        merged.replace_none_options(self.fallback.get_ptp_config(instance)?);
+        Ok(merged)
     }
 }
 
