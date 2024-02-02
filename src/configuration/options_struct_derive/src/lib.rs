@@ -5,7 +5,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, spanned::Spanned, DeriveInput};
 
-#[proc_macro_derive(ReplaceNoneOptions)]
+#[proc_macro_derive(ReplaceNoneOptions, attributes(replace_none_options_recursively))]
 pub fn replace_none_options(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let struct_name = &ast.ident;
@@ -25,18 +25,41 @@ pub fn replace_none_options(input: TokenStream) -> TokenStream {
                     };
                 };
 
+                let replace_recursively = field
+                    .attrs
+                    .iter()
+                    .any(|x| x.path.is_ident("replace_none_options_recursively"));
+
                 let field_name = &field.ident;
                 if segment.ident == "Option" {
                     // Field is of type Option<T>
-                    quote! {
-                        if self.#field_name.is_none() {
-                            self.#field_name = fallback.#field_name;
+                    if replace_recursively {
+                        quote! {
+                            if let Some(mut orig) = self.#field_name.as_mut() {
+                                if let Some(fallb) = fallback.#field_name {
+                                    orig.replace_none_options(fallb);
+                                }
+                            } else {
+                                self.#field_name = fallback.#field_name;
+                            }
+                        }
+                    } else {
+                        quote! {
+                            if self.#field_name.is_none() {
+                                self.#field_name = fallback.#field_name;
+                            }
                         }
                     }
                 } else {
-                    // This is not an Option<T>, so keep it intact.
-                    quote! {
-                        // No action needed
+                    // This is not an Option<T>
+                    if replace_recursively {
+                        quote! {
+                            self.#field_name.replace_none_options(&fallback.#field_name);
+                        }
+                    } else {
+                        quote! {
+                            // No action needed
+                        }
                     }
                 }
             });
@@ -44,6 +67,18 @@ pub fn replace_none_options(input: TokenStream) -> TokenStream {
                 impl ReplaceNoneOptions for #struct_name {
                     fn replace_none_options(&mut self, fallback: Self) {
                         #( #replace_fields )*
+                    }
+                }
+
+                impl ReplaceNoneOptions for Option<#struct_name> {
+                    fn replace_none_options(&mut self, fallback: Self) {
+                        if let Some(mut orig) = self.as_mut() {
+                            if let Some(fallb) = fallback {
+                                orig.replace_none_options(fallb);
+                            }
+                        } else {
+                            *self = fallback;
+                        }
                     }
                 }
             }

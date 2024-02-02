@@ -77,6 +77,7 @@ pub struct AppConfig {
     physical_interface: Option<String>,
 
     /// TSN stream identification
+    #[replace_none_options_recursively]
     stream: Option<StreamIdentification>,
 
     /// IP addresses and prefix lengths of the logical interface
