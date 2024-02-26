@@ -196,7 +196,7 @@ impl BPFDispatcher<'_> {
     fn attach_interface(&mut self, interface: &str) -> Result<()> {
         let skel_builder = (self.generate_skel)();
         let mut open_skel = skel_builder.open()?;
-        open_skel.rodata().debug_output = self.debug_output;
+        open_skel.rodata_mut().debug_output = self.debug_output;
 
         let mut skel = open_skel.load()?;
 
@@ -442,7 +442,7 @@ mod tests {
             .expect_load()
             .times(1)
             .returning(move || Ok(generate_skel(cgroup.clone())));
-        open_skel.expect_rodata().times(1).returning(|| {
+        open_skel.expect_rodata_mut().times(1).returning(|| {
             mocks::network_dispatcher_rodata_types::rodata {
                 debug_output: false,
             }

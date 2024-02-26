@@ -25,7 +25,7 @@ pub(crate) mod network_dispatcher_rodata_types {
 mock! {
     pub(crate) OpenNetworkDispatcherSkel {
         pub(crate) fn load(mut self) -> libbpf_rs::Result<MockNetworkDispatcherSkel<'static>>;
-        pub(crate) fn rodata(&mut self) -> &mut network_dispatcher_rodata_types::rodata;
+        pub(crate) fn rodata_mut(&mut self) -> &mut network_dispatcher_rodata_types::rodata;
     }
 }
 
