@@ -16,11 +16,6 @@ fn main() {
     build_bpf();
 }
 
-#[cfg(all(feature = "bpf", feature = "libbpf_with_sotoken"))]
-const BPF_FLAGS: &str = "-DLIBBPF_WITH_SOTOKEN";
-#[cfg(all(feature = "bpf", not(feature = "libbpf_with_sotoken")))]
-const BPF_FLAGS: &str = "";
-
 #[cfg(feature = "bpf")]
 fn build_bpf() {
     let mut out =
@@ -28,7 +23,6 @@ fn build_bpf() {
     out.push("network_dispatcher.skel.rs");
     SkeletonBuilder::new()
         .source(BPF_SRC)
-        .clang_args(BPF_FLAGS)
         .build_and_generate(&out)
         .unwrap();
     println!("cargo:rerun-if-changed={BPF_SRC}");
