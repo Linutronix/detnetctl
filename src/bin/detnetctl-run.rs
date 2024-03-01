@@ -201,7 +201,7 @@ fn reset_failed(proxy: &Proxy<'_, &Connection>, unit_name: &str) -> Result<(), d
 fn get_cgroup(pid: u32) -> Result<String> {
     let lines = read_lines(format!("/proc/{pid}/cgroup"))?;
     let re = Regex::new(r"0::([^ ]*)")?;
-    for line in lines.flatten() {
+    for line in lines.map_while(Result::ok) {
         if let Some(caps) = re.captures(&line) {
             if let Some(m) = caps.get(1) {
                 return Ok(m.as_str().to_owned());
