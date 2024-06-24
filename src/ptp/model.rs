@@ -393,7 +393,7 @@ pub struct PtpInstanceConfig {
     /// or in the event it becomes the Grandmaster PTP Instance.
     clock_accuracy: Option<ClockAccuracy>,
 
-    /// The offsetScaledLogVariance indicates the stability of the
+    /// The `offset_scaled_log_variance` indicates the stability of the
     /// clock (Local Clock of the PTP Instance). It provides an
     /// estimate of the variations of the clock from a linear timescale
     /// when it is not synchronized to another clock using the protocol.
@@ -404,37 +404,37 @@ pub struct PtpInstanceConfig {
     /// units of seconds.
     current_utc_offset: Option<i16>,
 
-    /// The value of current-utc-offset-valid shall be true
-    /// if the values of current-utc-offset, leap59, and leap61
+    /// The value of `current_utc_offset_valid` shall be true
+    /// if the values of `current_utc_offset`, `leap59`, and `leap61`
     /// are known to be correct, otherwise it shall be false.
     current_utc_offset_valid: Option<bool>,
 
-    /// If the timescale is PTP, a true value for leap59
+    /// If the timescale is PTP, a true value for `leap59`
     /// shall indicate that the last minute of the
     /// current UTC day contains 59 seconds.
     /// If the timescale is not PTP, the value shall be
     /// false.
     leap59: Option<bool>,
 
-    /// If the timescale is PTP, a true value for leap61
+    /// If the timescale is PTP, a true value for `leap61`
     /// shall indicate that the last minute of the
     /// current UTC day contains 61 seconds.
     /// If the timescale is not PTP, the value shall be
     /// false.
     leap61: Option<bool>,
 
-    /// The value of time-traceable shall be true if the
+    /// The value of `time_traceable` shall be true if the
     /// timescale is traceable to a primary reference;
     /// otherwise, the value shall be false.
     /// The uncertainty specifications appropriate to the
     /// evaluation of whether traceability to a primary
     /// reference is achieved should be defined in the
     /// applicable PTP Profile. In the absence of such a
-    /// definition the value of time-traceable is
+    /// definition the value of `time_traceable` is
     /// implementation specific.
     time_traceable: Option<bool>,
 
-    /// The value of time-traceable shall be true if the
+    /// The value of `frequency_traceable` shall be true if the
     /// frequency determining the timescale is traceable
     /// to a primary reference; otherwise, the value shall
     /// be false.
@@ -442,16 +442,16 @@ pub struct PtpInstanceConfig {
     /// evaluation of whether traceability to a primary
     /// reference is achieved should be defined in the
     /// applicable PTP Profile. In the absence of such a
-    /// definition the value of frequency-traceable is
+    /// definition the value of `frequency_traceable` is
     /// implementation specific.
     frequency_traceable: Option<bool>,
 
-    /// If ptp-timescale is true, the timescale of
+    /// If `ptp_timescale` is true, the timescale of
     /// the Grandmaster PTP Instance is PTP, which is
     /// the elapsed time since the PTP epoch measured
     /// using the second defined by International Atomic
     /// Time (TAI).
-    /// If ptp-timescale is false, the timescale of
+    /// If `ptp_timescale` is false, the timescale of
     /// the Grandmaster PTP Instance is ARB, which is
     /// the elapsed time since an arbitrary epoch.
     ptp_timescale: Option<bool>,
@@ -460,7 +460,7 @@ pub struct PtpInstanceConfig {
     /// PTP Instance.
     time_source: Option<TimeSource>,
 
-    /// If gptp_profile is true, use IEE 802.1AS (or gPTP) profile.
+    /// If `gptp_profile` is true, use IEE 802.1AS (or gPTP) profile.
     gptp_profile: Option<bool>,
 }
 

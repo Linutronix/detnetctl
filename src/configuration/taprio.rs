@@ -62,7 +62,7 @@ pub enum Clock {
     /// Clock that cannot be set and represents monotonic time since some unspecified starting point.
     Monotonic = CLOCK_MONOTONIC as isize,
 
-    /// Identical to CLOCK_MONOTONIC, except it also includes any time that the system is suspended.
+    /// Identical to `CLOCK_MONOTONIC`, except it also includes any time that the system is suspended.
     Boottime = CLOCK_BOOTTIME as isize,
 }
 
@@ -99,7 +99,7 @@ pub struct TaprioConfig {
     pub clock: Option<Clock>,
 
     /// The maximum time a packet might take to reach the network card from the taprio qdisc.
-    /// Only used for TxTimeAssist mode.
+    /// Only used for `TxTimeAssist` mode.
     pub txtime_delay: Option<u32>,
 
     /// Count and offset of queue range for each traffic class

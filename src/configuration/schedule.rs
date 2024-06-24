@@ -70,7 +70,7 @@ pub struct Schedule {
 )]
 #[serde(deny_unknown_fields)]
 pub struct GateControlEntry {
-    /// The operation to perform. Currently, only SetGates is supported.
+    /// The operation to perform. Currently, only `SetGates` is supported.
     operation: Option<GateOperation>,
 
     /// Time interval in nanoseconds

@@ -29,7 +29,7 @@ const UNIT_EXISTS_ERROR: Option<&str> = Some("org.freedesktop.systemd1.UnitExist
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, trailing_var_arg=true)]
 struct Cli {
-    /// Register with the provided app_name
+    /// Register with the provided `app_name`
     app_name: String,
 
     /// Command to start as child process
@@ -40,7 +40,7 @@ struct Cli {
     arguments: Vec<String>,
 }
 
-/// Main function of the detnetctl-run tool
+/// Main function of the `detnetctl-run` tool
 ///
 /// # Errors
 /// Will return `Err` if any error occurs that can not be handled

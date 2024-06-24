@@ -86,7 +86,7 @@ pub struct AppConfig {
     cgroup: Option<PathBuf>,
 
     /// Priority
-    /// With the TSN dispatcher, it does not need to be set as SO_PRIORITY.
+    /// With the TSN dispatcher, it does not need to be set as `SO_PRIORITY`.
     /// Its purpose is to define the link `app -> priority -> traffic_class -> gate`.
     priority: Option<u8>,
 }

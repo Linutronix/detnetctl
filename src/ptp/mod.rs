@@ -22,28 +22,28 @@ pub use model::*;
 #[derive(Debug)]
 #[allow(dead_code)] // only Debug output is used for reading at the moment
 pub struct PtpTimes {
-    /// Current CLOCK_REALTIME
+    /// Current `CLOCK_REALTIME`
     pub rt: NaiveDateTime,
 
-    /// Current CLOCK_TAI
+    /// Current `CLOCK_TAI`
     pub tai: NaiveDateTime,
 
     /// Current PTP clock
     pub ptp: NaiveDateTime,
 
-    /// Read latency of CLOCK_READTIME
+    /// Read latency of `CLOCK_REALTIME`
     pub lat_rt: Duration,
 
-    /// Read latency of CLOCK_TAI
+    /// Read latency of `CLOCK_TAI`
     pub lat_tai: Duration,
 
     /// Read latency of PTP clock
     pub lat_ptp: Duration,
 
-    /// PTP Clock - CLOCK_REALTIME
+    /// PTP Clock - `CLOCK_REALTIME`
     pub phc_rt: Duration,
 
-    /// PTP Clock - CLOCK_TAI
+    /// PTP Clock - `CLOCK_TAI`
     pub phc_tai: Duration,
 }
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #![warn(missing_docs)]
+#![allow(clippy::doc_link_with_quotes)]
 #![doc = include_str!("../README.md")]
 // we do not want to panic or exit, see explanation in main()
 #![cfg_attr(
