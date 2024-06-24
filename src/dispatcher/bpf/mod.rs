@@ -409,7 +409,6 @@ mod tests {
     use mocks::MockProgram as Program;
     use mocks::{MockInnerMapInfo, MockMapInfo};
     use regex::Regex;
-    use std::fs;
     use std::io;
     use std::io::BufRead;
     use std::path::Path;
@@ -622,7 +621,7 @@ mod tests {
     where
         P: AsRef<Path>,
     {
-        let file = fs::File::open(filename)?;
+        let file = File::open(filename)?;
         Ok(io::BufReader::new(file).lines())
     }
 

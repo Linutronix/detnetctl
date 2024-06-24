@@ -421,19 +421,15 @@ mod tests {
                     dbus_names
                         .get(app_name)
                         .ok_or_else(|| anyhow!("app_name not in dbus_names"))
-                        .map(std::clone::Clone::clone)
+                        .map(Clone::clone)
                 });
 
             c.expect_start_receive()
                 .returning(move |_, mut receive_callback| {
-                    let mut message = dbus::Message::new_method_call(
-                        DBUS_NAME,
-                        OBJECT_NAME,
-                        DBUS_NAME,
-                        "Protect",
-                    )
-                    .expect("method can not be created")
-                    .append2(&sent_app_name, &sent_cgroup);
+                    let mut message =
+                        Message::new_method_call(DBUS_NAME, OBJECT_NAME, DBUS_NAME, "Protect")
+                            .expect("method can not be created")
+                            .append2(&sent_app_name, &sent_cgroup);
                     message.set_sender(Some(BusName::from(SENDER)));
                     message.set_serial(123);
 

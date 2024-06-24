@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Error, Result};
 use clap::Parser;
 use dbus::arg;
-use dbus::arg::{RefArg, Variant};
+use dbus::arg::{AppendAll, ReadAll, RefArg, Variant};
 use dbus::blocking::stdintf::org_freedesktop_dbus::RequestNameReply;
 use dbus::blocking::{Connection, Proxy};
 use dbus::Message;
@@ -74,7 +74,7 @@ pub async fn main() -> Result<()> {
         }
     };
 
-    std::process::exit(exit_status.code().unwrap_or(1));
+    process::exit(exit_status.code().unwrap_or(1));
 }
 
 #[derive(Debug)]
@@ -85,16 +85,16 @@ struct OrgFreedesktopSystemd1ManagerJobRemoved {
     result: String,
 }
 
-impl arg::AppendAll for OrgFreedesktopSystemd1ManagerJobRemoved {
+impl AppendAll for OrgFreedesktopSystemd1ManagerJobRemoved {
     fn append(&self, i: &mut arg::IterAppend<'_>) {
-        arg::RefArg::append(&self.id, i);
-        arg::RefArg::append(&self.job, i);
-        arg::RefArg::append(&self.unit, i);
-        arg::RefArg::append(&self.result, i);
+        RefArg::append(&self.id, i);
+        RefArg::append(&self.job, i);
+        RefArg::append(&self.unit, i);
+        RefArg::append(&self.result, i);
     }
 }
 
-impl arg::ReadAll for OrgFreedesktopSystemd1ManagerJobRemoved {
+impl ReadAll for OrgFreedesktopSystemd1ManagerJobRemoved {
     fn read(i: &mut arg::Iter<'_>) -> Result<Self, arg::TypeMismatchError> {
         Ok(Self {
             id: i.read()?,
