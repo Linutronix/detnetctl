@@ -118,6 +118,7 @@ unused = "warn"
 unused_lifetimes = "warn"
 unused_qualifications = "warn"
 unused_tuple_struct_fields = "warn"
+dead_code = "warn"
 variant_size_differences = "warn"
 
 [lints.clippy]
