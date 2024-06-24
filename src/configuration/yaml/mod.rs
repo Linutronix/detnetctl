@@ -61,7 +61,7 @@ impl Configuration for YAMLConfiguration {
     }
 
     fn get_app_configs(&mut self) -> Result<AppConfigurations> {
-        Ok(self.config.apps.as_ref().cloned().unwrap_or_default())
+        Ok(self.config.apps.clone().unwrap_or_default())
     }
 
     fn get_ptp_active_instance(&mut self) -> Result<Option<u32>> {

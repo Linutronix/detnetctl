@@ -421,7 +421,7 @@ mod tests {
                     dbus_names
                         .get(app_name)
                         .ok_or_else(|| anyhow!("app_name not in dbus_names"))
-                        .map(Clone::clone)
+                        .cloned()
                 });
 
             c.expect_start_receive()
