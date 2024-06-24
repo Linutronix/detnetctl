@@ -409,6 +409,12 @@ impl PtpManager {
     }
 }
 
+impl Default for PtpManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const fn make_process_cpuclock(pid: i32, clock: clockid_t) -> clockid_t {
     ((!pid) << 3) | clock
 }

@@ -78,6 +78,12 @@ impl NetlinkSetup {
     }
 }
 
+impl Default for NetlinkSetup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl InterfaceSetup for NetlinkSetup {
     async fn set_link_state(&self, state: LinkState, interface: &str) -> Result<()> {
