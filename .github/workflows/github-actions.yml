@@ -10,7 +10,7 @@ jobs:
       - name: Check out repository code
         uses: actions/checkout@v4
       - name: Install dependencies
-        uses: awalsh128/cache-apt-pkgs-action@v1.3.1
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.2
         with:
           packages: libelf-dev clang libdbus-1-dev protobuf-compiler
       - name: Run clippy
@@ -23,7 +23,7 @@ jobs:
       - name: Check out repository code
         uses: actions/checkout@v4
       - name: Install dependencies
-        uses: awalsh128/cache-apt-pkgs-action@v1.3.1
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.2
         with:
           packages: reuse
       - name: Run reuse
