@@ -12,7 +12,7 @@
 ///     GPL-2.0+
 use anyhow::{anyhow, Context, Error, Result};
 use async_trait::async_trait;
-use chrono::{Duration, NaiveDateTime};
+use chrono::{DateTime, Duration, NaiveDateTime};
 use ethtool::EthtoolAttr::TsInfo;
 use ethtool::EthtoolTsInfoAttr::PhcIndex;
 use flagset::{flags, FlagSet};
@@ -458,8 +458,9 @@ impl TryFrom<TimeSpec> for PtpNaiveDateTime {
 
     fn try_from(item: TimeSpec) -> Result<Self, Self::Error> {
         Ok(Self(
-            NaiveDateTime::from_timestamp_opt(item.tv_sec(), u32::try_from(item.tv_nsec())?)
-                .ok_or_else(|| anyhow!("Time out of range"))?,
+            DateTime::from_timestamp(item.tv_sec(), u32::try_from(item.tv_nsec())?)
+                .ok_or_else(|| anyhow!("Time out of range"))?
+                .naive_utc(),
         ))
     }
 }

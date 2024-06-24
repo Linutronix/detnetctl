@@ -454,12 +454,9 @@ mod tests {
                     Box::pin(async move {
                         Ok(ptp::PtpStatus {
                             times: ptp::PtpTimes {
-                                rt: NaiveDateTime::from_timestamp_millis(0)
-                                    .ok_or_else(|| anyhow!("fail"))?,
-                                tai: NaiveDateTime::from_timestamp_millis(0)
-                                    .ok_or_else(|| anyhow!("fail"))?,
-                                ptp: NaiveDateTime::from_timestamp_millis(0)
-                                    .ok_or_else(|| anyhow!("fail"))?,
+                                rt: NaiveDateTime::default(),
+                                tai: NaiveDateTime::default(),
+                                ptp: NaiveDateTime::default(),
                                 lat_rt: Duration::seconds(0),
                                 lat_tai: Duration::seconds(0),
                                 lat_ptp: Duration::seconds(0),
