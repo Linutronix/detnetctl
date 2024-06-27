@@ -1,0 +1,74 @@
+{
+  "ietf-detnet:detnet": {
+    "app-flows": {
+      "app-flow": [
+        {
+          "name": "stream0",
+	  "egress": {
+	    "ethernet": {
+	      "interface": ["enp86s0"]
+	    },
+            "tsn-app-flow": {
+              "destination-mac-address": "CB:CB:CB:CB:CB:ab",
+              "vlan-id": 5,
+              "pcp": 3
+            }
+	  }
+        }
+      ]
+    },
+    "service": {
+      "sub-layer": [
+        {
+          "name": "ssl-1",
+          "outgoing": {
+            "app-flow": {
+              "flow": [
+                "stream0"
+              ]
+            }
+          },
+          "incoming": {
+            "service-id": {
+              "label": 1234
+	    }
+          }
+        }
+      ]
+    },
+    "forwarding": {
+      "sub-layer": [
+        {
+          "name": "fsl-1",
+          "outgoing": {
+            "service-sub-layer": {
+	      "sub-layer": ["ssl-1"]
+            }
+          },
+	  "incoming": {
+            "forwarding-id": {
+              "interface": "enp87s0",
+	      "source-port": {
+		"operator": "eq",
+		"port": 3456
+	      }
+	    }
+	  }
+        }
+      ]
+    }
+  },
+  "ietf-interfaces:interfaces": {
+    "interface": [
+      {
+        "name": "enp86s0",
+        "type": "iana-if-type:ethernetCsmacd"
+      },
+      {
+        "name": "enp87s0",
+        "type": "iana-if-type:ethernetCsmacd"
+      }
+    ]
+  }
+}
+

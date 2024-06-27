@@ -300,6 +300,7 @@ pub fn options_builder(input: TokenStream) -> TokenStream {
 
             quote! {
                 #[doc=#doc_comment_builder]
+                #[derive(Debug, Clone)]
                 pub struct #builder_name {
                     obj: #struct_name
                 }
