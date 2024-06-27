@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::configuration::detnet::Flow;
 use crate::configuration::{
     BridgedApp, Configuration, Interface, PtpInstanceConfig, ReplaceNoneOptions, Stream,
     UnbridgedApp,
@@ -99,6 +100,19 @@ impl Configuration for MergedConfiguration {
         ))
     }
 
+    fn get_flow(&mut self, flow_name: &str) -> Result<Option<Flow>> {
+        let mut merged = self.config.get_flow(flow_name)?;
+        merged.replace_none_options(self.fallback.get_flow(flow_name)?);
+        Ok(merged)
+    }
+
+    fn get_flows(&mut self) -> Result<BTreeMap<String, Flow>> {
+        Ok(merge_maps(
+            self.config.get_flows()?,
+            self.fallback.get_flows()?,
+        ))
+    }
+
     fn get_ptp_active_instance(&mut self) -> Result<Option<u32>> {
         self.config
             .get_ptp_active_instance()?
@@ -116,56 +130,12 @@ impl Configuration for MergedConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::{
-        Configuration, InterfaceBuilder, OutgoingL2Builder, StreamBuilder,
-        StreamIdentificationBuilder, SysrepoConfiguration, YAMLConfiguration,
+        Configuration, InterfaceBuilder, SysrepoConfiguration, YAMLConfiguration,
     };
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     const VERSION: &str = "0.8.0";
-
-    #[test]
-    fn test_merged_streams() -> Result<()> {
-        let interface = String::from("enp86s0");
-        let vid = 5;
-        let expected = StreamBuilder::new()
-            .incoming_interfaces(vec![format!("{interface}.{vid}")])
-            .identifications(vec![StreamIdentificationBuilder::new()
-                .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
-                .vid(vid)
-                .build()])
-            .outgoing_l2(vec![OutgoingL2Builder::new()
-                .outgoing_interface(interface.clone())
-                .build()])
-            .build();
-
-        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-successful.json",
-        );
-
-        assert_eq!(sysrepo_config.get_stream("stream0")?.unwrap(), expected);
-
-        let yaml = format!(
-            concat!(
-                "version: {0}\n",
-                "streams:\n",
-                "  stream0:\n",
-                "    incoming_interfaces: [{1}.{2}]\n",
-                "    outgoing_l2:\n",
-                "      - outgoing_interface: {1}\n",
-            ),
-            VERSION, interface, vid
-        );
-
-        let mut config = YAMLConfiguration::default();
-        config.read(yaml.as_bytes())?;
-
-        let mut merged = MergedConfiguration::new(Box::new(sysrepo_config), Box::new(config));
-
-        assert_eq!(merged.get_stream("stream0")?.unwrap(), expected);
-
-        Ok(())
-    }
 
     #[test]
     fn test_merged_interfaces() -> Result<()> {
@@ -180,7 +150,7 @@ mod tests {
             ])
             .build();
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-successful.json",
+            "./src/configuration/sysrepo/test-ingress-successful.json",
         );
         let mut sysrepo_config_wo_ip = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-without-ip.json",
@@ -216,7 +186,7 @@ mod tests {
     #[test]
     fn test_merged_ptp() -> Result<()> {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-successful.json",
+            "./src/configuration/sysrepo/test-ingress-successful.json",
         );
 
         assert!(sysrepo_config.get_ptp_active_instance()?.is_none());

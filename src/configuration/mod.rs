@@ -148,7 +148,6 @@ impl FillDefaults for BridgedApp {
 }
 
 /// Contains the configuration for a TSN Stream
-/// If used in DetNet context, this matches a tsn-app-flow
 /// If packets arrive with R-Tag,
 /// frame eleminiation (according to IEEE 802.1CB)
 /// is performed and the R-Tag is removed.
@@ -279,6 +278,8 @@ impl FillDefaults for OutgoingL2 {
         Ok(())
     }
 }
+
+pub mod detnet;
 
 mod schedule;
 pub use schedule::{
@@ -436,6 +437,21 @@ pub trait Configuration {
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
     fn get_streams(&mut self) -> Result<BTreeMap<String, Stream>>;
+
+    /// Get the configuration for a given `flow_name`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    /// If no `AppConfig` is found for the name, Ok(None) is returned.
+    fn get_flow(&mut self, flow_name: &str) -> Result<Option<detnet::Flow>>;
+
+    /// Get the configuration for all provided flows
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there is a general problem reading the configuration.
+    fn get_flows(&mut self) -> Result<BTreeMap<String, detnet::Flow>>;
 
     /// Get the configured active PTP instance
     ///
