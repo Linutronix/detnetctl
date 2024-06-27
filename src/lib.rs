@@ -30,6 +30,7 @@
 
 pub mod configuration;
 pub mod controller;
+pub mod data_plane;
 pub mod dispatcher;
 pub mod interface_setup;
 pub mod ptp;
