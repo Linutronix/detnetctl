@@ -10,7 +10,7 @@ use {
 };
 
 #[cfg(feature = "bpf")]
-const BPFS: &[&str] = &["dispatcher"];
+const BPFS: &[&str] = &["data_plane", "dispatcher"];
 
 fn main() {
     build_bpf();

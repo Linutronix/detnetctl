@@ -6,6 +6,7 @@
 use anyhow::Result;
 use libbpf_rs::MapFlags;
 use libbpf_rs::TcAttachPoint;
+use libbpf_rs::XdpFlags;
 use mockall::mock;
 use std::os::fd::BorrowedFd;
 
@@ -106,5 +107,16 @@ mock! {
     pub(crate) TcHook {
         pub(crate) fn create(&mut self) -> Result<()>;
         pub(crate) fn attach(&mut self) -> Result<()>;
+    }
+}
+
+pub(crate) struct MockXdp;
+impl MockXdp {
+    pub(crate) fn new(_fd: BorrowedFd<'_>) -> Self {
+        Self {}
+    }
+
+    pub(crate) fn attach(&self, _ifindex: i32, _flags: XdpFlags) -> Result<()> {
+        Ok(())
     }
 }
