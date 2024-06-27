@@ -163,6 +163,14 @@ pub struct Flow {
     #[replace_none_options_recursively]
     app: Option<AppFlow>,
 
+    /// Service sublayer specification (including MPLS encapsulation)
+    #[replace_none_options_recursively]
+    service: Option<ServiceSublayer>,
+
+    /// Forwarding sublayer specification (including IP encapsulation)
+    #[replace_none_options_recursively]
+    forwarding: Option<ForwardingSublayer>,
+
     /// Configuration for the next hop via a TSN
     #[replace_none_options_recursively]
     next_hop: Option<TsnNextHop>,
@@ -185,6 +193,8 @@ impl FillDefaults for Flow {
     /// For `app`, `service` and `forwarding` and `tsn_next_hop`, see the respective structs.
     fn fill_defaults(&mut self) -> Result<()> {
         fill_struct_defaults!(self, app, AppFlowBuilder);
+        fill_struct_defaults!(self, service, ServiceSublayerBuilder);
+        fill_struct_defaults!(self, forwarding, ForwardingSublayerBuilder);
         fill_struct_defaults!(self, next_hop, TsnNextHopBuilder);
         Ok(())
     }
@@ -262,7 +272,10 @@ impl FillDefaults for TsnNextHop {
 }
 
 mod detnet;
-pub use self::detnet::{AppFlow, AppFlowBuilder};
+pub use self::detnet::{
+    AppFlow, AppFlowBuilder, ForwardingSublayer, ForwardingSublayerBuilder, ServiceSublayer,
+    ServiceSublayerBuilder,
+};
 
 mod schedule;
 pub use schedule::{
