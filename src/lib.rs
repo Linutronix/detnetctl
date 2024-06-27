@@ -35,6 +35,9 @@ pub mod interface_setup;
 pub mod ptp;
 pub mod queue_setup;
 
+#[cfg(feature = "bpf")]
+pub mod bpf;
+
 #[cfg(feature = "dbus")]
 pub mod facade;
 

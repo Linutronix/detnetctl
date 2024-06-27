@@ -4,8 +4,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use eui48::MacAddress;
-use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
-use std::collections::HashMap;
+use libbpf_rs::{MapFlags, TC_EGRESS};
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::Path;
@@ -18,15 +17,15 @@ use std::sync::Arc;
     clippy::restriction,
     unreachable_pub
 )] // this is generated code
-mod network_dispatcher {
-    include!(concat!(env!("OUT_DIR"), "/network_dispatcher.skel.rs"));
+mod dispatcher {
+    include!(concat!(env!("OUT_DIR"), "/dispatcher.skel.rs"));
 }
 #[cfg(not(test))]
 use {
+    dispatcher::DispatcherSkel,
+    dispatcher::DispatcherSkelBuilder,
     libbpf_rs::skel::{OpenSkel, SkelBuilder},
-    libbpf_rs::{Map, TcHookBuilder},
-    network_dispatcher::NetworkDispatcherSkel,
-    network_dispatcher::NetworkDispatcherSkelBuilder,
+    libbpf_rs::TcHookBuilder,
     std::os::fd::AsFd,
 };
 
@@ -34,11 +33,12 @@ use {
 mod mocks;
 #[cfg(test)]
 use {
-    mocks::MockMap as Map, mocks::MockNetworkDispatcherSkel as NetworkDispatcherSkel,
-    mocks::MockNetworkDispatcherSkelBuilder as NetworkDispatcherSkelBuilder,
-    mocks::MockTcHookBuilder as TcHookBuilder,
+    crate::bpf::mocks::MockTcHookBuilder as TcHookBuilder,
+    mocks::MockDispatcherSkel as DispatcherSkel,
+    mocks::MockDispatcherSkelBuilder as DispatcherSkelBuilder,
 };
 
+use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
 use crate::configuration::{StreamIdentification, StreamIdentificationBuilder};
 use crate::dispatcher::Dispatcher;
 
@@ -98,25 +98,15 @@ impl Stream {
     }
 }
 
-impl StreamIdentification {
-    /// Convert into fixed-size array
-    ///
-    /// # Errors
-    /// Currently returns error if any of the attributes are None
-    pub fn to_bytes(&self) -> Result<[u8; 8]> {
-        let mut result: [u8; 8] = [0; 8];
-        result[0..6].copy_from_slice(self.destination_address()?.as_bytes());
-        result[6..8].copy_from_slice(&self.vid()?.to_ne_bytes());
-        Ok(result)
-    }
-}
-
-type GenerateSkelCallback = Box<dyn FnMut() -> NetworkDispatcherSkelBuilder + Send>;
+type GenerateSkelCallback = Box<dyn FnMut() -> DispatcherSkelBuilder + Send>;
 type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
 
 /// Installs eBPFs to dispatcher the network to prevent interference of real-time communication
 pub struct BPFDispatcher<'a> {
-    interfaces: HashMap<String, NetworkDispatcherSkel<'a>>,
+    skels: SkelManager<DispatcherSkel<'a>>,
+}
+
+struct DispatcherAttacher {
     generate_skel: GenerateSkelCallback,
     nametoindex: NameToIndexCallback,
     debug_output: bool,
@@ -131,34 +121,35 @@ impl Dispatcher for BPFDispatcher<'_> {
         pcp: Option<u8>,
         cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        self.with_interface(interface, |skel| {
-            let stream_handle = find_or_add_stream(
-                skel.maps().streams(),
-                skel.maps().num_streams(),
-                stream_identification,
-                |s| {
-                    Ok(Stream::from_bytes(
-                        s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
-                    )?
-                    .handle)
-                },
-            )?;
+        self.skels
+            .with_interface(interface, |skel| {
+                let stream_handle = find_or_add_stream(
+                    skel.maps().streams(),
+                    skel.maps().num_streams(),
+                    stream_identification,
+                    |s| {
+                        Ok(Stream::from_bytes(
+                            s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
+                        )?
+                        .handle)
+                    },
+                )?;
 
-            let pcp =
-                pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
+                let pcp =
+                    pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
 
-            update_stream_maps(
-                skel,
-                stream_identification,
-                stream_handle,
-                priority,
-                pcp,
-                cgroup,
-            )?;
+                update_stream_maps(
+                    skel,
+                    stream_identification,
+                    stream_handle,
+                    priority,
+                    pcp,
+                    cgroup,
+                )?;
 
-            Ok(())
-        })
-        .context("Failed to configure stream")
+                Ok(())
+            })
+            .context("Failed to configure stream")
     }
 
     fn protect_stream(
@@ -167,28 +158,29 @@ impl Dispatcher for BPFDispatcher<'_> {
         stream_identification: &StreamIdentification,
         cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        self.with_interface(interface, |skel| {
-            let stream_id_bytes = stream_identification.to_bytes()?;
+        self.skels
+            .with_interface(interface, |skel| {
+                let stream_id_bytes = stream_identification.to_bytes()?;
 
-            let stream = Stream::from_bytes(
-                skel.maps()
-                    .streams()
-                    .lookup(&stream_id_bytes, MapFlags::ANY)?
-                    .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
-                    .try_into()
-                    .map_err(|_e| anyhow!("Invalid byte number"))?,
-            )?;
+                let stream = Stream::from_bytes(
+                    skel.maps()
+                        .streams()
+                        .lookup(&stream_id_bytes, MapFlags::ANY)?
+                        .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
+                        .try_into()
+                        .map_err(|_e| anyhow!("Invalid byte number"))?,
+                )?;
 
-            update_stream_maps(
-                skel,
-                stream_identification,
-                stream.handle,
-                stream.egress_priority,
-                stream.pcp()?,
-                cgroup,
-            )
-        })
-        .context("Failed to protect stream")
+                update_stream_maps(
+                    skel,
+                    stream_identification,
+                    stream.handle,
+                    stream.egress_priority,
+                    stream.pcp()?,
+                    cgroup,
+                )
+            })
+            .context("Failed to protect stream")
     }
 
     fn configure_best_effort(
@@ -197,52 +189,44 @@ impl Dispatcher for BPFDispatcher<'_> {
         priority: u32,
         cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        self.with_interface(interface, |skel| {
-            let stream_id = StreamIdentificationBuilder::new()
-                .destination_address(MacAddress::new([0; 6]))
-                .vid(0)
-                .build();
-            update_stream_maps(
-                skel, &stream_id, 0, priority, 0, /* best-effort PCP */
-                cgroup,
-            )
-        })
-        .context("Failed to configure best effort")
+        self.skels
+            .with_interface(interface, |skel| {
+                let stream_id = StreamIdentificationBuilder::new()
+                    .destination_address(MacAddress::new([0; 6]))
+                    .vid(0)
+                    .build();
+                update_stream_maps(
+                    skel, &stream_id, 0, priority, 0, /* best-effort PCP */
+                    cgroup,
+                )
+            })
+            .context("Failed to configure best effort")
     }
 }
 
 impl BPFDispatcher<'_> {
     /// Create a new `BPFDispatcher`
     pub fn new(debug_output: bool) -> Self {
-        set_print(Some((PrintLevel::Debug, print_to_log)));
         BPFDispatcher {
-            interfaces: HashMap::default(),
-            generate_skel: Box::new(NetworkDispatcherSkelBuilder::default),
-            nametoindex: Box::new(|interface| {
-                Ok(i32::try_from(nix::net::if_::if_nametoindex(interface)?)?)
-            }),
-            debug_output,
+            skels: SkelManager::new(Box::new(DispatcherAttacher {
+                generate_skel: Box::new(DispatcherSkelBuilder::default),
+                nametoindex: Box::new(|interface| {
+                    Ok(i32::try_from(nix::net::if_::if_nametoindex(interface)?)?)
+                }),
+                debug_output,
+            })),
         }
     }
+}
 
-    fn with_interface(
-        &mut self,
-        interface: &str,
-        f: impl FnOnce(&mut NetworkDispatcherSkel<'_>) -> Result<()>,
-    ) -> Result<()> {
-        if let Some(existing_interface) = self.interfaces.get_mut(interface) {
-            f(existing_interface)
-        } else {
-            self.attach_interface(interface)
-                .context("Failed to attach eBPF to interface")?;
-            f(self
-                .interfaces
-                .get_mut(interface)
-                .ok_or_else(|| anyhow!("Interface missing even after attach"))?)
-        }
+impl Default for BPFDispatcher<'_> {
+    fn default() -> Self {
+        Self::new(false)
     }
+}
 
-    fn attach_interface(&mut self, interface: &str) -> Result<()> {
+impl<'a> Attacher<DispatcherSkel<'a>> for DispatcherAttacher {
+    fn attach_interface(&mut self, interface: &str) -> Result<DispatcherSkel<'a>> {
         let skel_builder = (self.generate_skel)();
         let mut open_skel = skel_builder.open()?;
         open_skel.rodata_mut().debug_output = self.debug_output;
@@ -279,63 +263,12 @@ impl BPFDispatcher<'_> {
             .update(&0_u32.to_ne_bytes(), &1_u16.to_ne_bytes(), MapFlags::ANY)
             .context("Failed to set num_streams")?;
 
-        self.interfaces.insert(String::from(interface), skel);
-        Ok(())
+        Ok(skel)
     }
-}
-
-impl Default for BPFDispatcher<'_> {
-    fn default() -> Self {
-        Self::new(false)
-    }
-}
-
-fn find_or_add_stream(
-    streams: &Map,
-    num_streams: &Map,
-    stream_identification: &StreamIdentification,
-    handle_from_bytes: impl FnOnce(Vec<u8>) -> Result<u16>,
-) -> Result<u16> {
-    let stream_id_bytes = stream_identification.to_bytes()?;
-
-    // Check if stream already exists, otherwise calculate stream_handle from number of streams
-    let mut adding_new_stream = false;
-    let stream_handle = if let Some(s) = streams.lookup(&stream_id_bytes, MapFlags::ANY)? {
-        handle_from_bytes(s)?
-    } else {
-        adding_new_stream = true;
-        let num_streams = u16::from_ne_bytes(
-            num_streams
-                .lookup(&0_u32.to_ne_bytes(), MapFlags::ANY)?
-                .ok_or_else(|| anyhow!("Cannot lookup number of streams"))?
-                .try_into()
-                .map_err(|_e| anyhow!("Invalid byte number"))?,
-        );
-
-        let max_streams: u16 = streams.info()?.info.max_entries.try_into()?;
-
-        if num_streams == max_streams {
-            return Err(anyhow!("Maximum number of streams reached"));
-        }
-
-        num_streams
-    };
-
-    if adding_new_stream {
-        let new_num_streams = stream_handle + 1;
-
-        num_streams.update(
-            &0_u32.to_ne_bytes(),
-            &new_num_streams.to_ne_bytes(),
-            MapFlags::ANY,
-        )?;
-    }
-
-    Ok(stream_handle)
 }
 
 fn update_stream_maps(
-    skel: &mut NetworkDispatcherSkel<'_>,
+    skel: &mut DispatcherSkel<'_>,
     stream_identification: &StreamIdentification,
     stream_handle: u16,
     priority: u32,
@@ -366,28 +299,19 @@ fn update_stream_maps(
     Ok(())
 }
 
-#[allow(clippy::needless_pass_by_value)] // interface defined by libbpf-rs
-fn print_to_log(level: PrintLevel, msg: String) {
-    match level {
-        PrintLevel::Debug => log::debug!("{}", msg),
-        PrintLevel::Info => log::info!("{}", msg),
-        PrintLevel::Warn => log::warn!("{}", msg),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bpf::mocks::MockMap as Map;
+    use crate::bpf::mocks::MockTcProgram as Program;
+    use crate::bpf::mocks::{MockInnerMapInfo, MockMapInfo};
     use crate::configuration::StreamIdentificationBuilder;
     use anyhow::anyhow;
     use eui48::MacAddress;
-    use mocks::MockMap as Map;
-    use mocks::MockNetworkDispatcherMaps as NetworkDispatcherMaps;
-    use mocks::MockNetworkDispatcherMapsMut as NetworkDispatcherMapsMut;
-    use mocks::MockNetworkDispatcherProgs as NetworkDispatcherProgs;
-    use mocks::MockOpenNetworkDispatcherSkel as OpenNetworkDispatcherSkel;
-    use mocks::MockProgram as Program;
-    use mocks::{MockInnerMapInfo, MockMapInfo};
+    use mocks::MockDispatcherMaps as DispatcherMaps;
+    use mocks::MockDispatcherMapsMut as DispatcherMapsMut;
+    use mocks::MockDispatcherProgs as DispatcherProgs;
+    use mocks::MockOpenDispatcherSkel as OpenDispatcherSkel;
     use regex::Regex;
     use std::io;
     use std::io::BufRead;
@@ -407,8 +331,8 @@ mod tests {
             .build()
     }
 
-    fn generate_skel_builder(cgroup: Arc<Path>) -> NetworkDispatcherSkelBuilder {
-        let mut builder = NetworkDispatcherSkelBuilder::default();
+    fn generate_skel_builder(cgroup: Arc<Path>) -> DispatcherSkelBuilder {
+        let mut builder = DispatcherSkelBuilder::default();
         builder
             .expect_open()
             .times(1)
@@ -416,22 +340,23 @@ mod tests {
         builder
     }
 
-    fn generate_open_skel(cgroup: Arc<Path>) -> OpenNetworkDispatcherSkel {
-        let mut open_skel = OpenNetworkDispatcherSkel::default();
+    fn generate_open_skel(cgroup: Arc<Path>) -> OpenDispatcherSkel {
+        let mut open_skel = OpenDispatcherSkel::default();
         open_skel
             .expect_load()
             .times(1)
             .returning(move || Ok(generate_skel(cgroup.clone())));
-        open_skel.expect_rodata_mut().times(1).returning(|| {
-            mocks::network_dispatcher_rodata_types::rodata {
+        open_skel
+            .expect_rodata_mut()
+            .times(1)
+            .returning(|| mocks::bpf_rodata_types::rodata {
                 debug_output: false,
-            }
-        });
+            });
         open_skel
     }
 
-    fn generate_skel<'a>(cgroup: Arc<Path>) -> NetworkDispatcherSkel<'a> {
-        let mut skel = NetworkDispatcherSkel::default();
+    fn generate_skel<'a>(cgroup: Arc<Path>) -> DispatcherSkel<'a> {
+        let mut skel = DispatcherSkel::default();
         skel.expect_progs().returning(generate_progs);
         skel.expect_maps_mut()
             .returning(move || generate_maps_mut(cgroup.clone()));
@@ -439,8 +364,8 @@ mod tests {
         skel
     }
 
-    fn generate_progs() -> NetworkDispatcherProgs {
-        let mut progs = NetworkDispatcherProgs::default();
+    fn generate_progs() -> DispatcherProgs {
+        let mut progs = DispatcherProgs::default();
         progs
             .expect_tc_egress()
             .times(1)
@@ -454,8 +379,8 @@ mod tests {
         prog
     }
 
-    fn generate_maps_mut(cgroup: Arc<Path>) -> NetworkDispatcherMapsMut {
-        let mut maps_mut = NetworkDispatcherMapsMut::default();
+    fn generate_maps_mut(cgroup: Arc<Path>) -> DispatcherMapsMut {
+        let mut maps_mut = DispatcherMapsMut::default();
         maps_mut.expect_streams().returning(|| {
             let mut map = Map::default();
             map.expect_update().times(1).returning(|key, value, _| {
@@ -509,8 +434,8 @@ mod tests {
         maps_mut
     }
 
-    fn generate_maps() -> NetworkDispatcherMaps {
-        let mut maps = NetworkDispatcherMaps::default();
+    fn generate_maps() -> DispatcherMaps {
+        let mut maps = DispatcherMaps::default();
 
         maps.expect_streams().returning(|| {
             let mut map = Map::default();
@@ -545,13 +470,14 @@ mod tests {
         let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
 
         let mut dispatcher = BPFDispatcher {
-            interfaces: HashMap::default(),
-            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
-            nametoindex: Box::new(|interface| {
-                assert_eq!(interface, INTERFACE);
-                Ok(3)
-            }),
-            debug_output: false,
+            skels: SkelManager::new(Box::new(DispatcherAttacher {
+                generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
+                nametoindex: Box::new(|interface| {
+                    assert_eq!(interface, INTERFACE);
+                    Ok(3)
+                }),
+                debug_output: false,
+            })),
         };
 
         dispatcher.configure_stream(
@@ -593,13 +519,14 @@ mod tests {
         let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
 
         let mut dispatcher = BPFDispatcher {
-            interfaces: HashMap::default(),
-            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
-            nametoindex: Box::new(|interface| {
-                assert_eq!(interface, INTERFACE);
-                Err(anyhow!("interface not found"))
-            }),
-            debug_output: false,
+            skels: SkelManager::new(Box::new(DispatcherAttacher {
+                generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
+                nametoindex: Box::new(|interface| {
+                    assert_eq!(interface, INTERFACE);
+                    Err(anyhow!("interface not found"))
+                }),
+                debug_output: false,
+            })),
         };
 
         dispatcher
@@ -619,13 +546,14 @@ mod tests {
         let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
 
         let mut dispatcher = BPFDispatcher {
-            interfaces: HashMap::default(),
-            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
-            nametoindex: Box::new(|interface| {
-                assert_eq!(interface, INTERFACE);
-                Ok(3)
-            }),
-            debug_output: false,
+            skels: SkelManager::new(Box::new(DispatcherAttacher {
+                generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
+                nametoindex: Box::new(|interface| {
+                    assert_eq!(interface, INTERFACE);
+                    Ok(3)
+                }),
+                debug_output: false,
+            })),
         };
 
         dispatcher.protect_stream(
@@ -643,13 +571,14 @@ mod tests {
         let cgroup_path: Arc<Path> = Path::new(&cgroup).into();
 
         let mut dispatcher = BPFDispatcher {
-            interfaces: HashMap::default(),
-            generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
-            nametoindex: Box::new(|interface| {
-                assert_eq!(interface, INTERFACE);
-                Ok(3)
-            }),
-            debug_output: false,
+            skels: SkelManager::new(Box::new(DispatcherAttacher {
+                generate_skel: Box::new(move || generate_skel_builder(cgroup_path.clone())),
+                nametoindex: Box::new(|interface| {
+                    assert_eq!(interface, INTERFACE);
+                    Ok(3)
+                }),
+                debug_output: false,
+            })),
         };
 
         dispatcher
