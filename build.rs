@@ -10,7 +10,7 @@ use {
 };
 
 #[cfg(feature = "bpf")]
-const BPF_SRC: &str = "./src/dispatcher/bpf/network_dispatcher.bpf.c";
+const BPFS: &[&str] = &["dispatcher"];
 
 fn main() {
     build_bpf();
@@ -18,14 +18,18 @@ fn main() {
 
 #[cfg(feature = "bpf")]
 fn build_bpf() {
-    let mut out =
-        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
-    out.push("network_dispatcher.skel.rs");
-    SkeletonBuilder::new()
-        .source(BPF_SRC)
-        .build_and_generate(&out)
-        .unwrap();
-    println!("cargo:rerun-if-changed={BPF_SRC}");
+    for bpf in BPFS {
+        let src = format!("./src/{bpf}/bpf/{bpf}.bpf.c");
+        let mut out =
+            PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
+        out.push(format!("{bpf}.skel.rs"));
+        SkeletonBuilder::new()
+            .source(src.clone())
+            .clang_args("-Werror")
+            .build_and_generate(&out)
+            .unwrap();
+        println!("cargo:rerun-if-changed={src}");
+    }
 }
 
 #[cfg(not(feature = "bpf"))]
