@@ -81,6 +81,7 @@ tokio-test = "0.4.2"
 tempfile = "3.4.0"
 const_format = "0.2.32"
 test-log = "0.2.14"
+pretty_assertions = "1.4.0"
 
 # Some of these lints might be unreasonable for a growing code base,
 # but apply to the current state and might be removed later if needed.

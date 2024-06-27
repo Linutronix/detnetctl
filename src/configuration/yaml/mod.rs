@@ -4,6 +4,7 @@
 //
 //! Provides YAML-based network configuration
 
+use crate::configuration::detnet::Flow;
 use crate::configuration::{
     BridgedApp, Configuration, Interface, PtpInstanceConfig, Stream, UnbridgedApp,
 };
@@ -28,6 +29,7 @@ struct Config {
     unbridged_apps: Option<UnbridgedApps>,
     bridged_apps: Option<BridgedApps>,
     streams: Option<Streams>,
+    flows: Option<Flows>,
     ptp: Option<PtpConfig>,
     interfaces: Option<Interfaces>,
 }
@@ -42,6 +44,7 @@ struct PtpConfig {
 type UnbridgedApps = BTreeMap<String, UnbridgedApp>;
 type BridgedApps = BTreeMap<String, BridgedApp>;
 type Streams = BTreeMap<String, Stream>;
+type Flows = BTreeMap<String, Flow>;
 type PtpInstanceConfigurations = BTreeMap<u32, PtpInstanceConfig>;
 type Interfaces = BTreeMap<String, Interface>;
 
@@ -92,6 +95,18 @@ impl Configuration for YAMLConfiguration {
 
     fn get_streams(&mut self) -> Result<Streams> {
         Ok(self.config.streams.clone().unwrap_or_default())
+    }
+
+    fn get_flow(&mut self, flow_name: &str) -> Result<Option<Flow>> {
+        Ok(self
+            .config
+            .flows
+            .as_ref()
+            .and_then(|flows| flows.get(flow_name).cloned()))
+    }
+
+    fn get_flows(&mut self) -> Result<Flows> {
+        Ok(self.config.flows.clone().unwrap_or_default())
     }
 
     fn get_ptp_active_instance(&mut self) -> Result<Option<u32>> {
@@ -291,6 +306,7 @@ mod tests {
             unbridged_apps: Some(apps),
             bridged_apps: None,
             streams: None,
+            flows: None,
             ptp: None,
             interfaces: None,
         };
@@ -456,6 +472,7 @@ mod tests {
             unbridged_apps: None,
             bridged_apps: None,
             streams: Some(streams),
+            flows: None,
             ptp: None,
             interfaces: None,
         };
@@ -475,6 +492,82 @@ mod tests {
     fn test_get_stream_config_not_found() {
         let mut config = YAMLConfiguration::default();
         assert!(config.get_stream("stream0").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_flows_happy() -> Result<()> {
+        let yaml = concatcp!(
+            "version: ",
+            VERSION,
+            "\n",
+            "flows:\n",
+            "  flow0:\n",
+            "    incoming_app_flows:\n",
+            "      - ingress_interfaces: [eth0]\n",
+            "        ingress_identification:\n",
+            "          destination_address: cb:cb:cb:cb:cb:cb\n",
+            "          vid: 1\n",
+            "        egress_l2:\n",
+            "          outgoing_interface: eth0\n",
+            "          priority: 3\n",
+            "    outgoing_forwarding:\n",
+            "      - mpls:\n",
+            "          label: 674\n",
+            "          tc: 0\n",
+            "          ttl: 255\n",
+            "        ip:\n",
+            "          source: fd02:5cb3:dba1::4\n",
+            "          destination: fd02:5cb3:dba1::3\n",
+            "          source_port: 1001\n",
+            "        outgoing_l2:\n",
+            "          - outgoing_interface: eth1\n",
+            "            priority: 2\n",
+            "    incoming_forwarding:\n",
+            "      - incoming_interface: eth1\n",
+            "        identification:\n",
+            "          mpls_label: 674\n",
+            "          udp_source_port: 2313\n",
+            "interfaces:\n",
+            "  eth0:\n",
+            "    schedule:\n",
+            "      number_of_traffic_classes: 3\n",
+            "      priority_map:\n",
+            "        0: 0\n",
+            "        1: 2\n",
+            "      basetime_ns: 1000\n",
+            "      control_list:\n",
+            "        - operation: SetGates\n",
+            "          time_interval_ns: 10\n",
+            "          traffic_classes: [0]\n",
+            "        - operation: SetGates\n",
+            "          time_interval_ns: 20\n",
+            "          traffic_classes: [2]\n",
+            "  eth1:\n",
+            "    schedule:\n",
+            "      number_of_traffic_classes: 3\n",
+            "      priority_map:\n",
+            "        0: 0\n",
+            "        1: 2\n",
+            "      basetime_ns: 1000\n",
+            "      control_list:\n",
+            "        - operation: SetGates\n",
+            "          time_interval_ns: 10\n",
+            "          traffic_classes: [0]\n",
+            "        - operation: SetGates\n",
+            "          time_interval_ns: 20\n",
+            "          traffic_classes: [2]\n",
+        );
+
+        let mut config = YAMLConfiguration::default();
+        config.read(yaml.as_bytes())?;
+
+        let plain_config: Config = serde_yaml::from_str(yaml)?;
+        assert_eq!(
+            config.get_flow("flow0")?.unwrap(),
+            plain_config.flows.as_ref().unwrap()["flow0"]
+        );
+
+        Ok(())
     }
 
     #[test]
