@@ -5,9 +5,9 @@
         {
           "name": "stream0",
 	  "ingress": {
-	    "interface": ["enp86s0.5"],
+	    "interface": ["enp86s0"],
             "tsn-app-flow": {
-              "destination-mac-address": "CB:CB:CB:CB:CB:CB",
+              "destination-mac-address": "CB:CB:CB:CB:CB:ab",
               "vlan-id": 5,
               "pcp": 3
             }
@@ -31,6 +31,14 @@
               "service-outgoing": [
                 {
                   "index": 0,
+		  "mpls-label-stack": {
+		    "entry": [
+	              {
+                        "id": 0,
+			"label": 1234
+		      }
+		    ]
+		  },
                   "sub-layer": [
                     "fsl-1"
                   ]
@@ -47,7 +55,10 @@
           "name": "fsl-1",
           "outgoing": {
             "interface": {
-              "outgoing-interface": "ilan0"
+              "outgoing-interface": "ilan0",
+	      "src-ip-address": "10.0.1.1",
+	      "dest-ip-address": "10.0.1.2",
+	      "source-port": 3456
             }
           }
         }
@@ -58,6 +69,10 @@
     "interface": [
       {
         "name": "enp86s0",
+        "type": "iana-if-type:ethernetCsmacd"
+      },
+      {
+        "name": "enp87s0",
         "type": "iana-if-type:ethernetCsmacd",
         "ieee802-dot1q-bridge:bridge-port": {
           "traffic-class": {
@@ -171,9 +186,10 @@
           "ilan0"
         ]
       },
-      "null-stream-identification": {
-        "destination-mac": "CB-CB-CB-CB-CB-CB",
-        "vlan": 5
+      "ip-stream-identification": {
+        "ip-source": "10.0.1.1",
+	"ip-destination": "10.0.1.2",
+	"source-port": 3456
       }
     },
     {
@@ -181,11 +197,12 @@
       "handle": 1,
       "out-facing": {
         "output-port": [
-          "enp86s0"
+          "enp87s0"
         ]
       },
       "dmac-vlan-stream-identification": {
         "down": {
+	  "vlan": 13,
           "priority": 3
         }
       }

@@ -118,7 +118,8 @@ impl SysrepoReader {
                     DataParserFlags::STRICT,
                     DataValidationFlags::NO_STATE,
                 )
-                .unwrap_or_else(|_| panic!("could not parse {filename}"));
+                .context("could not parse {filename}")
+                .unwrap();
 
                 Ok(tree)
             });
