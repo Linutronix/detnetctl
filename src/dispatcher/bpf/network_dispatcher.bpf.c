@@ -55,42 +55,54 @@ struct {
 
 const volatile bool debug_output = false;
 
-SEC("tc")
-int tc_egress(struct __sk_buff *ctx)
+static inline int
+stream_identification(void *data, void *data_end, u16 vlan_tci_override,
+		      struct null_stream_identification *stream_id,
+		      struct stream **stream)
 {
-	/*************************
-	 * STREAM IDENTIFICATION *
-	 *************************/
-	void *data_end = (void *)(long)ctx->data_end;
-	void *data = (void *)(long)ctx->data;
-	struct ethhdr *eth = data;
+	struct vlan_ethhdr *eth = data;
 
 	u64 nh_off = sizeof(*eth);
 	if (data + nh_off > data_end) {
 		if (debug_output) {
 			bpf_printk("Dropping invalid Ethernet packet");
 		}
-		return TC_ACT_SHOT;
+		return -1;
 	}
 
 	// Only search for stream if VLAN header is provided, otherwise fall back to 0 (best-effort)
-	struct null_stream_identification stream_id;
 
-	__builtin_memcpy(stream_id.destination_address, eth->h_dest,
-			 sizeof(stream_id.destination_address));
-	stream_id.vlan_identifier = ctx->vlan_tci & 0xFFF;
+	__builtin_memcpy(stream_id->destination_address, eth->h_dest,
+			 sizeof(stream_id->destination_address));
 
-	struct stream *stream = bpf_map_lookup_elem(&streams, &stream_id);
-	if (!stream) {
+	if (vlan_tci_override) {
+		stream_id->vlan_identifier = vlan_tci_override & 0xFFF;
+	} else {
+		u16 vlan_proto = bpf_ntohs(eth->h_vlan_proto);
+		if (vlan_proto != ETH_P_8021Q && vlan_proto != ETH_P_8021AD) {
+			if (debug_output) {
+				bpf_printk(
+					"No VLAN header in packet. Consider disabling VLAN offload. Assuming VLAN ID 0");
+			}
+
+			stream_id->vlan_identifier = 0;
+		} else {
+			stream_id->vlan_identifier =
+				bpf_ntohs(eth->h_vlan_TCI) & 0xFFF;
+		}
+	}
+
+	*stream = bpf_map_lookup_elem(&streams, &stream_id);
+	if (!*stream) {
 		bpf_printk(
 			"No matching TSN stream found dst: %x:%x:%x:%x:%x:%x vlan %i, processing as default traffic",
-			stream_id.destination_address[0],
-			stream_id.destination_address[1],
-			stream_id.destination_address[2],
-			stream_id.destination_address[3],
-			stream_id.destination_address[4],
-			stream_id.destination_address[5],
-			stream_id.vlan_identifier);
+			stream_id->destination_address[0],
+			stream_id->destination_address[1],
+			stream_id->destination_address[2],
+			stream_id->destination_address[3],
+			stream_id->destination_address[4],
+			stream_id->destination_address[5],
+			stream_id->vlan_identifier);
 
 		struct null_stream_identification default_stream_id = {};
 		struct stream *stream =
@@ -103,8 +115,27 @@ int tc_egress(struct __sk_buff *ctx)
 				bpf_printk(
 					"Dropping packet due to internal error when loading default stream");
 			}
-			return TC_ACT_SHOT;
+			return -1;
 		}
+	}
+
+	return 0;
+}
+
+SEC("tc")
+int tc_egress(struct __sk_buff *ctx)
+{
+	/**************************
+	 * STREAM IDENTIFICATION *
+	 *************************/
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data = (void *)(long)ctx->data;
+
+	struct null_stream_identification stream_id = {};
+	struct stream *stream = 0;
+	if (stream_identification(data, data_end, ctx->vlan_tci, &stream_id,
+				  &stream) < 0) {
+		return TC_ACT_SHOT;
 	}
 
 	/*************************
