@@ -46,7 +46,6 @@ mock! {
 mock! {
     pub(crate) NetworkDispatcherMapsMut {
         pub(crate) fn num_streams(&mut self) -> &mut MockMap;
-        pub(crate) fn stream_handles(&mut self) -> &mut MockMap;
         pub(crate) fn streams(&mut self) -> &mut MockMap;
         pub(crate) fn stream_cgroups(&mut self) -> &mut MockMap;
     }
@@ -55,7 +54,6 @@ mock! {
 mock! {
     pub(crate) NetworkDispatcherMaps {
         pub(crate) fn num_streams(&mut self) -> &mut MockMap;
-        pub(crate) fn stream_handles(&mut self) -> &mut MockMap;
         pub(crate) fn streams(&mut self) -> &mut MockMap;
         pub(crate) fn stream_cgroups(&mut self) -> &mut MockMap;
     }

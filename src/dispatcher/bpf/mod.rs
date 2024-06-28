@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use anyhow::{anyhow, Context, Result};
+use eui48::MacAddress;
 use libbpf_rs::{set_print, MapFlags, PrintLevel, TC_EGRESS};
 use std::collections::HashMap;
 use std::fs::File;
@@ -39,19 +40,21 @@ use {
     mocks::MockTcHook as TcHook, mocks::MockTcHookBuilder as TcHookBuilder,
 };
 
-use crate::configuration::StreamIdentification;
+use crate::configuration::{StreamIdentification, StreamIdentificationBuilder};
 use crate::dispatcher::Dispatcher;
 
 #[derive(Debug)]
 struct Stream {
+    handle: u16,
     restrictions: u8,
     shifted_pcp: u16,
     egress_priority: u32,
 }
 
 impl Stream {
-    fn new(priority: u32, pcp: u8, is_protected: bool) -> Self {
+    fn new(handle: u16, priority: u32, pcp: u8, is_protected: bool) -> Self {
         Self {
+            handle,
             restrictions: u8::from(is_protected),
             shifted_pcp: u16::from(pcp) << 13,
             egress_priority: priority,
@@ -65,24 +68,30 @@ impl Stream {
     }
 
     #[must_use]
-    fn to_bytes(&self) -> [u8; 7] {
-        let mut result: [u8; 7] = [0; 7];
-        result[0] = self.restrictions;
-        result[1..3].copy_from_slice(&self.shifted_pcp.to_ne_bytes()[..]);
-        result[3..7].copy_from_slice(&self.egress_priority.to_ne_bytes()[..]);
+    fn to_bytes(&self) -> [u8; 9] {
+        let mut result: [u8; 9] = [0; 9];
+        result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]);
+        result[2] = self.restrictions;
+        result[3..5].copy_from_slice(&self.shifted_pcp.to_ne_bytes()[..]);
+        result[5..9].copy_from_slice(&self.egress_priority.to_ne_bytes()[..]);
         result
     }
 
-    fn from_bytes(bytes: [u8; 7]) -> Result<Self> {
+    fn from_bytes(bytes: [u8; 9]) -> Result<Self> {
         Ok(Self {
-            restrictions: bytes[0],
+            handle: u16::from_ne_bytes(
+                bytes[0..2]
+                    .try_into()
+                    .map_err(|_e| anyhow!("Invalid byte number"))?,
+            ),
+            restrictions: bytes[2],
             shifted_pcp: u16::from_ne_bytes(
-                bytes[1..3]
+                bytes[3..5]
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
             egress_priority: u32::from_ne_bytes(
-                bytes[3..7]
+                bytes[5..9]
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
@@ -219,8 +228,8 @@ impl BPFDispatcher<'_> {
         skel.maps_mut()
             .streams()
             .update(
-                &0_u32.to_ne_bytes(),
-                &Stream::new(0, 0, false).to_bytes(),
+                &[0; 8],
+                &Stream::new(0, 0, 0, false).to_bytes(),
                 MapFlags::ANY,
             )
             .context("Failed to configure initial best-effort stream")?;
@@ -262,10 +271,10 @@ impl BPFInterface<'_> {
         let stream_handle = if let Some(s) = self
             .skel
             .maps()
-            .stream_handles()
+            .streams()
             .lookup(&stream_id_bytes, MapFlags::ANY)?
         {
-            u16::from_ne_bytes(s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?)
+            Stream::from_bytes(s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?)?.handle
         } else {
             adding_new_stream = true;
             let num_streams = u16::from_ne_bytes(
@@ -296,7 +305,7 @@ impl BPFInterface<'_> {
 
         let pcp = pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
 
-        self.update_stream_maps(u32::from(stream_handle), priority, pcp, cgroup)?;
+        self.update_stream_maps(stream_identification, stream_handle, priority, pcp, cgroup)?;
 
         if adding_new_stream {
             let new_num_streams = stream_handle + 1;
@@ -304,12 +313,6 @@ impl BPFInterface<'_> {
             self.skel.maps_mut().num_streams().update(
                 &0_u32.to_ne_bytes(),
                 &new_num_streams.to_ne_bytes(),
-                MapFlags::ANY,
-            )?;
-
-            self.skel.maps_mut().stream_handles().update(
-                &stream_id_bytes,
-                &stream_handle.to_ne_bytes(),
                 MapFlags::ANY,
             )?;
         }
@@ -324,39 +327,42 @@ impl BPFInterface<'_> {
     ) -> Result<()> {
         let stream_id_bytes = stream_identification.to_bytes()?;
 
-        let stream_handle: u32 = u16::from_ne_bytes(
-            self.skel
-                .maps()
-                .stream_handles()
-                .lookup(&stream_id_bytes, MapFlags::ANY)?
-                .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
-                .try_into()
-                .map_err(|_e| anyhow!("Invalid byte number"))?,
-        )
-        .into();
-
         let stream = Stream::from_bytes(
             self.skel
                 .maps()
                 .streams()
-                .lookup(&stream_handle.to_ne_bytes(), MapFlags::ANY)?
-                .ok_or_else(|| anyhow!("Cannot find stream for handle"))?
+                .lookup(&stream_id_bytes, MapFlags::ANY)?
+                .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
                 .try_into()
                 .map_err(|_e| anyhow!("Invalid byte number"))?,
         )?;
 
-        self.update_stream_maps(stream_handle, stream.egress_priority, stream.pcp()?, cgroup)?;
+        self.update_stream_maps(
+            stream_identification,
+            stream.handle,
+            stream.egress_priority,
+            stream.pcp()?,
+            cgroup,
+        )?;
 
         Ok(())
     }
 
     fn configure_best_effort(&mut self, priority: u32, cgroup: Option<Arc<Path>>) -> Result<()> {
-        self.update_stream_maps(0, priority, 0 /* best-effort PCP */, cgroup)
+        let stream_id = StreamIdentificationBuilder::new()
+            .destination_address(MacAddress::new([0; 6]))
+            .vid(0)
+            .build();
+        self.update_stream_maps(
+            &stream_id, 0, priority, 0, /* best-effort PCP */
+            cgroup,
+        )
     }
 
     fn update_stream_maps(
         &mut self,
-        stream_handle: u32,
+        stream_identification: &StreamIdentification,
+        stream_handle: u16,
         priority: u32,
         pcp: u8,
         cgroup: Option<Arc<Path>>,
@@ -370,15 +376,15 @@ impl BPFInterface<'_> {
             let cgroup_fd = cgroup_file.as_raw_fd();
 
             self.skel.maps_mut().stream_cgroups().update(
-                &stream_handle.to_ne_bytes(),
+                &u32::from(stream_handle).to_ne_bytes(),
                 &cgroup_fd.to_ne_bytes(),
                 MapFlags::ANY,
             )?;
         }
 
         self.skel.maps_mut().streams().update(
-            &stream_handle.to_ne_bytes(),
-            &Stream::new(priority, pcp, is_protected).to_bytes(),
+            &stream_identification.to_bytes()?,
+            &Stream::new(stream_handle, priority, pcp, is_protected).to_bytes(),
             MapFlags::ANY,
         )?;
 
@@ -480,16 +486,15 @@ mod tests {
             let mut map = Map::default();
             map.expect_update().times(1).returning(|key, value, _| {
                 let stream = Stream::from_bytes(value.try_into().unwrap()).unwrap();
-                match key[0] {
-                    0 => {
-                        assert_eq!(stream.egress_priority, 0);
-                        assert_eq!(stream.shifted_pcp, 0);
-                    }
-                    1 => {
-                        assert_eq!(stream.egress_priority, PRIORITY);
-                        assert_eq!(stream.shifted_pcp, u16::from(PCP) << 13);
-                    }
-                    _ => panic!("Invalid stream_handle"),
+
+                if key == [0; 8] {
+                    assert_eq!(stream.egress_priority, 0);
+                    assert_eq!(stream.shifted_pcp, 0);
+                } else if key == generate_stream_identification(3).to_bytes()? {
+                    assert_eq!(stream.egress_priority, PRIORITY);
+                    assert_eq!(stream.shifted_pcp, u16::from(PCP) << 13);
+                } else {
+                    panic!("Invalid stream identification {key:#?}");
                 }
                 Ok(())
             });
@@ -527,28 +532,22 @@ mod tests {
             map
         });
 
-        maps_mut.expect_stream_handles().returning(|| {
-            let mut map = Map::default();
-            map.expect_update().times(1).returning(|key, value, _| {
-                let stream_id_bytes = generate_stream_identification(3).to_bytes().unwrap();
-                assert_eq!(key, stream_id_bytes);
-                assert_eq!(value, vec![1, 0]);
-                Ok(())
-            });
-            map
-        });
-
         maps_mut
     }
 
     fn generate_maps() -> NetworkDispatcherMaps {
         let mut maps = NetworkDispatcherMaps::default();
 
-        maps.expect_stream_handles().returning(|| {
+        maps.expect_streams().returning(|| {
             let mut map = Map::default();
+            map.expect_info().returning(|| {
+                Ok(MockMapInfo {
+                    info: MockInnerMapInfo { max_entries: 100 },
+                })
+            });
             map.expect_lookup().times(1).returning(|key, _flags| {
                 if key == generate_stream_identification(3).to_bytes().unwrap() {
-                    Ok(Some(vec![1, 0]))
+                    Ok(Some(Stream::new(1, 6, 3, false).to_bytes().into()))
                 } else {
                     Ok(None)
                 }
@@ -560,18 +559,6 @@ mod tests {
             let mut map = Map::default();
             map.expect_lookup()
                 .returning(|_key, _value| Ok(Some(vec![1, 0])));
-            map
-        });
-
-        maps.expect_streams().returning(|| {
-            let mut map = Map::default();
-            map.expect_info().returning(|| {
-                Ok(MockMapInfo {
-                    info: MockInnerMapInfo { max_entries: 100 },
-                })
-            });
-            map.expect_lookup()
-                .returning(|_key, _flags| Ok(Some(Stream::new(6, 3, false).to_bytes().into())));
             map
         });
 
