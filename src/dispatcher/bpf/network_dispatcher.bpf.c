@@ -20,35 +20,28 @@ struct null_stream_identification {
 } __attribute__((__packed__));
 
 struct stream {
+	u16 handle;
 	u8 restrictions;
 	u16 shifted_pcp;
 	u32 egress_priority;
 } __attribute__((__packed__));
 
 // Map of stream identification to stream handles
-// stream_handle 0 is not in the map and corresponds to best effort traffic
+// default stream handle 0 is also in the map for all zeros in the key
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, MAX_STREAMS);
 	__type(key, struct null_stream_identification);
-	__type(value, u16); // stream handle
-} stream_handles SEC(".maps");
+	__type(value, struct stream);
+} streams SEC(".maps");
 
-// Number of streams (including best effort)
+// Number of streams (including default stream handle 0)
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__type(key, u32);
 	__type(value, u16);
 	__uint(max_entries, 1);
 } num_streams SEC(".maps");
-
-// Array of streams
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, MAX_STREAMS);
-	__type(key, u32); // stream handle
-	__type(value, struct stream);
-} streams SEC(".maps");
 
 // Array of cgroups for each stream
 // Only accessed and checked if indicated
@@ -81,33 +74,37 @@ int tc_egress(struct __sk_buff *ctx)
 	}
 
 	// Only search for stream if VLAN header is provided, otherwise fall back to 0 (best-effort)
-	u32 stream_handle = 0;
 	struct null_stream_identification stream_id;
 
 	__builtin_memcpy(stream_id.destination_address, eth->h_dest,
 			 sizeof(stream_id.destination_address));
 	stream_id.vlan_identifier = ctx->vlan_tci & 0xFFF;
 
-	u16 *stream_handle_ptr =
-		bpf_map_lookup_elem(&stream_handles, &stream_id);
-	if (stream_handle_ptr) {
-		// only set if found, otherwise fall back to 0 (best-effort)
-		stream_handle = *stream_handle_ptr;
-	} else if (debug_output) {
-		bpf_printk(
-			"No matching TSN stream found, processing as best effort...");
-	}
-
-	struct stream *stream = bpf_map_lookup_elem(&streams, &stream_handle);
+	struct stream *stream = bpf_map_lookup_elem(&streams, &stream_id);
 	if (!stream) {
-		if (debug_output) {
-			// should never happen, if no explicit stream is available,
-			// the stream_handle should be 0
-			bpf_printk(
-				"Dropping packet due to internal error: Stream %i not found",
-				stream_handle);
+		bpf_printk(
+			"No matching TSN stream found dst: %x:%x:%x:%x:%x:%x vlan %i, processing as default traffic",
+			stream_id.destination_address[0],
+			stream_id.destination_address[1],
+			stream_id.destination_address[2],
+			stream_id.destination_address[3],
+			stream_id.destination_address[4],
+			stream_id.destination_address[5],
+			stream_id.vlan_identifier);
+
+		struct null_stream_identification default_stream_id = {};
+		struct stream *stream =
+			bpf_map_lookup_elem(&streams, &default_stream_id);
+
+		if (!stream) {
+			if (debug_output) {
+				// should never happen, if no explicit stream is available,
+				// the default stream should be available
+				bpf_printk(
+					"Dropping packet due to internal error when loading default stream");
+			}
+			return TC_ACT_SHOT;
 		}
-		return TC_ACT_SHOT;
 	}
 
 	/*************************
@@ -124,11 +121,11 @@ int tc_egress(struct __sk_buff *ctx)
 			if (debug_output) {
 				bpf_printk(
 					"Admitting packet to stream %i since no socket is attached",
-					stream_handle);
+					stream->handle);
 			}
 		} else {
 			long cgroup_check = bpf_skb_under_cgroup(
-				ctx, &stream_cgroups, stream_handle);
+				ctx, &stream_cgroups, stream->handle);
 			if (cgroup_check != 1) {
 				if (debug_output) {
 					if (cgroup_check == 0) {
@@ -137,7 +134,7 @@ int tc_egress(struct __sk_buff *ctx)
 					} else {
 						bpf_printk(
 							"Dropping packet due to internal error: Checking cgroup for stream %i failed: %i",
-							stream_handle,
+							stream->handle,
 							cgroup_check);
 					}
 				}
