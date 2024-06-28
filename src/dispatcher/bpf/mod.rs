@@ -490,8 +490,7 @@ mod tests {
                 if key == [0; 4] {
                     assert_eq!(stream.egress_priority, 0);
                     assert_eq!(stream.shifted_pcp, 0);
-                } else if key == generate_stream_identification(3).to_bytes()?
-                {
+                } else if key == generate_stream_identification(3).to_bytes()? {
                     assert_eq!(stream.egress_priority, PRIORITY);
                     assert_eq!(stream.shifted_pcp, u16::from(PCP) << 13);
                 } else {
