@@ -24,8 +24,7 @@ mod network_dispatcher {
 #[cfg(not(test))]
 use {
     libbpf_rs::skel::{OpenSkel, SkelBuilder},
-    libbpf_rs::TcHook,
-    libbpf_rs::TcHookBuilder,
+    libbpf_rs::{Map, TcHookBuilder},
     network_dispatcher::NetworkDispatcherSkel,
     network_dispatcher::NetworkDispatcherSkelBuilder,
     std::os::fd::AsFd,
@@ -35,9 +34,9 @@ use {
 mod mocks;
 #[cfg(test)]
 use {
-    mocks::MockNetworkDispatcherSkel as NetworkDispatcherSkel,
+    mocks::MockMap as Map, mocks::MockNetworkDispatcherSkel as NetworkDispatcherSkel,
     mocks::MockNetworkDispatcherSkelBuilder as NetworkDispatcherSkelBuilder,
-    mocks::MockTcHook as TcHook, mocks::MockTcHookBuilder as TcHookBuilder,
+    mocks::MockTcHookBuilder as TcHookBuilder,
 };
 
 use crate::configuration::{StreamIdentification, StreamIdentificationBuilder};
@@ -112,17 +111,12 @@ impl StreamIdentification {
     }
 }
 
-struct BPFInterface<'a> {
-    _tc_egress: TcHook, // TODO check if persistence is really needed
-    skel: NetworkDispatcherSkel<'a>,
-}
-
 type GenerateSkelCallback = Box<dyn FnMut() -> NetworkDispatcherSkelBuilder + Send>;
 type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
 
 /// Installs eBPFs to dispatcher the network to prevent interference of real-time communication
 pub struct BPFDispatcher<'a> {
-    interfaces: HashMap<String, BPFInterface<'a>>,
+    interfaces: HashMap<String, NetworkDispatcherSkel<'a>>,
     generate_skel: GenerateSkelCallback,
     nametoindex: NameToIndexCallback,
     debug_output: bool,
@@ -137,11 +131,34 @@ impl Dispatcher for BPFDispatcher<'_> {
         pcp: Option<u8>,
         cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        self.with_interface(interface, |iface| {
-            iface
-                .configure_stream(stream_identification, priority, pcp, cgroup)
-                .context("Failed to configure stream")
+        self.with_interface(interface, |skel| {
+            let stream_handle = find_or_add_stream(
+                skel.maps().streams(),
+                skel.maps().num_streams(),
+                stream_identification,
+                |s| {
+                    Ok(Stream::from_bytes(
+                        s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
+                    )?
+                    .handle)
+                },
+            )?;
+
+            let pcp =
+                pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
+
+            update_stream_maps(
+                skel,
+                stream_identification,
+                stream_handle,
+                priority,
+                pcp,
+                cgroup,
+            )?;
+
+            Ok(())
         })
+        .context("Failed to configure stream")
     }
 
     fn protect_stream(
@@ -150,11 +167,28 @@ impl Dispatcher for BPFDispatcher<'_> {
         stream_identification: &StreamIdentification,
         cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        self.with_interface(interface, |iface| {
-            iface
-                .protect_stream(stream_identification, cgroup)
-                .context("Failed to protect stream")
+        self.with_interface(interface, |skel| {
+            let stream_id_bytes = stream_identification.to_bytes()?;
+
+            let stream = Stream::from_bytes(
+                skel.maps()
+                    .streams()
+                    .lookup(&stream_id_bytes, MapFlags::ANY)?
+                    .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
+                    .try_into()
+                    .map_err(|_e| anyhow!("Invalid byte number"))?,
+            )?;
+
+            update_stream_maps(
+                skel,
+                stream_identification,
+                stream.handle,
+                stream.egress_priority,
+                stream.pcp()?,
+                cgroup,
+            )
         })
+        .context("Failed to protect stream")
     }
 
     fn configure_best_effort(
@@ -163,11 +197,17 @@ impl Dispatcher for BPFDispatcher<'_> {
         priority: u32,
         cgroup: Option<Arc<Path>>,
     ) -> Result<()> {
-        self.with_interface(interface, |iface| {
-            iface
-                .configure_best_effort(priority, cgroup)
-                .context("Failed to configure best effort")
+        self.with_interface(interface, |skel| {
+            let stream_id = StreamIdentificationBuilder::new()
+                .destination_address(MacAddress::new([0; 6]))
+                .vid(0)
+                .build();
+            update_stream_maps(
+                skel, &stream_id, 0, priority, 0, /* best-effort PCP */
+                cgroup,
+            )
         })
+        .context("Failed to configure best effort")
     }
 }
 
@@ -188,7 +228,7 @@ impl BPFDispatcher<'_> {
     fn with_interface(
         &mut self,
         interface: &str,
-        f: impl FnOnce(&mut BPFInterface<'_>) -> Result<()>,
+        f: impl FnOnce(&mut NetworkDispatcherSkel<'_>) -> Result<()>,
     ) -> Result<()> {
         if let Some(existing_interface) = self.interfaces.get_mut(interface) {
             f(existing_interface)
@@ -239,13 +279,7 @@ impl BPFDispatcher<'_> {
             .update(&0_u32.to_ne_bytes(), &1_u16.to_ne_bytes(), MapFlags::ANY)
             .context("Failed to set num_streams")?;
 
-        self.interfaces.insert(
-            String::from(interface),
-            BPFInterface {
-                _tc_egress: tc_egress,
-                skel,
-            },
-        );
+        self.interfaces.insert(String::from(interface), skel);
         Ok(())
     }
 }
@@ -256,140 +290,80 @@ impl Default for BPFDispatcher<'_> {
     }
 }
 
-impl BPFInterface<'_> {
-    fn configure_stream(
-        &mut self,
-        stream_identification: &StreamIdentification,
-        priority: u32,
-        pcp: Option<u8>,
-        cgroup: Option<Arc<Path>>,
-    ) -> Result<()> {
-        let stream_id_bytes = stream_identification.to_bytes()?;
+fn find_or_add_stream(
+    streams: &Map,
+    num_streams: &Map,
+    stream_identification: &StreamIdentification,
+    handle_from_bytes: impl FnOnce(Vec<u8>) -> Result<u16>,
+) -> Result<u16> {
+    let stream_id_bytes = stream_identification.to_bytes()?;
 
-        // Check if stream already exists, otherwise calculate stream_handle from number of streams
-        let mut adding_new_stream = false;
-        let stream_handle = if let Some(s) = self
-            .skel
-            .maps()
-            .streams()
-            .lookup(&stream_id_bytes, MapFlags::ANY)?
-        {
-            Stream::from_bytes(s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?)?.handle
-        } else {
-            adding_new_stream = true;
-            let num_streams = u16::from_ne_bytes(
-                self.skel
-                    .maps()
-                    .num_streams()
-                    .lookup(&0_u32.to_ne_bytes(), MapFlags::ANY)?
-                    .ok_or_else(|| anyhow!("Cannot lookup number of streams"))?
-                    .try_into()
-                    .map_err(|_e| anyhow!("Invalid byte number"))?,
-            );
-
-            let max_streams: u16 = self
-                .skel
-                .maps()
-                .streams()
-                .info()?
-                .info
-                .max_entries
-                .try_into()?;
-
-            if num_streams == max_streams {
-                return Err(anyhow!("Maximum number of streams reached"));
-            }
-
+    // Check if stream already exists, otherwise calculate stream_handle from number of streams
+    let mut adding_new_stream = false;
+    let stream_handle = if let Some(s) = streams.lookup(&stream_id_bytes, MapFlags::ANY)? {
+        handle_from_bytes(s)?
+    } else {
+        adding_new_stream = true;
+        let num_streams = u16::from_ne_bytes(
             num_streams
-        };
-
-        let pcp = pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
-
-        self.update_stream_maps(stream_identification, stream_handle, priority, pcp, cgroup)?;
-
-        if adding_new_stream {
-            let new_num_streams = stream_handle + 1;
-
-            self.skel.maps_mut().num_streams().update(
-                &0_u32.to_ne_bytes(),
-                &new_num_streams.to_ne_bytes(),
-                MapFlags::ANY,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn protect_stream(
-        &mut self,
-        stream_identification: &StreamIdentification,
-        cgroup: Option<Arc<Path>>,
-    ) -> Result<()> {
-        let stream_id_bytes = stream_identification.to_bytes()?;
-
-        let stream = Stream::from_bytes(
-            self.skel
-                .maps()
-                .streams()
-                .lookup(&stream_id_bytes, MapFlags::ANY)?
-                .ok_or_else(|| anyhow!("Cannot find stream for identification"))?
+                .lookup(&0_u32.to_ne_bytes(), MapFlags::ANY)?
+                .ok_or_else(|| anyhow!("Cannot lookup number of streams"))?
                 .try_into()
                 .map_err(|_e| anyhow!("Invalid byte number"))?,
-        )?;
+        );
 
-        self.update_stream_maps(
-            stream_identification,
-            stream.handle,
-            stream.egress_priority,
-            stream.pcp()?,
-            cgroup,
-        )?;
+        let max_streams: u16 = streams.info()?.info.max_entries.try_into()?;
 
-        Ok(())
-    }
-
-    fn configure_best_effort(&mut self, priority: u32, cgroup: Option<Arc<Path>>) -> Result<()> {
-        let stream_id = StreamIdentificationBuilder::new()
-            .destination_address(MacAddress::new([0; 6]))
-            .vid(0)
-            .build();
-        self.update_stream_maps(
-            &stream_id, 0, priority, 0, /* best-effort PCP */
-            cgroup,
-        )
-    }
-
-    fn update_stream_maps(
-        &mut self,
-        stream_identification: &StreamIdentification,
-        stream_handle: u16,
-        priority: u32,
-        pcp: u8,
-        cgroup: Option<Arc<Path>>,
-    ) -> Result<()> {
-        let mut is_protected = false;
-        if let Some(cgroup) = cgroup {
-            is_protected = true;
-            let full_cgroup_path =
-                Path::new("/sys/fs/cgroup").join(cgroup.strip_prefix("/").unwrap_or(&cgroup));
-            let cgroup_file = File::open(full_cgroup_path)?;
-            let cgroup_fd = cgroup_file.as_raw_fd();
-
-            self.skel.maps_mut().stream_cgroups().update(
-                &u32::from(stream_handle).to_ne_bytes(),
-                &cgroup_fd.to_ne_bytes(),
-                MapFlags::ANY,
-            )?;
+        if num_streams == max_streams {
+            return Err(anyhow!("Maximum number of streams reached"));
         }
 
-        self.skel.maps_mut().streams().update(
-            &stream_identification.to_bytes()?,
-            &Stream::new(stream_handle, priority, pcp, is_protected).to_bytes(),
+        num_streams
+    };
+
+    if adding_new_stream {
+        let new_num_streams = stream_handle + 1;
+
+        num_streams.update(
+            &0_u32.to_ne_bytes(),
+            &new_num_streams.to_ne_bytes(),
             MapFlags::ANY,
         )?;
-
-        Ok(())
     }
+
+    Ok(stream_handle)
+}
+
+fn update_stream_maps(
+    skel: &mut NetworkDispatcherSkel<'_>,
+    stream_identification: &StreamIdentification,
+    stream_handle: u16,
+    priority: u32,
+    pcp: u8,
+    cgroup: Option<Arc<Path>>,
+) -> Result<()> {
+    let mut is_protected = false;
+    if let Some(cgroup) = cgroup {
+        is_protected = true;
+        let full_cgroup_path =
+            Path::new("/sys/fs/cgroup").join(cgroup.strip_prefix("/").unwrap_or(&cgroup));
+        let cgroup_file = File::open(full_cgroup_path)?;
+        let cgroup_fd = cgroup_file.as_raw_fd();
+
+        skel.maps_mut().stream_cgroups().update(
+            &u32::from(stream_handle).to_ne_bytes(),
+            &cgroup_fd.to_ne_bytes(),
+            MapFlags::ANY,
+        )?;
+    }
+
+    skel.maps_mut().streams().update(
+        &stream_identification.to_bytes()?,
+        &Stream::new(stream_handle, priority, pcp, is_protected).to_bytes(),
+        MapFlags::ANY,
+    )?;
+
+    Ok(())
 }
 
 #[allow(clippy::needless_pass_by_value)] // interface defined by libbpf-rs
