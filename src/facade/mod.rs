@@ -60,7 +60,7 @@
 //! ## Usage Example of the Facade Module within detnetctl
 #![cfg_attr(not(feature = "ptp"), doc = "```ignore")]
 #![cfg_attr(feature = "ptp", doc = "```")]
-//! use detnetctl::controller::{Setup, Protection, Controller};
+//! use detnetctl::controller::{Setup, Protect, Controller};
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
 //! use detnetctl::facade::{Facade, Setup as DBusSetup};
 //! use detnetctl::queue_setup::{QueueSetup, DummyQueueSetup};

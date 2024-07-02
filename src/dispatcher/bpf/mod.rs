@@ -4,11 +4,11 @@
 
 use anyhow::{anyhow, Context, Result};
 use eui48::MacAddress;
+use flagset::{flags, FlagSet};
 use libbpf_rs::{MapFlags, TC_EGRESS};
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::Path;
-use std::sync::Arc;
 
 #[cfg(not(test))]
 #[allow(
@@ -40,21 +40,47 @@ use {
 
 use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
 use crate::configuration::{StreamIdentification, StreamIdentificationBuilder};
-use crate::dispatcher::Dispatcher;
+use crate::dispatcher::{Dispatcher, Protection};
+
+flags! {
+    enum StreamFlags: u8 {
+        DropAll = 0x1,
+        DropWithoutSk = 0x2,
+        DropWithWrongCgroup = 0x3,
+    }
+}
 
 #[derive(Debug)]
 struct Stream {
     handle: u16,
-    restrictions: u8,
+    flags: FlagSet<StreamFlags>,
     shifted_pcp: u16,
     egress_priority: u32,
 }
 
 impl Stream {
-    fn new(handle: u16, priority: u32, pcp: u8, is_protected: bool) -> Self {
+    fn new(
+        handle: u16,
+        priority: u32,
+        pcp: u8,
+        drop_all: bool,
+        drop_without_sk: bool,
+        drop_with_wrong_cgroup: bool,
+    ) -> Self {
+        let mut flags = FlagSet::default();
+        if drop_all {
+            flags |= StreamFlags::DropAll;
+        }
+        if drop_without_sk {
+            flags |= StreamFlags::DropWithoutSk;
+        }
+        if drop_with_wrong_cgroup {
+            flags |= StreamFlags::DropWithWrongCgroup;
+        }
+
         Self {
             handle,
-            restrictions: u8::from(is_protected),
+            flags: FlagSet::default(),
             shifted_pcp: u16::from(pcp) << 13,
             egress_priority: priority,
         }
@@ -70,7 +96,7 @@ impl Stream {
     fn to_bytes(&self) -> [u8; 9] {
         let mut result: [u8; 9] = [0; 9];
         result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]);
-        result[2] = self.restrictions;
+        result[2] = self.flags.bits();
         result[3..5].copy_from_slice(&self.shifted_pcp.to_ne_bytes()[..]);
         result[5..9].copy_from_slice(&self.egress_priority.to_ne_bytes()[..]);
         result
@@ -83,7 +109,7 @@ impl Stream {
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
-            restrictions: bytes[2],
+            flags: FlagSet::new(bytes[2]).map_err(|e| anyhow!("Invalid bit {e}"))?,
             shifted_pcp: u16::from_ne_bytes(
                 bytes[3..5]
                     .try_into()
@@ -119,7 +145,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         stream_identification: &StreamIdentification,
         priority: u32,
         pcp: Option<u8>,
-        cgroup: Option<Arc<Path>>,
+        protection: Protection,
     ) -> Result<()> {
         self.skels
             .with_interface(interface, |skel| {
@@ -144,7 +170,7 @@ impl Dispatcher for BPFDispatcher<'_> {
                     stream_handle,
                     priority,
                     pcp,
-                    cgroup,
+                    protection,
                 )?;
 
                 Ok(())
@@ -156,7 +182,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         &mut self,
         interface: &str,
         stream_identification: &StreamIdentification,
-        cgroup: Option<Arc<Path>>,
+        protection: Protection,
     ) -> Result<()> {
         self.skels
             .with_interface(interface, |skel| {
@@ -177,7 +203,7 @@ impl Dispatcher for BPFDispatcher<'_> {
                     stream.handle,
                     stream.egress_priority,
                     stream.pcp()?,
-                    cgroup,
+                    protection,
                 )
             })
             .context("Failed to protect stream")
@@ -187,7 +213,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         &mut self,
         interface: &str,
         priority: u32,
-        cgroup: Option<Arc<Path>>,
+        protection: Protection,
     ) -> Result<()> {
         self.skels
             .with_interface(interface, |skel| {
@@ -197,7 +223,7 @@ impl Dispatcher for BPFDispatcher<'_> {
                     .build();
                 update_stream_maps(
                     skel, &stream_id, 0, priority, 0, /* best-effort PCP */
-                    cgroup,
+                    protection,
                 )
             })
             .context("Failed to configure best effort")
@@ -253,7 +279,7 @@ impl<'a> Attacher<DispatcherSkel<'a>> for DispatcherAttacher {
             .streams()
             .update(
                 &[0; 8],
-                &Stream::new(0, 0, 0, false).to_bytes(),
+                &Stream::new(0, 0, 0, false, false, false).to_bytes(),
                 MapFlags::ANY,
             )
             .context("Failed to configure initial best-effort stream")?;
@@ -273,11 +299,11 @@ fn update_stream_maps(
     stream_handle: u16,
     priority: u32,
     pcp: u8,
-    cgroup: Option<Arc<Path>>,
+    protection: Protection,
 ) -> Result<()> {
-    let mut is_protected = false;
-    if let Some(cgroup) = cgroup {
-        is_protected = true;
+    let mut drop_with_wrong_cgroup = false;
+    if let Some(cgroup) = protection.cgroup {
+        drop_with_wrong_cgroup = true;
         let full_cgroup_path =
             Path::new("/sys/fs/cgroup").join(cgroup.strip_prefix("/").unwrap_or(&cgroup));
         let cgroup_file = File::open(full_cgroup_path)?;
@@ -292,7 +318,15 @@ fn update_stream_maps(
 
     skel.maps_mut().streams().update(
         &stream_identification.to_bytes()?,
-        &Stream::new(stream_handle, priority, pcp, is_protected).to_bytes(),
+        &Stream::new(
+            stream_handle,
+            priority,
+            pcp,
+            protection.drop_all,
+            protection.drop_without_sk,
+            drop_with_wrong_cgroup,
+        )
+        .to_bytes(),
         MapFlags::ANY,
     )?;
 
@@ -446,7 +480,9 @@ mod tests {
             });
             map.expect_lookup().times(1).returning(|key, _flags| {
                 if key == generate_stream_identification(3).to_bytes().unwrap() {
-                    Ok(Some(Stream::new(1, 6, 3, false).to_bytes().into()))
+                    Ok(Some(
+                        Stream::new(1, 6, 3, false, false, false).to_bytes().into(),
+                    ))
                 } else {
                     Ok(None)
                 }
@@ -485,7 +521,11 @@ mod tests {
             &generate_stream_identification(3),
             PRIORITY,
             Some(PCP),
-            Some(Path::new(&cgroup).into()),
+            Protection {
+                cgroup: Some(Path::new(&cgroup).into()),
+                drop_all: false,
+                drop_without_sk: false,
+            },
         )?;
         Ok(())
     }
@@ -535,7 +575,11 @@ mod tests {
                 &generate_stream_identification(3),
                 PRIORITY,
                 Some(PCP),
-                Some(Path::new(&cgroup).into()),
+                Protection {
+                    cgroup: Some(Path::new(&cgroup).into()),
+                    drop_all: false,
+                    drop_without_sk: false,
+                },
             )
             .unwrap();
     }
@@ -559,7 +603,11 @@ mod tests {
         dispatcher.protect_stream(
             INTERFACE,
             &generate_stream_identification(3),
-            Some(Path::new(&cgroup).into()),
+            Protection {
+                cgroup: Some(Path::new(&cgroup).into()),
+                drop_all: false,
+                drop_without_sk: false,
+            },
         )?;
         Ok(())
     }
@@ -585,7 +633,11 @@ mod tests {
             .protect_stream(
                 INTERFACE,
                 &generate_stream_identification(7),
-                Some(Path::new(&cgroup).into()),
+                Protection {
+                    cgroup: Some(Path::new(&cgroup).into()),
+                    drop_all: false,
+                    drop_without_sk: false,
+                },
             )
             .unwrap();
     }
