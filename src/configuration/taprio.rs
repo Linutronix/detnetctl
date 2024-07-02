@@ -135,7 +135,7 @@ impl TaprioConfig {
         }
 
         if let Some(queues) = &self.queues {
-            if queues.len() != num_tc.into() {
+            if queues.len() != usize::from(num_tc) {
                 return Err(anyhow!("number of entires in queues needs to match number of traffic classes (or remove completely to fall back to default)"));
             }
         } else {
