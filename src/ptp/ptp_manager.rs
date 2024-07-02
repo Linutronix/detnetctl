@@ -551,7 +551,7 @@ fn check_kernel_tai_offset(utc_offset: i16) -> Result<(i32, PtpIssues)> {
     }
 
     let mut issues: PtpIssues = None.into();
-    if tbuf.tai != utc_offset.into() {
+    if tbuf.tai != i32::from(utc_offset) {
         issues |= PtpIssue::KernelTaiOffsetNotOk;
     }
 
