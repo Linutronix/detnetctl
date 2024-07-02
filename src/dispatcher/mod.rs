@@ -6,7 +6,7 @@
 #![cfg_attr(not(feature = "bpf"), doc = "```ignore")]
 #![cfg_attr(feature = "bpf", doc = "```no_run")]
 //! use detnetctl::configuration::StreamIdentificationBuilder;
-//! use detnetctl::dispatcher::{Dispatcher, BPFDispatcher};
+//! use detnetctl::dispatcher::{Dispatcher, BPFDispatcher, Protection};
 //! use std::path::Path;
 //! let mut dispatcher = BPFDispatcher::new(false);
 //! let cgroup = Path::new("/sys/fs/cgroup/system.slice/some.service/");
@@ -16,7 +16,12 @@
 //!     .build();
 //!
 //! dispatcher.configure_stream("eth0", &stream_id, 5, Some(3),
-//!                             Some(cgroup.into()))?;
+//!                             Protection {
+//!                                 cgroup: Some(cgroup.into()),
+//!                                 drop_all: false,
+//!                                 drop_without_sk: false,
+//!                             })?;
+//!
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -27,6 +32,19 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use mockall::automock;
+
+/// Define the level of protection for this stream
+pub struct Protection {
+    /// Drop all egress traffic for this stream.
+    pub drop_all: bool,
+
+    /// Drop all egress traffic that is not associated to a socket.
+    pub drop_without_sk: bool,
+
+    /// Drop egress traffic with associated socket which is not under the given cgroup.
+    /// Traffic without associated socket is permitted unless `drop_without_sk` is true.
+    pub cgroup: Option<Arc<Path>>,
+}
 
 /// Defines how to request interference protection
 #[cfg_attr(test, automock)]
@@ -49,7 +67,7 @@ pub trait Dispatcher {
         stream_identification: &StreamIdentification,
         priority: u32,
         pcp: Option<u8>,
-        cgroup: Option<Arc<Path>>,
+        protection: Protection,
     ) -> Result<()>;
 
     /// Protect a stream
@@ -64,7 +82,7 @@ pub trait Dispatcher {
         &mut self,
         interface: &str,
         stream_identification: &StreamIdentification,
-        cgroup: Option<Arc<Path>>,
+        protection: Protection,
     ) -> Result<()>;
 
     /// Configure best-effort traffic
@@ -86,7 +104,7 @@ pub trait Dispatcher {
         &mut self,
         interface: &str,
         priority: u32,
-        cgroup: Option<Arc<Path>>,
+        protection: Protection,
     ) -> Result<()>;
 }
 
@@ -107,7 +125,7 @@ impl Dispatcher for DummyDispatcher {
         _stream_identification: &StreamIdentification,
         _priority: u32,
         _pcp: Option<u8>,
-        _cgroup: Option<Arc<Path>>,
+        _protection: Protection,
     ) -> Result<()> {
         Ok(())
     }
@@ -116,7 +134,7 @@ impl Dispatcher for DummyDispatcher {
         &mut self,
         _interface: &str,
         _stream_identification: &StreamIdentification,
-        _cgroup: Option<Arc<Path>>,
+        _protection: Protection,
     ) -> Result<()> {
         Ok(())
     }
@@ -125,7 +143,7 @@ impl Dispatcher for DummyDispatcher {
         &mut self,
         _interface: &str,
         _priority: u32,
-        _cgroup: Option<Arc<Path>>,
+        _protection: Protection,
     ) -> Result<()> {
         Ok(())
     }

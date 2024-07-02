@@ -185,7 +185,7 @@ fn feature_missing_error(feature: &str, alternative: &str) -> Error {
 #[cfg(feature = "dbus")]
 use {
     async_shutdown::Shutdown,
-    detnetctl::controller::Protection,
+    detnetctl::controller::Protect,
     detnetctl::facade::{
         Facade, ProtectCallback, ProtectFuture, PtpStatusCallback, PtpStatusFuture,
         Setup as FacadeSetup,

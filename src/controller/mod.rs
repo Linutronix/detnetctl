@@ -9,7 +9,7 @@
 //!
 //! ```
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
-//! use detnetctl::controller::{Controller, Setup, Protection};
+//! use detnetctl::controller::{Controller, Setup, Protect};
 //! use detnetctl::dispatcher::{DummyDispatcher, Dispatcher};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
 //! use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
@@ -45,7 +45,7 @@
 use crate::configuration::{
     BridgedApp, Configuration, FillDefaults, Interface, Stream, UnbridgedApp,
 };
-use crate::dispatcher::Dispatcher;
+use crate::dispatcher::{Dispatcher, Protection};
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
 use anyhow::{anyhow, Context, Result};
@@ -72,7 +72,7 @@ pub trait Setup {
 
 /// Defines a protection operation
 #[async_trait]
-pub trait Protection {
+pub trait Protect {
     /// Protect an application by setting the cgroup for the provided `app_name`
     async fn protect(
         &self,
@@ -316,7 +316,7 @@ impl Setup for Controller {
 }
 
 #[async_trait]
-impl Protection for Controller {
+impl Protect for Controller {
     async fn protect(
         &self,
         app_name: &str,
@@ -341,7 +341,15 @@ impl Protection for Controller {
 
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
-            .protect_stream(physical_interface, stream_id, Some(cgroup.into()))
+            .protect_stream(
+                physical_interface,
+                stream_id,
+                Protection {
+                    cgroup: Some(cgroup.into()),
+                    drop_all: false,
+                    drop_without_sk: false,
+                },
+            )
             .context("Installing protection via the dispatcher failed")?;
         println!("  Protection installed for stream {stream_id:#?} on {physical_interface}");
 
@@ -389,9 +397,13 @@ async fn setup_before_interface_up(
                         .pcp_encoding()?
                         .pcp_from_priority(*priority)?,
                 ),
-                app_config
-                    .cgroup_opt()
-                    .map(|c| <PathBuf as AsRef<Path>>::as_ref(c).into()),
+                Protection {
+                    cgroup: app_config
+                        .cgroup_opt()
+                        .map(|c| <PathBuf as AsRef<Path>>::as_ref(c).into()),
+                    drop_all: false,
+                    drop_without_sk: false,
+                },
             )
             .context("Installing protection via the dispatcher failed")?;
         println!(
