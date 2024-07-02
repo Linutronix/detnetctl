@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::interface_setup::{InterfaceSetup, LinkState};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use async_trait::async_trait;
 use ethtool;
 use ethtool::EthtoolAttr::LinkMode;
@@ -15,8 +15,13 @@ use netlink_packet_route::link::LinkAttribute::LinkInfo;
 use netlink_packet_route::link::LinkInfo::{Data, Kind};
 use netlink_packet_route::link::{InfoData, InfoKind};
 use netlink_packet_route::link::{LinkFlag, LinkMessage, VlanProtocol};
-use rtnetlink::Handle;
+use rtnetlink::{Handle, NetworkNamespace, NETNS_PATH};
+use serde_json::Value;
+use std::fs::File;
 use std::net::IpAddr;
+use std::os::fd::AsRawFd;
+use std::path::PathBuf;
+use std::process::Command;
 use tokio::time::{sleep, Duration, Instant};
 
 const INTERFACE_STATE_CHANGE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -75,6 +80,21 @@ impl NetlinkSetup {
         }
 
         Err(anyhow!("No ethtool link mode speed message received"))
+    }
+
+    async fn move_to_namespace(netns: &str, interface: &str, handle: &Handle) -> Result<()> {
+        let idx = Self::get_interface_index(interface, handle)
+            .await
+            .ok_or_else(|| anyhow!("Interface {interface} not found"))?;
+
+        let path = namespace_path(netns);
+        let ns_file = File::open(path)?;
+        Ok(handle
+            .link()
+            .set(idx)
+            .setns_by_fd(ns_file.as_raw_fd())
+            .execute()
+            .await?)
     }
 }
 
@@ -157,7 +177,7 @@ impl InterfaceSetup for NetlinkSetup {
 
         if let Some(link) = Self::get_interface(vlan_interface, &handle).await {
             // no need to add the interface, but still validate if it matches
-            return validate_link(&link, vlan_interface, vid);
+            return validate_vlan_link(&link, vlan_interface, vid);
         }
 
         let parent_idx = Self::get_interface_index(parent_interface, &handle)
@@ -181,9 +201,55 @@ impl InterfaceSetup for NetlinkSetup {
             .retain(|&x| x != LinkFlag::Up);
         Ok(request.execute().await?)
     }
+
+    async fn setup_veth_pair_with_vlan(
+        &self,
+        veth_app: &str,
+        netns_app: &str,
+        veth_bridge: &str,
+        vlan_interface: &str,
+        vid: u16,
+    ) -> Result<()> {
+        // Setup network namespace if it does not exist
+        let ns_path = namespace_path(netns_app);
+        if !ns_path.exists() {
+            NetworkNamespace::add(netns_app.to_owned()).await?;
+        }
+
+        let (connection, handle, _) = rtnetlink::new_connection()?;
+        tokio::spawn(connection);
+
+        if let Some(link) = Self::get_interface(veth_bridge, &handle).await {
+            // at least veth_bridge is there, so do nothing, but validate if setup matches
+            return validate_veth_links(veth_app, netns_app, &link, vlan_interface, vid);
+        }
+
+        // Create veth pair
+        handle
+            .link()
+            .add()
+            .veth(veth_app.to_owned(), veth_bridge.to_owned())
+            .execute()
+            .await?;
+
+        self.setup_vlan_interface(veth_app, vlan_interface, vid)
+            .await?;
+
+        Self::move_to_namespace(netns_app, veth_app, &handle).await?;
+        Self::move_to_namespace(netns_app, vlan_interface, &handle).await?;
+
+        Ok(())
+    }
 }
 
-fn validate_link(link: &LinkMessage, vlan_interface: &str, vid: u16) -> Result<()> {
+fn namespace_path(name: &str) -> PathBuf {
+    let mut netns_path = PathBuf::new();
+    netns_path.push(NETNS_PATH);
+    netns_path.push(name);
+    netns_path
+}
+
+fn validate_vlan_link(link: &LinkMessage, vlan_interface: &str, vid: u16) -> Result<()> {
     // VLAN interface already exists
     // Validate that configuration is compatible
     let info = link
@@ -243,6 +309,86 @@ fn validate_link(link: &LinkMessage, vlan_interface: &str, vid: u16) -> Result<(
     Ok(())
 }
 
+fn validate_veth_links(
+    veth_app: &str,
+    netns_app: &str,
+    veth_bridge_link: &LinkMessage,
+    vlan_interface: &str,
+    vid: u16,
+) -> Result<()> {
+    // Since we cannot read the interface states from the default host network namespace
+    // and forking into that namespace is potentially unsafe
+    // (see https://docs.rs/nix/0.27.1/nix/unistd/fn.fork.html#safety)
+    // we use iproute2 here and parse its output
+
+    let vlan_interface_details = json_from_command(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            netns_app,
+            "ip",
+            "-j",
+            "-d",
+            "link",
+            "show",
+            vlan_interface,
+        ],
+    )?;
+
+    ensure!(vlan_interface_details
+        .get("link")
+        .is_some_and(|x| x == veth_app));
+    ensure!(vlan_interface_details
+        .get("linkinfo")
+        .is_some_and(|x| x.get("info_kind").is_some_and(|y| y == "vlan")));
+    ensure!(vlan_interface_details.get("linkinfo").is_some_and(|x| x
+        .get("info_data")
+        .is_some_and(|y| y.get("protocol").is_some_and(|z| z == "802.1Q"))));
+    ensure!(vlan_interface_details.get("linkinfo").is_some_and(|x| x
+        .get("info_data")
+        .is_some_and(|y| y.get("id").is_some_and(|z| z == vid))));
+
+    let veth_app_details = json_from_command(
+        "ip",
+        &[
+            "netns", "exec", netns_app, "ip", "-j", "-d", "link", "show", veth_app,
+        ],
+    )?;
+
+    ensure!(veth_app_details
+        .get("link_index")
+        .is_some_and(|x| x == veth_bridge_link.header.index));
+
+    Ok(())
+}
+
+fn json_from_command(cmd: &str, args: &[&str]) -> Result<Value> {
+    let output = Command::new(cmd)
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to execute command {cmd} {args:?}"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!("Command failed with status: {}", output.status));
+    }
+
+    let stdout = String::from_utf8(output.stdout).context("Invalid UTF-8 sequence")?;
+
+    let result = serde_json::from_str::<Value>(&stdout).context("Failed to parse JSON")?;
+
+    let values: &Vec<Value> = result
+        .as_array()
+        .ok_or_else(|| anyhow!("No JSON array returned"))?;
+
+    ensure!(values.len() == 1, "No unique result for {cmd} {args:?}");
+
+    values
+        .first()
+        .ok_or_else(|| anyhow!("No element found"))
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,7 +400,7 @@ mod tests {
     #[should_panic(expected = "No link info found for eth0.5")]
     fn test_link_empty() {
         let link = LinkMessage::default();
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -262,7 +408,7 @@ mod tests {
     fn test_link_no_kind() {
         let mut link = LinkMessage::default();
         link.attributes.push(LinkInfo(vec![]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -270,7 +416,7 @@ mod tests {
     fn test_link_invalid_kind() {
         let mut link = LinkMessage::default();
         link.attributes.push(LinkInfo(vec![Kind(InfoKind::Bridge)]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -278,7 +424,7 @@ mod tests {
     fn test_link_missing_data() {
         let mut link = LinkMessage::default();
         link.attributes.push(LinkInfo(vec![Kind(InfoKind::Vlan)]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -289,7 +435,7 @@ mod tests {
             Kind(InfoKind::Vlan),
             Data(InfoData::Bridge(vec![])),
         ]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -300,7 +446,7 @@ mod tests {
             Kind(InfoKind::Vlan),
             Data(InfoData::Vlan(vec![])),
         ]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -311,7 +457,7 @@ mod tests {
             Kind(InfoKind::Vlan),
             Data(InfoData::Vlan(vec![Protocol(0x88A8.into())])),
         ]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -322,7 +468,7 @@ mod tests {
             Kind(InfoKind::Vlan),
             Data(InfoData::Vlan(vec![Protocol(0x8100.into())])),
         ]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -333,7 +479,7 @@ mod tests {
             Kind(InfoKind::Vlan),
             Data(InfoData::Vlan(vec![Protocol(0x8100.into()), Id(8)])),
         ]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 
     #[test]
@@ -343,6 +489,6 @@ mod tests {
             Kind(InfoKind::Vlan),
             Data(InfoData::Vlan(vec![Protocol(0x8100.into()), Id(5)])),
         ]));
-        validate_link(&link, VLAN_INTERFACE, VID).unwrap();
+        validate_vlan_link(&link, VLAN_INTERFACE, VID).unwrap();
     }
 }

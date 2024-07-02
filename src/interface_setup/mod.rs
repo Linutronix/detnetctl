@@ -61,6 +61,22 @@ pub trait InterfaceSetup {
         vlan_interface: &str,
         vid: u16,
     ) -> Result<()>;
+
+    /// Setup VETH pair and create network namespace if it does not exist
+    /// Equivalent to
+    /// `ip netns add netns_app`
+    /// `ip link add dev veth_bridge type veth peer name veth_app`
+    /// `ip link add link veth_app name veth_app.100 type vlan id 100`
+    /// `ip link set dev veth_app netns netns_app`
+    /// `ip link set dev veth_app.100 netns netns_app`
+    async fn setup_veth_pair_with_vlan(
+        &self,
+        veth_app: &str,
+        netns_app: &str,
+        veth_bridge: &str,
+        vlan_interface: &str,
+        vid: u16,
+    ) -> Result<()>;
 }
 
 #[cfg(feature = "netlink")]
@@ -89,6 +105,17 @@ impl InterfaceSetup for DummyInterfaceSetup {
     async fn setup_vlan_interface(
         &self,
         _parent_interface: &str,
+        _vlan_interface: &str,
+        _vid: u16,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn setup_veth_pair_with_vlan(
+        &self,
+        _veth_app: &str,
+        _netns_app: &str,
+        _veth_bridge: &str,
         _vlan_interface: &str,
         _vid: u16,
     ) -> Result<()> {
