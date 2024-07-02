@@ -42,7 +42,9 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::{Configuration, FillDefaults, Interface, UnbridgedApp};
+use crate::configuration::{
+    BridgedApp, Configuration, FillDefaults, Interface, Stream, UnbridgedApp,
+};
 use crate::dispatcher::Dispatcher;
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
@@ -100,8 +102,14 @@ struct ExpandedInterface {
     unbridged_apps: Vec<UnbridgedApp>,
 }
 
+struct ExpandedBridgedApp {
+    app: BridgedApp,
+    stream: Stream,
+}
+
 struct ExpandedConfiguration {
     interfaces: BTreeMap<String, ExpandedInterface>,
+    bridged_apps: Vec<ExpandedBridgedApp>,
 }
 
 async fn fetch_expanded_configuration(
@@ -111,6 +119,8 @@ async fn fetch_expanded_configuration(
 
     let mut interfaces = config.get_interfaces()?;
     let mut unbridged_apps = config.get_unbridged_apps()?;
+    let mut bridged_apps = config.get_bridged_apps()?;
+    let mut streams = config.get_streams()?;
 
     for interface_config in interfaces.values_mut() {
         interface_config.fill_defaults()?;
@@ -130,10 +140,31 @@ async fn fetch_expanded_configuration(
         )?;
     }
 
-    println!("  Fetched from configuration module: {interfaces:#?} {unbridged_apps:#?}");
+    for app_config in bridged_apps.values_mut() {
+        app_config.fill_defaults()?;
+        validate_are_some!(
+            app_config,
+            bind_interface,
+            virtual_interface_app,
+            netns_app,
+            virtual_interface_bridge,
+        )?;
+    }
+
+    for stream in streams.values_mut() {
+        stream.fill_defaults()?;
+        validate_are_some!(stream, incoming_interface, identification, outgoing_l2)?;
+    }
+
+    println!("Fetched from configuration module:");
+    println!("Interfaces: {interfaces:#?}");
+    println!("Unbridged Apps: {unbridged_apps:#?}");
+    println!("Bridged Apps: {bridged_apps:#?}");
+    println!("Streams: {streams:#?}");
 
     Ok(ExpandedConfiguration {
         interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps)?,
+        bridged_apps: collect_expanded_bridged_apps(&bridged_apps, &streams)?,
     })
 }
 
@@ -164,6 +195,30 @@ fn collect_expanded_interfaces(
         .collect()
 }
 
+fn collect_expanded_bridged_apps(
+    bridged_apps: &BTreeMap<String, BridgedApp>,
+    streams: &BTreeMap<String, Stream>,
+) -> Result<Vec<ExpandedBridgedApp>> {
+    bridged_apps
+        .iter()
+        .map(|(name, app)| -> Result<ExpandedBridgedApp> {
+            let virtual_interface_bridge = app.virtual_interface_bridge()?;
+
+            Ok(ExpandedBridgedApp {
+                app: app.clone(),
+                stream: streams
+                    .values()
+                    .map(|stream| -> Result<Option<Stream>> {
+                        Ok((stream.incoming_interface()? == virtual_interface_bridge)
+                            .then_some(stream.clone()))
+                    })
+                    .find_map(Result::transpose) // get first element not Ok(None)
+                    .ok_or_else(|| anyhow!("Flow associated to app {name} not found"))??,
+            })
+        })
+        .collect()
+}
+
 #[async_trait]
 impl Setup for Controller {
     async fn setup(
@@ -180,6 +235,21 @@ impl Setup for Controller {
         let config = fetch_expanded_configuration(configuration.clone())
             .await
             .context("Fetching the configuration failed")?;
+
+        // Setup all veth pairs for the bridged applications
+        for app_config in config.bridged_apps {
+            let locked_interface_setup = interface_setup.lock().await;
+            locked_interface_setup
+                .setup_veth_pair_with_vlan(
+                    app_config.app.virtual_interface_app()?,
+                    app_config.app.netns_app()?,
+                    app_config.app.virtual_interface_bridge()?,
+                    app_config.app.bind_interface()?,
+                    *app_config.stream.identification()?.vid()?,
+                )
+                .await
+                .with_context(|| "Setting up veth pair failed")?;
+        }
 
         // Configure IP addresses
         {
@@ -363,9 +433,9 @@ async fn set_interface_state(
 mod tests {
     use super::*;
     use crate::configuration::{
-        GateControlEntryBuilder, GateOperation, InterfaceBuilder, MockConfiguration, Mode,
-        QueueMapping, ScheduleBuilder, StreamIdentificationBuilder, TaprioConfigBuilder,
-        UnbridgedAppBuilder,
+        BridgedAppBuilder, GateControlEntryBuilder, GateOperation, InterfaceBuilder,
+        MockConfiguration, Mode, OutgoingL2Builder, QueueMapping, ScheduleBuilder, StreamBuilder,
+        StreamIdentificationBuilder, TaprioConfigBuilder, UnbridgedAppBuilder,
     };
     use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
@@ -412,7 +482,7 @@ mod tests {
             .build()
     }
 
-    fn generate_app_config(interface: String, vid: u16) -> UnbridgedApp {
+    fn generate_unbridged_app_config(interface: String, vid: u16) -> UnbridgedApp {
         let app_config = UnbridgedAppBuilder::new()
             .bind_interface(format!("{interface}.{vid}"))
             .physical_interface(interface)
@@ -429,30 +499,100 @@ mod tests {
         app_config
     }
 
+    fn generate_bridged_app_config(interface: String, vid: u16) -> BridgedApp {
+        let app_config = BridgedAppBuilder::new()
+            .bind_interface(format!("{interface}.{vid}"))
+            .virtual_interface_bridge(format!("{interface}-br"))
+            .virtual_interface_app(interface)
+            .netns_app("somenetns".to_owned())
+            .build();
+
+        validate_are_some!(
+            app_config,
+            bind_interface,
+            virtual_interface_app,
+            netns_app,
+            virtual_interface_bridge,
+        )
+        .unwrap();
+
+        app_config
+    }
+
+    fn generate_stream_config(interface: String, vid: u16) -> Stream {
+        let stream_config = StreamBuilder::new()
+            .incoming_interface(format!("{interface}-br"))
+            .identification(
+                StreamIdentificationBuilder::new()
+                    .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
+                    .vid(vid)
+                    .build(),
+            )
+            .outgoing_l2(
+                OutgoingL2Builder::new()
+                    .outgoing_interface(interface)
+                    .build(),
+            )
+            .build();
+
+        validate_are_some!(
+            stream_config,
+            incoming_interface,
+            identification,
+            outgoing_l2
+        )
+        .unwrap();
+
+        stream_config
+    }
+
     fn configuration_happy(interface: String, vid: u16) -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
         let interface2 = interface.clone();
         let interface3 = interface.clone();
+        let interface4 = interface.clone();
+        let interface5 = interface.clone();
+        let interface6 = interface.clone();
+        let interface7 = interface.clone();
+
         configuration
             .expect_get_interface()
             .returning(move |_| Ok(Some(generate_interface_config())));
         configuration.expect_get_interfaces().returning(move || {
             Ok(BTreeMap::from([(
-                interface3.clone(),
+                interface.clone(),
                 generate_interface_config(),
             )]))
         });
         configuration
             .expect_get_unbridged_app()
-            .returning(move |_| Ok(Some(generate_app_config(interface.clone(), vid))));
+            .returning(move |_| Ok(Some(generate_unbridged_app_config(interface2.clone(), vid))));
+        configuration
+            .expect_get_bridged_app()
+            .returning(move |_| Ok(Some(generate_bridged_app_config(interface3.clone(), vid))));
+        configuration
+            .expect_get_stream()
+            .returning(move |_| Ok(Some(generate_stream_config(interface4.clone(), vid))));
         configuration
             .expect_get_unbridged_apps()
             .returning(move || {
                 Ok(BTreeMap::from([(
                     String::from("app0"),
-                    generate_app_config(interface2.clone(), vid),
+                    generate_unbridged_app_config(interface5.clone(), vid),
                 )]))
             });
+        configuration.expect_get_bridged_apps().returning(move || {
+            Ok(BTreeMap::from([(
+                String::from("app0"),
+                generate_bridged_app_config(interface6.clone(), vid),
+            )]))
+        });
+        configuration.expect_get_streams().returning(move || {
+            Ok(BTreeMap::from([(
+                String::from("stream0"),
+                generate_stream_config(interface7.clone(), vid),
+            )]))
+        });
         configuration
     }
 
@@ -469,6 +609,12 @@ mod tests {
             .returning(|_| Err(anyhow!("failed")));
         configuration
             .expect_get_unbridged_apps()
+            .returning(|| Err(anyhow!("failed")));
+        configuration
+            .expect_get_bridged_app()
+            .returning(|_| Err(anyhow!("failed")));
+        configuration
+            .expect_get_bridged_apps()
             .returning(|| Err(anyhow!("failed")));
         configuration
     }
@@ -529,6 +675,9 @@ mod tests {
             .expect_setup_vlan_interface()
             .returning(move |_, _, _| Ok(()));
         interface_setup
+            .expect_setup_veth_pair_with_vlan()
+            .returning(move |_, _, _, _, _| Ok(()));
+        interface_setup
     }
 
     fn interface_setup_failing() -> MockInterfaceSetup {
@@ -542,6 +691,9 @@ mod tests {
         interface_setup
             .expect_setup_vlan_interface()
             .returning(|_, _, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_setup_veth_pair_with_vlan()
+            .returning(move |_, _, _, _, _| Ok(()));
         interface_setup
     }
 
