@@ -43,7 +43,7 @@
 //! ```
 
 use crate::configuration::{
-    BridgedApp, Configuration, FillDefaults, Interface, Stream, UnbridgedApp,
+    BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification, UnbridgedApp,
 };
 use crate::dispatcher::{Dispatcher, Protection};
 use crate::interface_setup::{InterfaceSetup, LinkState};
@@ -100,6 +100,9 @@ struct ExpandedInterface {
 
     /// Unbridged apps that have this physical interface configured
     unbridged_apps: Vec<UnbridgedApp>,
+
+    /// Streams that have this physical interface as `outgoing_l2.outgoing_interface`
+    streams_to_protect: Vec<StreamIdentification>,
 }
 
 struct ExpandedBridgedApp {
@@ -163,7 +166,7 @@ async fn fetch_expanded_configuration(
     println!("Streams: {streams:#?}");
 
     Ok(ExpandedConfiguration {
-        interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps)?,
+        interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps, &streams)?,
         bridged_apps: collect_expanded_bridged_apps(&bridged_apps, &streams)?,
     })
 }
@@ -171,14 +174,24 @@ async fn fetch_expanded_configuration(
 fn collect_expanded_interfaces(
     interfaces: &BTreeMap<String, Interface>,
     unbridged_apps: &BTreeMap<String, UnbridgedApp>,
+    streams: &BTreeMap<String, Stream>,
 ) -> Result<BTreeMap<String, ExpandedInterface>> {
     interfaces
         .iter()
         .map(|(name, ifconfig)| -> Result<(String, ExpandedInterface)> {
+            // find all matching streams to protect from coming via TC
+            let mut streams_to_protect = vec![];
+            for stream in streams.values() {
+                if stream.outgoing_l2()?.outgoing_interface()? == name {
+                    streams_to_protect.push(stream.identification()?.clone());
+                }
+            }
+
             Ok((
                 name.clone(),
                 ExpandedInterface {
                     config: ifconfig.clone(),
+                    streams_to_protect,
 
                     // find all matching unbridged apps
                     unbridged_apps: unbridged_apps
@@ -390,7 +403,7 @@ async fn setup_before_interface_up(
             .configure_stream(
                 interface_name,
                 stream_id,
-                (*priority).into(),
+                Some((*priority).into()),
                 Some(
                     *interface
                         .config
@@ -422,6 +435,24 @@ async fn setup_before_interface_up(
                 .context("Setting up VLAN interface failed")?;
             println!("  VLAN interface {bind_interface} properly configured");
         }
+    }
+
+    // Protect all configured streams from coming via TC, they shall only come via XDP
+    for stream_id in &interface.streams_to_protect {
+        let mut locked_dispatcher = dispatcher.lock().await;
+        locked_dispatcher
+            .configure_stream(
+                interface_name,
+                stream_id,
+                None,
+                None,
+                Protection {
+                    cgroup: None,
+                    drop_all: true,
+                    drop_without_sk: false,
+                },
+            )
+            .context("Installing protection via the dispatcher failed")?;
     }
 
     Ok(())
