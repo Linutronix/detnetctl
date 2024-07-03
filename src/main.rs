@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use detnetctl::configuration::{Configuration, MergedConfiguration, YAMLConfiguration};
 use detnetctl::controller::{Controller, Setup};
+use detnetctl::data_plane::{DataPlane, DummyDataPlane};
 use detnetctl::dispatcher::{Dispatcher, DummyDispatcher};
 use detnetctl::interface_setup::{DummyInterfaceSetup, InterfaceSetup};
 use detnetctl::ptp::Ptp;
@@ -47,7 +48,11 @@ struct Cli {
     #[arg(long)]
     no_queue_setup: bool,
 
-    /// Skip installing eBPFs - no interference protection!
+    /// Skip installing eBPFs in XDP for bridge/router functionality
+    #[arg(long)]
+    no_data_plane: bool,
+
+    /// Skip installing eBPFs in TC - no interference protection!
     #[arg(long)]
     no_dispatcher: bool,
 
@@ -139,6 +144,12 @@ pub async fn main() -> Result<()> {
         new_taprio_setup()?
     };
 
+    let data_plane = if cli.no_data_plane {
+        Arc::new(Mutex::new(DummyDataPlane))
+    } else {
+        new_bpf_data_plane(cli.bpf_debug_output)?
+    };
+
     let dispatcher = if cli.no_dispatcher {
         Arc::new(Mutex::new(DummyDispatcher))
     } else {
@@ -158,6 +169,7 @@ pub async fn main() -> Result<()> {
         .setup(
             configuration.clone(),
             queue_setup.clone(),
+            data_plane.clone(),
             dispatcher.clone(),
             interface_setup.clone(),
         )
@@ -261,6 +273,18 @@ async fn spawn_dbus_service(
     _ptp: Option<Arc<Mutex<dyn Ptp + Sync + Send>>>,
 ) -> Result<()> {
     Err(feature_missing_error("dbus", "--app-name"))
+}
+
+#[cfg(feature = "bpf")]
+use detnetctl::data_plane::BpfDataPlane;
+#[cfg(feature = "bpf")]
+fn new_bpf_data_plane(debug_output: bool) -> Result<Arc<Mutex<dyn DataPlane + Send>>> {
+    Ok(Arc::new(Mutex::new(BpfDataPlane::new(debug_output))))
+}
+
+#[cfg(not(feature = "bpf"))]
+fn new_bpf_data_plane(_debug_output: bool) -> Result<Arc<Mutex<dyn DataPlane + Send>>> {
+    Err(feature_missing_error("bpf", "--no-data-plane"))
 }
 
 #[cfg(feature = "bpf")]
