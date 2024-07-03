@@ -93,11 +93,75 @@ impl Controller {
     }
 }
 
-async fn fetch_configurations(
+struct ExpandedInterface {
+    config: Interface,
+
+    /// Unbridged apps that have this physical interface configured
+    unbridged_apps: Vec<UnbridgedApp>,
+}
+
+struct ExpandedConfiguration {
+    interfaces: BTreeMap<String, ExpandedInterface>,
+}
+
+async fn fetch_expanded_configuration(
     configuration: Arc<Mutex<dyn Configuration + Send>>,
-) -> Result<(BTreeMap<String, Interface>, BTreeMap<String, UnbridgedApp>)> {
+) -> Result<ExpandedConfiguration> {
     let mut config = configuration.lock().await;
-    Ok((config.get_interfaces()?, config.get_unbridged_apps()?))
+
+    let mut interfaces = config.get_interfaces()?;
+    let mut unbridged_apps = config.get_unbridged_apps()?;
+
+    for interface_config in interfaces.values_mut() {
+        interface_config.fill_defaults()?;
+        if interface_config.schedule_opt().is_some() {
+            validate_are_some!(interface_config, schedule, taprio, pcp_encoding)?;
+        }
+    }
+
+    for app_config in unbridged_apps.values_mut() {
+        app_config.fill_defaults()?;
+        validate_are_some!(
+            app_config,
+            physical_interface,
+            bind_interface,
+            stream,
+            priority
+        )?;
+    }
+
+    println!("  Fetched from configuration module: {interfaces:#?} {unbridged_apps:#?}");
+
+    Ok(ExpandedConfiguration {
+        interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps)?,
+    })
+}
+
+fn collect_expanded_interfaces(
+    interfaces: &BTreeMap<String, Interface>,
+    unbridged_apps: &BTreeMap<String, UnbridgedApp>,
+) -> Result<BTreeMap<String, ExpandedInterface>> {
+    interfaces
+        .iter()
+        .map(|(name, ifconfig)| -> Result<(String, ExpandedInterface)> {
+            Ok((
+                name.clone(),
+                ExpandedInterface {
+                    config: ifconfig.clone(),
+
+                    // find all matching unbridged apps
+                    unbridged_apps: unbridged_apps
+                        .values()
+                        .map(|app_config| {
+                            Ok((app_config.physical_interface()? == name)
+                                .then_some(app_config.clone()))
+                        })
+                        .filter_map(Result::transpose)
+                        .collect::<Result<Vec<UnbridgedApp>>>()?,
+                },
+            ))
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -113,71 +177,35 @@ impl Setup for Controller {
         println!("Setup of DetNet system");
 
         // Fetch configurations for interfaces and apps
-        let (mut interface_configs, mut app_configs) = fetch_configurations(configuration.clone())
+        let config = fetch_expanded_configuration(configuration.clone())
             .await
             .context("Fetching the configuration failed")?;
-
-        for interface_config in interface_configs.values_mut() {
-            interface_config.fill_defaults()?;
-            if interface_config.schedule_opt().is_some() {
-                validate_are_some!(interface_config, schedule, taprio, pcp_encoding)?;
-            }
-        }
-
-        for app_config in app_configs.values_mut() {
-            app_config.fill_defaults()?;
-            validate_are_some!(
-                app_config,
-                physical_interface,
-                bind_interface,
-                stream,
-                priority
-            )?;
-        }
-
-        println!("  Fetched from configuration module: {interface_configs:#?} {app_configs:#?}");
 
         // Configure IP addresses
         {
             let locked_interface_setup = interface_setup.lock().await;
-            for (interface_name, interface_config) in &interface_configs {
-                if let Some(addresses) = &interface_config.addresses_opt() {
+            for (name, interface) in &config.interfaces {
+                if let Some(addresses) = &interface.config.addresses_opt() {
                     for (ip, prefix_length) in *addresses {
                         locked_interface_setup
-                            .add_address(*ip, *prefix_length, interface_name)
+                            .add_address(*ip, *prefix_length, name)
                             .await
                             .context("Adding address to interface failed")?;
-                        println!("  Added {ip}/{prefix_length} to {interface_name}");
+                        println!("  Added {ip}/{prefix_length} to {name}");
                     }
                 }
             }
         }
 
         // Iterate over all interfaces with schedule configuration
-        // By this approach, instead of iterating over the app_configs,
+        // By this approach, instead of iterating over the apps,
         // we need to setup each interface only once.
-        for (interface_name, interface_config) in interface_configs {
-            if interface_config.schedule_opt().is_none() {
-                continue;
-            }
-
+        for (name, interface) in config.interfaces {
             let locked_interface_setup = interface_setup.lock().await;
 
-            let app_configs_for_interface = app_configs.iter().try_fold(
-                BTreeMap::default(),
-                |mut acc, (app_name, app_config)| -> Result<BTreeMap<&String, &UnbridgedApp>> {
-                    if app_config.physical_interface()? == &interface_name {
-                        acc.insert(app_name, app_config);
-                    }
-
-                    Ok(acc)
-                },
-            )?;
-
             let setup_result = setup_before_interface_up(
-                &interface_name,
-                &interface_config,
-                &app_configs_for_interface,
+                &name,
+                &interface,
                 queue_setup.clone(),
                 dispatcher.clone(),
                 &*locked_interface_setup,
@@ -185,7 +213,7 @@ impl Setup for Controller {
             .await; // No ? since we need to ensure that the link is up again even after error
 
             let if_up_result =
-                set_interface_state(&interface_name, LinkState::Up, &*locked_interface_setup).await;
+                set_interface_state(&name, LinkState::Up, &*locked_interface_setup).await;
 
             // The first occurred error shall be returned, but a potential second still be printed
             if let Err(if_up_error) = if_up_result {
@@ -201,7 +229,7 @@ impl Setup for Controller {
             setup_result?;
 
             // Set logical interfaces up
-            for app_config in app_configs.values() {
+            for app_config in interface.unbridged_apps {
                 set_interface_state(
                     app_config.bind_interface()?,
                     LinkState::Up,
@@ -252,25 +280,24 @@ impl Protection for Controller {
 }
 
 async fn setup_before_interface_up(
-    interface: &str,
-    interface_config: &Interface,
-    app_configs: &BTreeMap<&String, &UnbridgedApp>,
+    interface_name: &str,
+    interface: &ExpandedInterface,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
-    set_interface_state(interface, LinkState::Down, interface_setup).await?;
+    set_interface_state(interface_name, LinkState::Down, interface_setup).await?;
 
     // Setup Queue
     queue_setup
         .lock()
         .await
-        .apply_config(interface, interface_config)
+        .apply_config(interface_name, &interface.config)
         .await
         .context("Setting up the queue failed")?;
     println!("  Queues set up");
 
-    for app_config in app_configs.values() {
+    for app_config in &interface.unbridged_apps {
         let bind_interface = app_config.bind_interface()?;
         let stream_id = app_config.stream()?;
         let priority = app_config.priority()?;
@@ -283,11 +310,12 @@ async fn setup_before_interface_up(
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
             .configure_stream(
-                interface,
+                interface_name,
                 stream_id,
                 (*priority).into(),
                 Some(
-                    *interface_config
+                    *interface
+                        .config
                         .pcp_encoding()?
                         .pcp_from_priority(*priority)?,
                 ),
@@ -297,7 +325,7 @@ async fn setup_before_interface_up(
             )
             .context("Installing protection via the dispatcher failed")?;
         println!(
-            "  Dispatcher installed for stream {stream_id:#?} with priority {priority} on {interface}",
+            "  Dispatcher installed for stream {stream_id:#?} with priority {priority} on {interface_name}"
         );
 
         if let Some(cgroup) = &app_config.cgroup_opt() {
@@ -307,7 +335,7 @@ async fn setup_before_interface_up(
         // Setup bind interface
         if let Some(vid) = stream_id.vid_opt() {
             interface_setup
-                .setup_vlan_interface(interface, bind_interface, *vid)
+                .setup_vlan_interface(interface_name, bind_interface, *vid)
                 .await
                 .context("Setting up VLAN interface failed")?;
             println!("  VLAN interface {bind_interface} properly configured");
