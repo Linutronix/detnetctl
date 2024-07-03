@@ -23,7 +23,7 @@
 //!       .build())
 //!       .build();
 //!
-//! data_plane.setup_flow(&stream_config)?;
+//! data_plane.setup_stream(&stream_config)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
@@ -36,14 +36,14 @@ use mockall::automock;
 /// Defines how to request interference protection
 #[cfg_attr(test, automock)]
 pub trait DataPlane {
-    /// Setup the flow according to the provided configuration.
+    /// Setup the stream according to the provided configuration.
     ///
     /// # Errors
     ///
     /// Will return `Err` if it was not possible to install a data plane,
     /// e.g. if the interface does not exist or there was a conflict
     /// creating the eBPF hook.
-    fn setup_flow(&mut self, stream_config: &Stream) -> Result<()>;
+    fn setup_stream(&mut self, stream_config: &Stream) -> Result<()>;
 }
 
 #[cfg(feature = "bpf")]
@@ -57,7 +57,7 @@ pub use bpf::BpfDataPlane;
 pub struct DummyDataPlane;
 
 impl DataPlane for DummyDataPlane {
-    fn setup_flow(&mut self, _stream_config: &Stream) -> Result<()> {
+    fn setup_stream(&mut self, _stream_config: &Stream) -> Result<()> {
         Ok(())
     }
 }

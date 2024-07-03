@@ -39,12 +39,12 @@ use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
 use crate::data_plane::DataPlane;
 
 #[derive(Debug)]
-struct XdpFlow {
+struct XdpStream {
     handle: u16,
     outgoing_interface: u32,
 }
 
-impl XdpFlow {
+impl XdpStream {
     fn to_bytes(&self) -> [u8; 6] {
         let mut result: [u8; 6] = [0; 6];
         result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]); // 2 bytes
@@ -68,14 +68,14 @@ impl XdpFlow {
     }
 }
 
-struct XdpFlowBuilder {
-    flow: XdpFlow,
+struct XdpStreamBuilder {
+    stream: XdpStream,
 }
 
-impl XdpFlowBuilder {
+impl XdpStreamBuilder {
     const fn new() -> Self {
         Self {
-            flow: XdpFlow {
+            stream: XdpStream {
                 handle: 0,
                 outgoing_interface: 0,
             },
@@ -83,17 +83,17 @@ impl XdpFlowBuilder {
     }
 
     const fn handle(mut self, handle: u16) -> Self {
-        self.flow.handle = handle;
+        self.stream.handle = handle;
         self
     }
 
     const fn outgoing_interface(mut self, interface_idx: u32) -> Self {
-        self.flow.outgoing_interface = interface_idx;
+        self.stream.outgoing_interface = interface_idx;
         self
     }
 
-    const fn build(self) -> XdpFlow {
-        self.flow
+    const fn build(self) -> XdpStream {
+        self.stream
     }
 }
 
@@ -113,7 +113,7 @@ struct DataPlaneAttacher {
 }
 
 impl DataPlane for BpfDataPlane<'_> {
-    fn setup_flow(&mut self, stream_config: &Stream) -> Result<()> {
+    fn setup_stream(&mut self, stream_config: &Stream) -> Result<()> {
         let outgoing_interface =
             (self.nametoindex)(stream_config.outgoing_l2()?.outgoing_interface()?)?.try_into()?;
 
@@ -126,21 +126,21 @@ impl DataPlane for BpfDataPlane<'_> {
                     skel.maps().num_streams(),
                     stream_identification,
                     |s| {
-                        Ok(XdpFlow::from_bytes(
+                        Ok(XdpStream::from_bytes(
                             s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
                         )?
                         .handle)
                     },
                 )?;
 
-                let xdp_flow = XdpFlowBuilder::new()
+                let xdp_stream = XdpStreamBuilder::new()
                     .handle(stream_handle)
                     .outgoing_interface(outgoing_interface)
                     .build();
 
-                update_stream_maps(skel, u32::from(stream_handle), &xdp_flow)
+                update_stream_maps(skel, u32::from(stream_handle), &xdp_stream)
             })
-            .context("Failed to configure flow")
+            .context("Failed to configure stream")
     }
 }
 
@@ -190,13 +190,13 @@ impl<'a> Attacher<DataPlaneSkel<'a>> for DataPlaneAttacher {
 fn update_stream_maps(
     skel: &mut DataPlaneSkel<'_>,
     stream_handle: u32,
-    xdp_flow: &XdpFlow,
+    xdp_stream: &XdpStream,
 ) -> Result<()> {
-    let xdp_flow_bytes = xdp_flow.to_bytes();
+    let xdp_stream_bytes = xdp_stream.to_bytes();
 
     skel.maps_mut().streams().update(
         &stream_handle.to_ne_bytes(),
-        &xdp_flow_bytes,
+        &xdp_stream_bytes,
         MapFlags::ANY,
     )?;
 
@@ -319,7 +319,7 @@ mod tests {
                 })
             });
             map.expect_lookup().returning(|_key, _flags| {
-                Ok(Some(XdpFlowBuilder::new().build().to_bytes().into()))
+                Ok(Some(XdpStreamBuilder::new().build().to_bytes().into()))
             });
             map
         });
@@ -350,7 +350,7 @@ mod tests {
 
         stream_config.fill_defaults()?;
 
-        data_plane.setup_flow(&stream_config)?;
+        data_plane.setup_stream(&stream_config)?;
         Ok(())
     }
 
@@ -378,6 +378,6 @@ mod tests {
 
         stream_config.fill_defaults().unwrap();
 
-        data_plane.setup_flow(&stream_config).unwrap();
+        data_plane.setup_stream(&stream_config).unwrap();
     }
 }
