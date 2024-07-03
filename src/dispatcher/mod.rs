@@ -15,7 +15,7 @@
 //!     .vid(5)
 //!     .build();
 //!
-//! dispatcher.configure_stream("eth0", &stream_id, 5, Some(3),
+//! dispatcher.configure_stream("eth0", &stream_id, Some(5), Some(3),
 //!                             Protection {
 //!                                 cgroup: Some(cgroup.into()),
 //!                                 drop_all: false,
@@ -65,7 +65,7 @@ pub trait Dispatcher {
         &mut self,
         interface: &str,
         stream_identification: &StreamIdentification,
-        priority: u32,
+        priority: Option<u32>,
         pcp: Option<u8>,
         protection: Protection,
     ) -> Result<()>;
@@ -123,7 +123,7 @@ impl Dispatcher for DummyDispatcher {
         &mut self,
         _interface: &str,
         _stream_identification: &StreamIdentification,
-        _priority: u32,
+        _priority: Option<u32>,
         _pcp: Option<u8>,
         _protection: Protection,
     ) -> Result<()> {

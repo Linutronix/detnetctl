@@ -143,7 +143,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         &mut self,
         interface: &str,
         stream_identification: &StreamIdentification,
-        priority: u32,
+        priority: Option<u32>,
         pcp: Option<u8>,
         protection: Protection,
     ) -> Result<()> {
@@ -161,8 +161,19 @@ impl Dispatcher for BPFDispatcher<'_> {
                     },
                 )?;
 
-                let pcp =
-                    pcp.ok_or_else(|| anyhow!("PCP configuration required for TSN dispatcher"))?;
+                let priority = priority
+                    .or_else(|| protection.drop_all.then_some(0))
+                    .ok_or_else(|| {
+                        anyhow!("Priority required for TSN dispatcher unless DROP_ALL is set")
+                    })?;
+
+                let pcp = pcp
+                    .or_else(|| protection.drop_all.then_some(0))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "PCP configuration required for TSN dispatcher unless DROP_ALL is set"
+                        )
+                    })?;
 
                 update_stream_maps(
                     skel,
@@ -519,7 +530,7 @@ mod tests {
         dispatcher.configure_stream(
             INTERFACE,
             &generate_stream_identification(3),
-            PRIORITY,
+            Some(PRIORITY),
             Some(PCP),
             Protection {
                 cgroup: Some(Path::new(&cgroup).into()),
@@ -573,7 +584,7 @@ mod tests {
             .configure_stream(
                 INTERFACE,
                 &generate_stream_identification(3),
-                PRIORITY,
+                Some(PRIORITY),
                 Some(PCP),
                 Protection {
                     cgroup: Some(Path::new(&cgroup).into()),

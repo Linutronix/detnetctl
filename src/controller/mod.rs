@@ -42,7 +42,9 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::{BridgedApp, Configuration, FillDefaults, Interface, UnbridgedApp};
+use crate::configuration::{
+    BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification, UnbridgedApp,
+};
 use crate::dispatcher::{Dispatcher, Protection};
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
@@ -98,6 +100,9 @@ struct ExpandedInterface {
 
     /// Unbridged apps that have this physical interface configured
     unbridged_apps: Vec<UnbridgedApp>,
+
+    /// Streams that have this physical interface as `outgoing_l2.outgoing_interface`
+    streams_to_protect: Vec<StreamIdentification>,
 }
 
 struct ExpandedConfiguration {
@@ -155,7 +160,7 @@ async fn fetch_expanded_configuration(
     println!("Streams: {streams:#?}");
 
     Ok(ExpandedConfiguration {
-        interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps)?,
+        interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps, &streams)?,
         bridged_apps,
     })
 }
@@ -163,14 +168,24 @@ async fn fetch_expanded_configuration(
 fn collect_expanded_interfaces(
     interfaces: &BTreeMap<String, Interface>,
     unbridged_apps: &BTreeMap<String, UnbridgedApp>,
+    streams: &BTreeMap<String, Stream>,
 ) -> Result<BTreeMap<String, ExpandedInterface>> {
     interfaces
         .iter()
         .map(|(name, ifconfig)| -> Result<(String, ExpandedInterface)> {
+            // find all matching streams to protect from coming via TC
+            let mut streams_to_protect = vec![];
+            for stream in streams.values() {
+                if stream.outgoing_l2()?.outgoing_interface()? == name {
+                    streams_to_protect.push(stream.identification()?.clone());
+                }
+            }
+
             Ok((
                 name.clone(),
                 ExpandedInterface {
                     config: ifconfig.clone(),
+                    streams_to_protect,
 
                     // find all matching unbridged apps
                     unbridged_apps: unbridged_apps
@@ -411,7 +426,7 @@ async fn setup_before_interface_up(
             .configure_stream(
                 interface_name,
                 stream_id,
-                (*priority).into(),
+                Some((*priority).into()),
                 Some(
                     *interface
                         .config
@@ -426,7 +441,9 @@ async fn setup_before_interface_up(
                     drop_without_sk: false,
                 },
             )
-            .context("Installing protection via the dispatcher failed")?;
+            .with_context(|| {
+                anyhow!("Installing protection on {interface_name} via the dispatcher failed")
+            })?;
         println!(
             "  Dispatcher installed for stream {stream_id:#?} with priority {priority} on {interface_name}"
         );
@@ -443,6 +460,24 @@ async fn setup_before_interface_up(
                 .context("Setting up VLAN interface failed")?;
             println!("  VLAN interface {bind_interface} properly configured");
         }
+    }
+
+    // Protect all configured streams from coming via TC, they shall only come via XDP
+    for stream_id in &interface.streams_to_protect {
+        let mut locked_dispatcher = dispatcher.lock().await;
+        locked_dispatcher
+            .configure_stream(
+                interface_name,
+                stream_id,
+                None,
+                None,
+                Protection {
+                    cgroup: None,
+                    drop_all: true,
+                    drop_without_sk: false,
+                },
+            )
+            .with_context(|| anyhow!("Installing protection on TC for XDP streams on {interface_name} via the dispatcher failed"))?;
     }
 
     Ok(())
@@ -783,7 +818,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Installing protection via the dispatcher failed")]
+    #[should_panic(expected = "Installing protection on abc via the dispatcher failed")]
     async fn test_setup_dispatcher_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
