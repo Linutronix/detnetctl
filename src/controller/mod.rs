@@ -10,6 +10,7 @@
 //! ```
 //! use detnetctl::configuration::{Configuration, YAMLConfiguration};
 //! use detnetctl::controller::{Controller, Setup, Protect};
+//! use detnetctl::data_plane::{DummyDataPlane, DataPlane};
 //! use detnetctl::dispatcher::{DummyDispatcher, Dispatcher};
 //! use detnetctl::interface_setup::DummyInterfaceSetup;
 //! use detnetctl::queue_setup::{DummyQueueSetup, QueueSetup};
@@ -29,10 +30,11 @@
 //! let mut configuration = Arc::new(Mutex::new(YAMLConfiguration::new()));
 //! configuration.lock().await.read(File::open(filepath)?)?;
 //! let mut queue_setup = Arc::new(Mutex::new(DummyQueueSetup));
+//! let mut data_plane = Arc::new(Mutex::new(DummyDataPlane));
 //! let mut dispatcher = Arc::new(Mutex::new(DummyDispatcher));
 //! let mut interface_setup = Arc::new(Mutex::new(DummyInterfaceSetup));
 //! controller
-//!     .setup(configuration.clone(), queue_setup, dispatcher.clone(), interface_setup)
+//!     .setup(configuration.clone(), queue_setup, data_plane.clone(), dispatcher.clone(), interface_setup)
 //!     .await?;
 //! controller
 //!     .protect("app0", &cgroup, configuration, dispatcher)
@@ -45,6 +47,7 @@
 use crate::configuration::{
     BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification, UnbridgedApp,
 };
+use crate::data_plane::DataPlane;
 use crate::dispatcher::{Dispatcher, Protection};
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
@@ -65,6 +68,7 @@ pub trait Setup {
         &self,
         mut configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+        mut data_plane: Arc<Mutex<dyn DataPlane + Send>>,
         mut dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
         mut interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<()>;
@@ -108,6 +112,7 @@ struct ExpandedInterface {
 struct ExpandedConfiguration {
     interfaces: BTreeMap<String, ExpandedInterface>,
     bridged_apps: BTreeMap<String, BridgedApp>,
+    streams: Vec<Stream>,
 }
 
 async fn fetch_expanded_configuration(
@@ -162,6 +167,7 @@ async fn fetch_expanded_configuration(
     Ok(ExpandedConfiguration {
         interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps, &streams)?,
         bridged_apps,
+        streams: streams.into_values().collect(),
     })
 }
 
@@ -208,6 +214,7 @@ impl Setup for Controller {
         &self,
         configuration: Arc<Mutex<dyn Configuration + Send>>,
         queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
+        data_plane: Arc<Mutex<dyn DataPlane + Send>>,
         dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
         interface_setup: Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
     ) -> Result<()> {
@@ -230,6 +237,16 @@ impl Setup for Controller {
                 )
                 .await
                 .with_context(|| format!("Setting up veth pair for {name} failed"))?;
+        }
+
+        // Install all XDPs for the streams
+        {
+            let mut locked_data_plane = data_plane.lock().await;
+            for stream in &config.streams {
+                locked_data_plane
+                    .setup_stream(stream)
+                    .context("Installing stream via XDP failed")?;
+            }
         }
 
         // Configure IP addresses
@@ -505,6 +522,7 @@ mod tests {
         MockConfiguration, Mode, OutgoingL2Builder, QueueMapping, ScheduleBuilder, Stream,
         StreamBuilder, StreamIdentificationBuilder, TaprioConfigBuilder, UnbridgedAppBuilder,
     };
+    use crate::data_plane::MockDataPlane;
     use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
     use crate::queue_setup::MockQueueSetup;
@@ -703,6 +721,20 @@ mod tests {
         queue_setup
     }
 
+    fn data_plane_happy() -> MockDataPlane {
+        let mut data_plane = MockDataPlane::new();
+        data_plane.expect_setup_stream().returning(|_| Ok(()));
+        data_plane
+    }
+
+    fn data_plane_failing() -> MockDataPlane {
+        let mut data_plane = MockDataPlane::new();
+        data_plane
+            .expect_setup_stream()
+            .returning(|_| Err(anyhow!("failed")));
+        data_plane
+    }
+
     fn dispatcher_happy() -> MockDispatcher {
         let mut dispatcher = MockDispatcher::new();
         dispatcher
@@ -780,11 +812,18 @@ mod tests {
             vid,
         )));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
+        let data_plane = Arc::new(Mutex::new(data_plane_happy()));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .setup(configuration, queue_setup, dispatcher, interface_setup)
+            .setup(
+                configuration,
+                queue_setup,
+                data_plane,
+                dispatcher,
+                interface_setup,
+            )
             .await?;
         Ok(())
     }
@@ -794,11 +833,18 @@ mod tests {
     async fn test_setup_configuration_failure() {
         let configuration = Arc::new(Mutex::new(configuration_failing()));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
+        let data_plane = Arc::new(Mutex::new(data_plane_happy()));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .setup(configuration, queue_setup, dispatcher, interface_setup)
+            .setup(
+                configuration,
+                queue_setup,
+                data_plane,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
@@ -808,11 +854,39 @@ mod tests {
     async fn test_setup_queue_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
+        let data_plane = Arc::new(Mutex::new(data_plane_happy()));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .setup(configuration, queue_setup, dispatcher, interface_setup)
+            .setup(
+                configuration,
+                queue_setup,
+                data_plane,
+                dispatcher,
+                interface_setup,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Installing stream via XDP failed")]
+    async fn test_setup_data_plane_failure() {
+        let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
+        let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
+        let data_plane = Arc::new(Mutex::new(data_plane_failing()));
+        let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
+        let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
+        let controller = Controller::new();
+        controller
+            .setup(
+                configuration,
+                queue_setup,
+                data_plane,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
@@ -822,11 +896,18 @@ mod tests {
     async fn test_setup_dispatcher_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
+        let data_plane = Arc::new(Mutex::new(data_plane_happy()));
         let dispatcher = Arc::new(Mutex::new(dispatcher_failing()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_happy()));
         let controller = Controller::new();
         controller
-            .setup(configuration, queue_setup, dispatcher, interface_setup)
+            .setup(
+                configuration,
+                queue_setup,
+                data_plane,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
@@ -836,11 +917,18 @@ mod tests {
     async fn test_setup_interface_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
+        let data_plane = Arc::new(Mutex::new(data_plane_happy()));
         let dispatcher = Arc::new(Mutex::new(dispatcher_happy()));
         let interface_setup = Arc::new(Mutex::new(interface_setup_failing()));
         let controller = Controller::new();
         controller
-            .setup(configuration, queue_setup, dispatcher, interface_setup)
+            .setup(
+                configuration,
+                queue_setup,
+                data_plane,
+                dispatcher,
+                interface_setup,
+            )
             .await
             .unwrap();
     }
