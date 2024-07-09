@@ -901,7 +901,7 @@ fn get_outgoing_l2(
     }
 
     // Secondly, we look for the other leg with the same handle to get
-    // the outgoing interface
+    // the outgoing interface and priority
     let mut l2s = vec![];
     for stream_identity in tree.find_xpath("/stream-identity")? {
         if tsn_handle == stream_identity.get_value_for_xpath("handle")? {
@@ -913,6 +913,11 @@ fn get_outgoing_l2(
                 l2s.push(
                     OutgoingL2Builder::new()
                         .outgoing_interface(port)
+                        .priority_opt(
+                            stream_identity.get_value_for_xpath(
+                                "dmac-vlan-stream-identification/down/priority",
+                            )?,
+                        )
                         .destination_opt(
                             stream_identity
                                 .get_value_for_xpath::<String>(
@@ -1038,6 +1043,7 @@ mod tests {
                         .build())
                     .outgoing_l2(vec![OutgoingL2Builder::new()
                         .outgoing_interface(INTERFACE_ENCAPSULATED.to_owned())
+                        .priority(3)
                         .vid(13)
                         .build()])
                     .build()])

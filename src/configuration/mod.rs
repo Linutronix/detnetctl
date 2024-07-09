@@ -246,6 +246,10 @@ pub struct OutgoingL2 {
     /// Outgoing interface. Link to the respective TSN interface configuration.
     outgoing_interface: Option<String>,
 
+    /// Priority
+    /// Its purpose is to define the link `stream -> priority -> traffic_class -> gate`.
+    priority: Option<u8>,
+
     /// Source MAC address
     /// If provided, sets the source address of the outermost Ethernet header
     #[serde(default, with = "serialize_mac_address")]
@@ -274,7 +278,12 @@ pub struct OutgoingL2 {
 
 impl FillDefaults for OutgoingL2 {
     /// Fill unset fields with defaults.
+    /// `priority` is set to 0 (best-effort) if not provided.
     fn fill_defaults(&mut self) -> Result<()> {
+        if self.priority.is_none() {
+            self.priority = Some(0);
+        }
+
         Ok(())
     }
 }

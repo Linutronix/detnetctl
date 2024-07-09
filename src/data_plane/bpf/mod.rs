@@ -15,6 +15,8 @@ use flagset::{flags, FlagSet};
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::ErrorKind;
 use libbpf_rs::{MapFlags, MapType, XdpFlags};
+use std::cmp::max;
+use std::collections::BTreeMap;
 use std::fs::remove_file;
 use std::mem::size_of;
 use std::net::IpAddr::V6;
@@ -73,6 +75,7 @@ use crate::bpf::{find_or_add_stream_or_flow, Attacher, Identification, SkelManag
 use crate::data_plane::DataPlane;
 
 const MAX_REPLICATIONS: u32 = 6;
+const CPUMAP_QUEUE_SIZE: u32 = 4096;
 
 const MPLS_LABEL_SHIFT: u32 = 12;
 const MPLS_TC_SHIFT: u32 = 9;
@@ -240,6 +243,20 @@ impl BpfDevmapVal {
     }
 }
 
+struct BpfCpumapVal {
+    qsize: u32,
+    bpf_prog: RawFd,
+}
+
+impl BpfCpumapVal {
+    fn to_bytes(&self) -> [u8; 8] {
+        let mut result: [u8; 8] = [0; 8];
+        result[0..4].copy_from_slice(&self.qsize.to_ne_bytes()[..]); // 4 bytes
+        result[4..8].copy_from_slice(&self.bpf_prog.to_ne_bytes()[..]); // 4 bytes
+        result
+    }
+}
+
 type GenerateSkelCallback = Box<dyn FnMut() -> DataPlaneSkelBuilder + Send>;
 type GenerateSkelPostprocessingCallback = Box<dyn FnMut() -> PostprocessingSkelBuilder + Send>;
 type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
@@ -261,7 +278,11 @@ struct DataPlaneAttacher {
 }
 
 impl DataPlane for BpfDataPlane<'_> {
-    fn setup_stream(&mut self, stream_config: &Stream) -> Result<()> {
+    fn setup_stream(
+        &mut self,
+        stream_config: &Stream,
+        queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()> {
         let interfaces = stream_config
             .incoming_interfaces()?
             .iter()
@@ -291,6 +312,7 @@ impl DataPlane for BpfDataPlane<'_> {
                         &identification,
                         &xdp_stream,
                         &[outgoing_forwarding],
+                        queues,
                         &mut UpdateStreamCallbacks {
                             nametoindex: &mut self.nametoindex,
                             create_devmap: &mut self.create_devmap,
@@ -309,7 +331,11 @@ impl DataPlane for BpfDataPlane<'_> {
         Ok(())
     }
 
-    fn setup_flow(&mut self, flow_config: &Flow) -> Result<()> {
+    fn setup_flow(
+        &mut self,
+        flow_config: &Flow,
+        queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()> {
         if let Some(app_flows) = flow_config.incoming_app_flows_opt() {
             for app_flow in app_flows {
                 let interfaces = app_flow
@@ -334,6 +360,7 @@ impl DataPlane for BpfDataPlane<'_> {
                             &identification,
                             &xdp_flow,
                             flow_config.outgoing_forwarding()?.as_slice(),
+                            queues,
                             &mut UpdateStreamCallbacks {
                                 nametoindex: &mut self.nametoindex,
                                 create_devmap: &mut self.create_devmap,
@@ -379,6 +406,7 @@ impl DataPlane for BpfDataPlane<'_> {
                             &identification,
                             &xdp_flow.build(),
                             outgoing_forwardings.as_slice(),
+                            queues,
                             &mut UpdateStreamCallbacks {
                                 nametoindex: &mut self.nametoindex,
                                 create_devmap: &mut self.create_devmap,
@@ -633,6 +661,7 @@ fn update_stream_maps(
     identification: &Identification,
     xdp_stream: &XdpStreamOrFlow,
     outgoing_forwardings: &[OutgoingForwarding],
+    queues: &BTreeMap<(String, u8), u16>,
     callbacks: &mut UpdateStreamCallbacks<'_>,
 ) -> Result<()> {
     let redirect_interfaces = (callbacks.create_devmap)()?;
@@ -659,7 +688,33 @@ fn update_stream_maps(
 
             assemble_target_ethernet_header(&mut open_skel, l2, fallback_ethertype)?;
 
-            let postprocessing_skel = open_skel.load()?;
+            // Configure egress CPU for queue mapping
+            // For the moment assume a 1:1 mapping from
+            // queue to cpu as it is the case for the igc driver
+            // as long as at least 4 CPUs are available
+            // (see postprocessing.bpf.c for background)
+            let mut max_cpu: u32 = 0;
+            if let Some(cpu) = queues.get(&(l2.outgoing_interface()?.to_owned(), *l2.priority()?)) {
+                max_cpu = max(max_cpu, (*cpu).into());
+                open_skel.rodata_mut().fixed_egress_cpu = true;
+                open_skel.rodata_mut().outgoing_cpu = (*cpu).into();
+            }
+
+            let mut postprocessing_skel = open_skel.load()?;
+
+            // Initialize CPUMAP
+            for cpu in 0..max_cpu {
+                let cpumap_val = BpfCpumapVal {
+                    qsize: CPUMAP_QUEUE_SIZE,
+                    bpf_prog: 0,
+                };
+
+                postprocessing_skel.maps_mut().cpu_map().update(
+                    &cpu.to_ne_bytes(),
+                    &cpumap_val.to_bytes(),
+                    MapFlags::ANY,
+                )?;
+            }
 
             // Update map
             let devmap_val = BpfDevmapVal {
@@ -857,6 +912,7 @@ mod tests {
 
     const INCOMING_INTERFACE: &str = "eth1";
     const OUTGOING_INTERFACE: &str = "eth12";
+    const PRIORITY: u8 = 6;
     const SOURCE: MacAddress = MacAddress::new([0xEE, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
     const DESTINATION: MacAddress = MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
     const VID: u16 = 2;
@@ -1039,6 +1095,8 @@ mod tests {
                 overwrite_vlan_proto_and_tci: false,
                 overwrite_ether_type: false,
                 target_outer_hdr: vlan_ethhdr::default(),
+                fixed_egress_cpu: false,
+                outgoing_cpu: 0,
                 mpls_encapsulation: false,
                 mpls_stack_entry: 0,
                 udp_ip_encapsulation: false,
@@ -1065,7 +1123,15 @@ mod tests {
     }
 
     fn generate_postprocessing_maps_mut() -> PostprocessingMapsMut {
-        PostprocessingMapsMut::default()
+        let mut maps_mut = PostprocessingMapsMut::default();
+        maps_mut.expect_cpu_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_update()
+                .times(1)
+                .returning(|_key, _value, _| Ok(()));
+            map
+        });
+        maps_mut
     }
 
     fn generate_postprocessing_program() -> Program {
@@ -1101,12 +1167,16 @@ mod tests {
                 .source(SOURCE)
                 .destination(DESTINATION)
                 .vid(VID)
+                .priority(PRIORITY)
                 .build()])
             .build();
 
         stream_config.fill_defaults()?;
 
-        data_plane.setup_stream(&stream_config)?;
+        data_plane.setup_stream(
+            &stream_config,
+            &BTreeMap::from([((OUTGOING_INTERFACE.to_owned(), PRIORITY), 3)]),
+        )?;
         Ok(())
     }
 
@@ -1133,11 +1203,17 @@ mod tests {
                 .source(SOURCE)
                 .destination(DESTINATION)
                 .vid(VID)
+                .priority(PRIORITY)
                 .build()])
             .build();
 
         stream_config.fill_defaults().unwrap();
 
-        data_plane.setup_stream(&stream_config).unwrap();
+        data_plane
+            .setup_stream(
+                &stream_config,
+                &BTreeMap::from([((OUTGOING_INTERFACE.to_owned(), PRIORITY), 3)]),
+            )
+            .unwrap();
     }
 }

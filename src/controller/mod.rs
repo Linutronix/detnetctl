@@ -46,7 +46,7 @@
 
 use crate::configuration::detnet::Flow;
 use crate::configuration::{
-    BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification,
+    BridgedApp, Configuration, FillDefaults, Interface, OutgoingL2, Stream, StreamIdentification,
     StreamIdentificationBuilder, UnbridgedApp,
 };
 use crate::data_plane::DataPlane;
@@ -118,10 +118,12 @@ struct ExpandedInterface {
 
 struct ExpandedStream {
     stream: Stream,
+    queues: BTreeMap<(String, u8), u16>, // egress queues calculated from priority of each outgoing_l2
 }
 
 struct ExpandedFlow {
     flow: Flow,
+    queues: BTreeMap<(String, u8), u16>, // egress queues calculated from priority of each outgoing_l2
 }
 
 struct ExpandedConfiguration {
@@ -151,7 +153,13 @@ async fn fetch_expanded_configuration(
 
     for app_config in unbridged_apps.values_mut() {
         app_config.fill_defaults()?;
-        validate_are_some!(app_config, physical_interface, bind_interface, stream)?;
+        validate_are_some!(
+            app_config,
+            physical_interface,
+            bind_interface,
+            stream,
+            priority
+        )?;
     }
 
     for app_config in bridged_apps.values_mut() {
@@ -201,8 +209,8 @@ async fn fetch_expanded_configuration(
             &flows,
         )?,
         bridged_apps,
-        streams: collect_expanded_streams(&streams)?,
-        flows: collect_expanded_flows(&flows)?,
+        streams: collect_expanded_streams(&streams, &interfaces)?,
+        flows: collect_expanded_flows(&flows, &interfaces)?,
     })
 }
 
@@ -308,21 +316,84 @@ fn collect_expanded_interfaces(
         .collect()
 }
 
-fn collect_expanded_streams(streams: &BTreeMap<String, Stream>) -> Result<Vec<ExpandedStream>> {
+fn queue_from_outgoing_l2(
+    outgoing_l2: &OutgoingL2,
+    interfaces: &BTreeMap<String, Interface>,
+) -> Result<Option<((String, u8), u16)>> {
+    let interface_name = outgoing_l2.outgoing_interface()?;
+    let Some(interface) = interfaces.get(interface_name) else {
+        return Ok(None);
+    };
+
+    let Some(priority) = outgoing_l2.priority_opt() else {
+        return Ok(None);
+    };
+
+    let Some(prio_to_tc) = interface.schedule_opt().and_then(|s| s.priority_map_opt()) else {
+        return Ok(None);
+    };
+
+    let Some(tc_to_queue) = interface.taprio_opt().and_then(|t| t.queues_opt()) else {
+        return Ok(None);
+    };
+
+    let tc = prio_to_tc
+        .get(priority)
+        .ok_or_else(|| anyhow!("Priority not found in priority_map"))?;
+    let queue_mapping = tc_to_queue
+        .get(usize::from(*tc))
+        .ok_or_else(|| anyhow!("TC not found in queue mapping"))?;
+
+    // select just the first queue for this tc for now
+    let queue = queue_mapping.offset;
+
+    Ok(Some(((interface_name.clone(), *priority), queue)))
+}
+
+fn collect_expanded_streams(
+    streams: &BTreeMap<String, Stream>,
+    interfaces: &BTreeMap<String, Interface>,
+) -> Result<Vec<ExpandedStream>> {
     streams
         .values()
         .map(|stream| -> Result<ExpandedStream> {
             Ok(ExpandedStream {
                 stream: stream.clone(),
+                queues: stream
+                    .outgoing_l2()?
+                    .iter()
+                    .map(|outgoing_l2| queue_from_outgoing_l2(outgoing_l2, interfaces))
+                    .filter_map(Result::transpose)
+                    .collect::<Result<BTreeMap<(String, u8), u16>>>()?,
             })
         })
         .collect()
 }
 
-fn collect_expanded_flows(flows: &BTreeMap<String, Flow>) -> Result<Vec<ExpandedFlow>> {
+fn collect_expanded_flows(
+    flows: &BTreeMap<String, Flow>,
+    interfaces: &BTreeMap<String, Interface>,
+) -> Result<Vec<ExpandedFlow>> {
     flows
         .values()
-        .map(|flow| -> Result<ExpandedFlow> { Ok(ExpandedFlow { flow: flow.clone() }) })
+        .map(|flow| -> Result<ExpandedFlow> {
+            let mut queues = BTreeMap::new();
+
+            if let Some(ofs) = flow.outgoing_forwarding_opt() {
+                for of in ofs {
+                    for outgoing_l2 in of.outgoing_l2()? {
+                        if let Some(kv) = queue_from_outgoing_l2(outgoing_l2, interfaces)? {
+                            queues.insert(kv.0, kv.1);
+                        }
+                    }
+                }
+            }
+
+            Ok(ExpandedFlow {
+                flow: flow.clone(),
+                queues,
+            })
+        })
         .collect()
 }
 
@@ -457,7 +528,7 @@ async fn install_xdps(
 
     for stream in &config.streams {
         locked_data_plane
-            .setup_stream(&stream.stream)
+            .setup_stream(&stream.stream, &stream.queues)
             .context("Installing stream via XDP failed")?;
 
         // Disable VLAN offload for all incoming traffic
@@ -531,7 +602,7 @@ async fn install_xdps(
         }
 
         locked_data_plane
-            .setup_flow(&modified_flow)
+            .setup_flow(&modified_flow, &flow.queues)
             .context("Installing flow via XDP failed")?;
 
         // Disable VLAN offload for all incoming traffic
@@ -916,6 +987,7 @@ mod tests {
                 .outgoing_l2(vec![OutgoingL2Builder::new()
                     .outgoing_interface(interface)
                     .destination("CB:cb:cb:cb:cb:AB".parse().unwrap())
+                    .priority(0)
                     .vid(vid)
                     .build()])
                 .build()])
@@ -1024,8 +1096,8 @@ mod tests {
 
     fn data_plane_happy() -> MockDataPlane {
         let mut data_plane = MockDataPlane::new();
-        data_plane.expect_setup_stream().returning(|_| Ok(()));
-        data_plane.expect_setup_flow().returning(|_| Ok(()));
+        data_plane.expect_setup_stream().returning(|_, _| Ok(()));
+        data_plane.expect_setup_flow().returning(|_, _| Ok(()));
         data_plane.expect_load_xdp_pass().returning(|_| Ok(()));
         data_plane.expect_pin_xdp_pass().returning(|_| Ok(()));
         data_plane
@@ -1035,10 +1107,10 @@ mod tests {
         let mut data_plane = MockDataPlane::new();
         data_plane
             .expect_setup_stream()
-            .returning(|_| Err(anyhow!("failed")));
+            .returning(|_, _| Err(anyhow!("failed")));
         data_plane
             .expect_setup_flow()
-            .returning(|_| Err(anyhow!("failed")));
+            .returning(|_, _| Err(anyhow!("failed")));
         data_plane
             .expect_load_xdp_pass()
             .returning(|_| Err(anyhow!("failed")));
