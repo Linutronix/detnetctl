@@ -18,9 +18,9 @@
 //!       .vid(5)
 //!       .build()
 //!     )
-//!     .outgoing_l2(OutgoingL2Builder::new()
+//!     .outgoing_l2(vec![OutgoingL2Builder::new()
 //!       .outgoing_interface("eth0".to_owned())
-//!       .build())
+//!       .build()])
 //!       .build();
 //!
 //! data_plane.setup_stream(&stream_config)?;

@@ -193,8 +193,10 @@ fn collect_expanded_interfaces(
             // find all matching streams to protect from coming via TC
             let mut streams_to_protect = vec![];
             for stream in streams.values() {
-                if stream.outgoing_l2()?.outgoing_interface()? == name {
-                    streams_to_protect.push(stream.identification()?.clone());
+                for outgoing_l2 in stream.outgoing_l2()? {
+                    if outgoing_l2.outgoing_interface()? == name {
+                        streams_to_protect.push(stream.identification()?.clone());
+                    }
                 }
             }
 
@@ -707,11 +709,9 @@ mod tests {
                     .vid(vid)
                     .build(),
             )
-            .outgoing_l2(
-                OutgoingL2Builder::new()
-                    .outgoing_interface(interface)
-                    .build(),
-            )
+            .outgoing_l2(vec![OutgoingL2Builder::new()
+                .outgoing_interface(interface)
+                .build()])
             .build();
 
         validate_are_some!(

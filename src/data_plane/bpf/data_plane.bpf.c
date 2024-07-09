@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: 2023 Linutronix GmbH
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Identifies incoming stream and replicates it by broadcast redirection.
 
 #include "../../bpf/vmlinux.h"
 #include "../../bpf/stream_identification.bpf.h"
 
+#define MAX_REPLICATIONS 6
+
 struct stream {
 	u16 handle;
-	u32 outgoing_interface;
 } __attribute__((__packed__));
 
 // Map of stream identification to stream handles
@@ -26,6 +29,20 @@ struct {
 	__type(value, u16);
 	__uint(max_entries, 1);
 } num_streams SEC(".maps");
+
+struct redirect_interfaces {
+	__uint(type, BPF_MAP_TYPE_DEVMAP);
+	__uint(max_entries, MAX_REPLICATIONS);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(struct bpf_devmap_val));
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
+	__uint(max_entries, MAX_STREAMS);
+	__uint(key_size, sizeof(u16));
+	__array(values, struct redirect_interfaces);
+} redirect_map SEC(".maps");
 
 SEC("xdp")
 int xdp_bridge(struct xdp_md *ctx)
@@ -52,14 +69,20 @@ int xdp_bridge(struct xdp_md *ctx)
 		return XDP_PASS;
 	}
 
-	/*********************
-	 *    REDIRECTION    *
-	 *********************/
-	if (debug_output) {
-		bpf_printk("Redirect to %i", stream->outgoing_interface);
+	/********************************
+	 * REDIRECTION WITH REPLICATION *
+	 ********************************/
+	struct redirect_interfaces *interfaces =
+		bpf_map_lookup_elem(&redirect_map, &stream->handle);
+	if (!interfaces) {
+		if (debug_output) {
+			bpf_printk(
+				"Dropping packet due to internal error. Entry not found in redirect map.");
+		}
+		return XDP_DROP;
 	}
 
-	return bpf_redirect(stream->outgoing_interface, 0);
+	return bpf_redirect_map(interfaces, 0, BPF_F_BROADCAST);
 }
 
 SEC("xdp")
