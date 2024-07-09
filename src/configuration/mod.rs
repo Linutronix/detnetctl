@@ -170,8 +170,7 @@ pub struct Stream {
     identification: Option<StreamIdentification>,
 
     /// Directly send over L2 without DetNet handling
-    #[replace_none_options_recursively]
-    outgoing_l2: Option<OutgoingL2>,
+    outgoing_l2: Option<Vec<OutgoingL2>>,
 }
 
 impl FillDefaults for Stream {
@@ -179,7 +178,13 @@ impl FillDefaults for Stream {
     /// For `identification` and `outgoing_l2`, see the respective structs.
     fn fill_defaults(&mut self) -> Result<()> {
         fill_struct_defaults!(self, identification, StreamIdentificationBuilder);
-        fill_struct_defaults!(self, outgoing_l2, OutgoingL2Builder);
+
+        if let Some(vecl2) = &mut self.outgoing_l2 {
+            for l2 in vecl2 {
+                l2.fill_defaults()?;
+            }
+        }
+
         Ok(())
     }
 }

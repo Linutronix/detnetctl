@@ -15,28 +15,28 @@ streams:
       destination_address: ff:ff:ff:ff:ff:ff
       vid: 1
     outgoing_l2:
-      outgoing_interface: enp87s0
+      - outgoing_interface: enp87s0
   stream_out_unicast:
     incoming_interface: vethapp0
     identification:
       destination_address: 02:00:00:00:00:02
       vid: 1
     outgoing_l2:
-      outgoing_interface: enp87s0
+      - outgoing_interface: enp87s0
   stream_in_broadcast:
     incoming_interface: enp87s0
     identification:
       destination_address: ff:ff:ff:ff:ff:ff
       vid: 1
     outgoing_l2:
-      outgoing_interface: vethapp0
+      - outgoing_interface: vethapp0
   stream_in_unicast:
     incoming_interface: enp87s0
     identification:
       destination_address: &myapp0mac 02:00:00:00:00:01
       vid: 1
     outgoing_l2:
-      outgoing_interface: vethapp0
+      - outgoing_interface: vethapp0
 interfaces:
   enp87s0:
     promiscuous: true

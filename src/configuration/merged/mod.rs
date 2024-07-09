@@ -136,11 +136,9 @@ mod tests {
                     .vid(vid)
                     .build(),
             )
-            .outgoing_l2(
-                OutgoingL2Builder::new()
-                    .outgoing_interface(interface.clone())
-                    .build(),
-            )
+            .outgoing_l2(vec![OutgoingL2Builder::new()
+                .outgoing_interface(interface.clone())
+                .build()])
             .build();
 
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
@@ -156,7 +154,7 @@ mod tests {
                 "  stream0:\n",
                 "    incoming_interface: {1}.{2}\n",
                 "    outgoing_l2:\n",
-                "      outgoing_interface: {1}\n",
+                "      - outgoing_interface: {1}\n",
             ),
             VERSION, interface, vid
         );
