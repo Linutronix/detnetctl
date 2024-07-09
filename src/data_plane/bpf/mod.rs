@@ -467,6 +467,7 @@ mod tests {
 
     const INCOMING_INTERFACE: &str = "eth1";
     const OUTGOING_INTERFACE: &str = "eth12";
+    const PRIORITY: u8 = 6;
     const SOURCE: MacAddress = MacAddress::new([0xEE, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
     const DESTINATION: MacAddress = MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
     const VID: u16 = 2;
@@ -694,6 +695,7 @@ mod tests {
                 .source(SOURCE)
                 .destination(DESTINATION)
                 .vid(VID)
+                .priority(PRIORITY)
                 .build()])
             .build();
 
@@ -725,6 +727,7 @@ mod tests {
                 .source(SOURCE)
                 .destination(DESTINATION)
                 .vid(VID)
+                .priority(PRIORITY)
                 .build()])
             .build();
 

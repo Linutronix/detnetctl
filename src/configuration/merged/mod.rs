@@ -136,6 +136,7 @@ mod tests {
                 .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(interface.clone())
+                .priority(3)
                 .build()])
             .build();
 
