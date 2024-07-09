@@ -332,6 +332,7 @@ mod tests {
             "        vid: 1\n",
             "    outgoing_l2:\n",
             "      - outgoing_interface: eth0\n",
+            "        priority: 2\n",
             "  stream1:\n",
             "    incoming_interfaces: [eth1]\n",
             "    identifications:\n",
@@ -339,6 +340,7 @@ mod tests {
             "        vid: 1\n",
             "    outgoing_l2:\n",
             "      - outgoing_interface: eth3\n",
+            "        priority: 3\n",
             "interfaces:\n",
             "  eth0:\n",
             "    schedule:\n",
@@ -431,6 +433,7 @@ mod tests {
                 .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface("eth0".to_owned())
+                .priority(3)
                 .build()])
             .build();
 

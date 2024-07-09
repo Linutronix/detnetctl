@@ -291,6 +291,7 @@ fn get_stream_config_from_app_flow(
                     .as_ref()
                     .and_then(|s| s.outgoing_interface.clone()),
             )
+            .priority_opt(stream_handling.and_then(|s| s.priority))
             .build()])
         .build())
 }
@@ -682,6 +683,7 @@ mod tests {
                     .build()])
                 .outgoing_l2(vec![OutgoingL2Builder::new()
                     .outgoing_interface("enp86s0".to_owned())
+                    .priority(3)
                     .build()])
                 .build()
         );
@@ -707,6 +709,7 @@ mod tests {
                     .build()])
                 .outgoing_l2(vec![OutgoingL2Builder::new()
                     .outgoing_interface("enp86s0".to_owned())
+                    .priority(3)
                     .build()])
                 .build()
         );
