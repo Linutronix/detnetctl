@@ -4,14 +4,15 @@
 
 use crate::configuration::{OutgoingL2, Stream, StreamIdentification};
 use anyhow::{anyhow, Context, Result};
+use etherparse::{EtherType, Ethernet2Header, SingleVlanHeader, VlanId, VlanPcp};
+use eui48::MacAddress;
 use flagset::{flags, FlagSet};
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::ErrorKind;
 use libbpf_rs::{MapFlags, MapType, XdpFlags};
 use std::fs::remove_file;
 use std::mem::size_of;
-use std::os::fd::AsRawFd;
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
 #[cfg(not(test))]
@@ -33,6 +34,22 @@ use {
     std::os::fd::AsFd,
 };
 
+#[cfg(not(test))]
+#[allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::restriction,
+    unreachable_pub
+)] // this is generated code
+mod postprocessing_bpf {
+    include!(concat!(env!("OUT_DIR"), "/postprocessing.skel.rs"));
+}
+#[cfg(not(test))]
+use {
+    postprocessing_bpf::postprocessing_rodata_types::vlan_ethhdr,
+    postprocessing_bpf::OpenPostprocessingSkel, postprocessing_bpf::PostprocessingSkelBuilder,
+};
+
 #[cfg(test)]
 use crate::bpf::mocks as core_mocks;
 #[cfg(test)]
@@ -40,8 +57,10 @@ mod mocks;
 #[cfg(test)]
 use {
     core_mocks::MockMap as Map, core_mocks::MockXdp as Xdp,
-    mocks::MockDataPlaneSkel as DataPlaneSkel,
+    mocks::postprocessing_rodata_types::vlan_ethhdr, mocks::MockDataPlaneSkel as DataPlaneSkel,
     mocks::MockDataPlaneSkelBuilder as DataPlaneSkelBuilder, mocks::MockMapHandle as MapHandle,
+    mocks::MockOpenPostprocessingSkel as OpenPostprocessingSkel,
+    mocks::MockPostprocessingSkelBuilder as PostprocessingSkelBuilder,
 };
 
 use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
@@ -114,6 +133,70 @@ impl XdpStreamBuilder {
     }
 }
 
+#[derive(Debug)]
+struct VlanEthernetHeader {
+    vlan_header: SingleVlanHeader,
+    ethernet_header: Ethernet2Header,
+}
+
+impl VlanEthernetHeader {
+    fn to_vlan_ethhdr(&self) -> Result<vlan_ethhdr> {
+        let mut hdr = vlan_ethhdr::default();
+        hdr.__anon_1.addrs.h_dest = self.ethernet_header.destination;
+        hdr.__anon_1.addrs.h_source = self.ethernet_header.source;
+        hdr.h_vlan_proto = self.ethernet_header.ether_type.into();
+        hdr.h_vlan_TCI = u16::from_ne_bytes(
+            self.vlan_header.to_bytes()[0..2]
+                .try_into()
+                .map_err(|_e| anyhow!("Invalid byte number"))?,
+        );
+        hdr.h_vlan_encapsulated_proto = self.vlan_header.ether_type.into();
+        Ok(hdr)
+    }
+}
+
+struct VlanEthernetHeaderBuilder {
+    hdr: VlanEthernetHeader,
+}
+
+impl VlanEthernetHeaderBuilder {
+    fn new() -> Self {
+        Self {
+            hdr: VlanEthernetHeader {
+                vlan_header: SingleVlanHeader::default(),
+                ethernet_header: Ethernet2Header::default(),
+            },
+        }
+    }
+
+    fn source(mut self, source: MacAddress) -> Self {
+        self.hdr.ethernet_header.source = source.to_array();
+        self
+    }
+
+    fn destination(mut self, destination: MacAddress) -> Self {
+        self.hdr.ethernet_header.destination = destination.to_array();
+        self
+    }
+
+    fn vlan_tci(mut self, vlan: u16, pcp: u8) -> Result<Self> {
+        self.hdr.vlan_header.pcp = VlanPcp::try_new(pcp)?;
+        self.hdr.vlan_header.drop_eligible_indicator = false;
+        self.hdr.vlan_header.vlan_id = VlanId::try_new(vlan)?;
+        self.hdr.ethernet_header.ether_type = EtherType::VLAN_TAGGED_FRAME;
+        Ok(self)
+    }
+
+    const fn ether_type(mut self, ether_type: EtherType) -> Self {
+        self.hdr.vlan_header.ether_type = ether_type;
+        self
+    }
+
+    const fn build(self) -> VlanEthernetHeader {
+        self.hdr
+    }
+}
+
 struct BpfDevmapVal {
     ifindex: u32,
     bpf_prog: RawFd,
@@ -129,6 +212,7 @@ impl BpfDevmapVal {
 }
 
 type GenerateSkelCallback = Box<dyn FnMut() -> DataPlaneSkelBuilder + Send>;
+type GenerateSkelPostprocessingCallback = Box<dyn FnMut() -> PostprocessingSkelBuilder + Send>;
 type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
 type CreateDevmapCallback = Box<dyn FnMut() -> Result<MapHandle> + Send>;
 
@@ -138,6 +222,7 @@ pub struct BpfDataPlane<'a> {
     nametoindex: NameToIndexCallback,
     generate_skel: GenerateSkelCallback,
     create_devmap: CreateDevmapCallback,
+    generate_skel_postprocessing: GenerateSkelPostprocessingCallback,
 }
 
 struct DataPlaneAttacher {
@@ -178,8 +263,11 @@ impl DataPlane for BpfDataPlane<'_> {
                     stream_identification,
                     &xdp_stream,
                     outgoing_l2,
-                    &mut self.nametoindex,
-                    &mut self.create_devmap,
+                    &mut UpdateStreamCallbacks {
+                        nametoindex: &mut self.nametoindex,
+                        create_devmap: &mut self.create_devmap,
+                        generate_skel_postprocessing: &mut self.generate_skel_postprocessing,
+                    },
                 )
                 .context("Failed to update stream maps")
             })
@@ -248,6 +336,7 @@ impl BpfDataPlane<'_> {
                 debug_output,
             })),
             create_devmap: Box::new(create_devmap),
+            generate_skel_postprocessing: Box::new(PostprocessingSkelBuilder::default),
         }
     }
 }
@@ -323,21 +412,40 @@ impl<'a> Attacher<DataPlaneSkel<'a>> for DataPlaneAttacher {
     }
 }
 
+struct UpdateStreamCallbacks<'a> {
+    nametoindex: &'a mut NameToIndexCallback,
+    create_devmap: &'a mut CreateDevmapCallback,
+    generate_skel_postprocessing: &'a mut GenerateSkelPostprocessingCallback,
+}
+
 fn update_stream_maps(
     skel: &mut DataPlaneSkel<'_>,
     stream_handle: u16,
     stream_identification: &StreamIdentification,
     xdp_stream: &XdpStream,
     outgoing_l2: &[OutgoingL2],
-    nametoindex: &mut NameToIndexCallback,
-    create_devmap: &mut CreateDevmapCallback,
+    callbacks: &mut UpdateStreamCallbacks<'_>,
 ) -> Result<()> {
-    let redirect_interfaces = create_devmap()?;
+    let redirect_interfaces = (callbacks.create_devmap)()?;
 
     for (i, l2) in outgoing_l2.iter().enumerate() {
+        // Load dedicated postprocessing BPF
+        let skel_builder = (callbacks.generate_skel_postprocessing)();
+        let mut open_skel = skel_builder.open()?;
+        open_skel.rodata_mut().debug_output = skel.rodata().debug_output;
+
+        assemble_target_ethernet_header(&mut open_skel, l2)?;
+
+        // Update map
+        let postprocessing_skel = open_skel.load()?;
+
         let devmap_val = BpfDevmapVal {
-            ifindex: (nametoindex)(l2.outgoing_interface()?)?.try_into()?,
-            bpf_prog: 0,
+            ifindex: (callbacks.nametoindex)(l2.outgoing_interface()?)?.try_into()?,
+            bpf_prog: postprocessing_skel
+                .progs()
+                .xdp_bridge_postprocessing()
+                .as_fd()
+                .as_raw_fd(),
         };
 
         redirect_interfaces.update(
@@ -385,6 +493,43 @@ fn add_initial_entry(map: &Map, stream_handle: u16) -> Result<()> {
     Ok(())
 }
 
+fn assemble_target_ethernet_header(
+    open_skel: &mut OpenPostprocessingSkel<'_>,
+    l2: &OutgoingL2,
+) -> Result<()> {
+    let mut hdr = VlanEthernetHeaderBuilder::new();
+
+    if let Some(source) = l2.source_opt() {
+        hdr = hdr.source(*source);
+        open_skel.rodata_mut().overwrite_source_addr = true;
+    }
+
+    if let Some(destination) = l2.destination_opt() {
+        hdr = hdr.destination(*destination);
+        open_skel.rodata_mut().overwrite_dest_addr = true;
+    }
+
+    if let Some(vid) = l2.vid_opt() {
+        let pcp = l2.pcp_opt().unwrap_or(&0);
+        hdr = hdr.vlan_tci(*vid, *pcp)?;
+        open_skel.rodata_mut().overwrite_vlan_proto_and_tci = true;
+    } else if l2.pcp_opt().is_some() {
+        return Err(anyhow!(
+            "PCP can only be set if VLAN identifier is also provided"
+        ));
+    }
+
+    if let Some(ethertype) = l2.ether_type_opt() {
+        hdr = hdr.ether_type(EtherType(*ethertype));
+        open_skel.rodata_mut().overwrite_ether_type = true;
+    }
+
+    let hdr = hdr.build();
+    open_skel.rodata_mut().target_outer_hdr = hdr.to_vlan_ethhdr()?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,11 +547,16 @@ mod tests {
     use mocks::MockDataPlaneProgs as DataPlaneProgs;
     use mocks::MockMapHandle as MapHandle;
     use mocks::MockOpenDataPlaneSkel as OpenDataPlaneSkel;
+    use mocks::MockOpenPostprocessingSkel as OpenPostprocessingSkel;
+    use mocks::MockPostprocessingProgs as PostprocessingProgs;
+    use mocks::MockPostprocessingSkel as PostprocessingSkel;
     use std::os::fd::BorrowedFd;
 
     const INCOMING_INTERFACE: &str = "eth1";
     const OUTGOING_INTERFACE: &str = "eth12";
+    const SOURCE: MacAddress = MacAddress::new([0xEE, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
     const DESTINATION: MacAddress = MacAddress::new([0xab, 0xcb, 0xcb, 0xcb, 0xcb, 0xcb]);
+    const VID: u16 = 2;
 
     fn generate_stream_identification(vid: u16) -> StreamIdentification {
         StreamIdentificationBuilder::new()
@@ -424,7 +574,7 @@ mod tests {
         builder
     }
 
-    fn generate_open_skel() -> OpenDataPlaneSkel {
+    fn generate_open_skel<'a>() -> OpenDataPlaneSkel<'a> {
         let mut open_skel = OpenDataPlaneSkel::default();
         open_skel
             .expect_load()
@@ -443,6 +593,10 @@ mod tests {
         skel.expect_progs().returning(generate_progs);
         skel.expect_maps_mut().returning(generate_maps_mut);
         skel.expect_maps().returning(generate_maps);
+        skel.expect_rodata()
+            .returning(|| mocks::bpf_rodata_types::rodata {
+                debug_output: false,
+            });
         skel
     }
 
@@ -543,7 +697,6 @@ mod tests {
             });
             map
         });
-
         maps
     }
 
@@ -558,6 +711,58 @@ mod tests {
         handle
     }
 
+    fn generate_postprocessing_skel_builder() -> PostprocessingSkelBuilder {
+        let mut builder = PostprocessingSkelBuilder::default();
+        builder
+            .expect_open()
+            .times(1)
+            .returning(move || Ok(generate_open_postprocessing_skel()));
+        builder
+    }
+
+    fn generate_open_postprocessing_skel<'a>() -> OpenPostprocessingSkel<'a> {
+        let mut open_skel = OpenPostprocessingSkel::default();
+        open_skel
+            .expect_load()
+            .returning(move || Ok(generate_postprocessing_skel()));
+        open_skel
+            .expect_rodata_mut()
+            .returning(|| mocks::postprocessing_rodata_types::rodata {
+                debug_output: false,
+                overwrite_dest_addr: false,
+                overwrite_source_addr: false,
+                overwrite_vlan_proto_and_tci: false,
+                overwrite_ether_type: false,
+                target_outer_hdr: vlan_ethhdr::default(),
+            });
+        open_skel
+    }
+
+    fn generate_postprocessing_skel<'a>() -> PostprocessingSkel<'a> {
+        let mut skel = PostprocessingSkel::default();
+        skel.expect_progs().returning(generate_postprocessing_progs);
+        skel
+    }
+
+    fn generate_postprocessing_progs() -> PostprocessingProgs {
+        let mut progs = PostprocessingProgs::default();
+        progs
+            .expect_xdp_bridge_postprocessing()
+            .returning(generate_postprocessing_program);
+        progs
+    }
+
+    fn generate_postprocessing_program() -> Program {
+        let mut prog = Program::default();
+        // SAFETY: Only for testing
+        unsafe {
+            prog.expect_as_fd()
+                .times(1)
+                .return_const(BorrowedFd::borrow_raw(1));
+        }
+        prog
+    }
+
     #[test]
     fn test_setup_happy() -> Result<()> {
         let mut data_plane = BpfDataPlane {
@@ -569,6 +774,7 @@ mod tests {
                 debug_output: false,
             })),
             create_devmap: Box::new(|| Ok(create_devmap())),
+            generate_skel_postprocessing: Box::new(generate_postprocessing_skel_builder),
         };
 
         let mut stream_config = StreamBuilder::new()
@@ -576,6 +782,9 @@ mod tests {
             .incoming_interface(INCOMING_INTERFACE.to_owned())
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(OUTGOING_INTERFACE.to_owned())
+                .source(SOURCE)
+                .destination(DESTINATION)
+                .vid(VID)
                 .build()])
             .build();
 
@@ -597,6 +806,7 @@ mod tests {
                 debug_output: false,
             })),
             create_devmap: Box::new(|| Ok(create_devmap())),
+            generate_skel_postprocessing: Box::new(generate_postprocessing_skel_builder),
         };
 
         let mut stream_config = StreamBuilder::new()
@@ -604,6 +814,9 @@ mod tests {
             .incoming_interface(INCOMING_INTERFACE.to_owned())
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(OUTGOING_INTERFACE.to_owned())
+                .source(SOURCE)
+                .destination(DESTINATION)
+                .vid(VID)
                 .build()])
             .build();
 

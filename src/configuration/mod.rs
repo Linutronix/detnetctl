@@ -240,6 +240,31 @@ impl FillDefaults for StreamIdentification {
 pub struct OutgoingL2 {
     /// Outgoing interface. Link to the respective TSN interface configuration.
     outgoing_interface: Option<String>,
+
+    /// Source MAC address
+    /// If provided, sets the source address of the outermost Ethernet header
+    #[serde(default, with = "serialize_mac_address")]
+    source: Option<MacAddress>,
+
+    /// Destination MAC address
+    /// If provided, sets the destination address of the outermost Ethernet header
+    #[serde(default, with = "serialize_mac_address")]
+    destination: Option<MacAddress>,
+
+    /// VLAN Identifier
+    /// If provided, sets the VLAN tag of the outermost Ethernet header
+    #[serde(default)]
+    vid: Option<u16>, // actually 12 bit
+
+    /// Priority Code Point
+    /// If provided, sets the PCP field of the outermost Ethernet header
+    #[serde(default)]
+    pcp: Option<u8>, // actually 3 bit
+
+    /// Ether Type
+    /// If provided, sets the Ether Type of the outermost Ethernet header
+    #[serde(default)]
+    ether_type: Option<u16>,
 }
 
 impl FillDefaults for OutgoingL2 {
