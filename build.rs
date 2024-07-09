@@ -10,7 +10,11 @@ use {
 };
 
 #[cfg(feature = "bpf")]
-const BPFS: &[&str] = &["data_plane", "dispatcher"];
+const BPFS: &[(&str, &str)] = &[
+    ("data_plane", "data_plane"),
+    ("data_plane", "postprocessing"),
+    ("dispatcher", "dispatcher"),
+];
 
 fn main() {
     build_bpf();
@@ -18,8 +22,8 @@ fn main() {
 
 #[cfg(feature = "bpf")]
 fn build_bpf() {
-    for bpf in BPFS {
-        let src = format!("./src/{bpf}/bpf/{bpf}.bpf.c");
+    for (dir, bpf) in BPFS {
+        let src = format!("./src/{dir}/bpf/{bpf}.bpf.c");
         let mut out =
             PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
         out.push(format!("{bpf}.skel.rs"));

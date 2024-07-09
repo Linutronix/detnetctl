@@ -314,6 +314,13 @@ pub fn options_builder(input: TokenStream) -> TokenStream {
                         }
                     }
 
+                    #[doc=#doc_comment_new_builder]
+                    pub fn from_struct(obj: #struct_name) -> Self {
+                        #builder_name {
+                            obj
+                        }
+                    }
+
                     #[doc=#doc_comment_build]
                     pub fn build(self) -> #struct_name {
                         self.obj

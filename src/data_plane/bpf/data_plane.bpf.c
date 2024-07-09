@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Identifies incoming stream and replicates it by broadcast redirection.
+// Further frame modifications will be performed by the postprocessing.bpf.c
 
 #include "../../bpf/vmlinux.h"
 #include "../../bpf/stream_identification.bpf.h"

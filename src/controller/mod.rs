@@ -45,7 +45,8 @@
 //! ```
 
 use crate::configuration::{
-    BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification, UnbridgedApp,
+    BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification,
+    StreamIdentificationBuilder, UnbridgedApp,
 };
 use crate::data_plane::DataPlane;
 use crate::dispatcher::{Dispatcher, Protection};
@@ -190,7 +191,19 @@ fn collect_expanded_interfaces(
             for stream in streams.values() {
                 for outgoing_l2 in stream.outgoing_l2()? {
                     if outgoing_l2.outgoing_interface()? == name {
-                        streams_to_protect.push(stream.identification()?.clone());
+                        let mut stream_id = StreamIdentificationBuilder::from_struct(
+                            stream.identification()?.clone(),
+                        );
+
+                        if let Some(destination) = outgoing_l2.destination_opt() {
+                            stream_id = stream_id.destination_address(*destination);
+                        }
+
+                        if let Some(vid) = outgoing_l2.vid_opt() {
+                            stream_id = stream_id.vid(*vid);
+                        }
+
+                        streams_to_protect.push(stream_id.build());
                     }
                 }
             }

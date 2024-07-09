@@ -19,18 +19,19 @@ macro_rules! bpf_mock {
      $skel:ident,
      $mockProgs:ident,
      $mockMapsMut:ident,
-     $mockMaps:ident
+     $mockMaps:ident,
+     $rodata_types:ident
      ) => {
         mock! {
             pub(crate) $skelBuilder {
-                pub(crate) fn open(mut self) -> libbpf_rs::Result<$mockOpenSkel>;
+                pub(crate) fn open(mut self) -> libbpf_rs::Result<$mockOpenSkel<'static>>;
             }
         }
 
         mock! {
-            pub(crate) $openSkel {
+            pub(crate) $openSkel<'a> {
                 pub(crate) fn load(mut self) -> libbpf_rs::Result<$mockSkel<'static>>;
-                pub(crate) fn rodata_mut(&mut self) -> &mut bpf_rodata_types::rodata;
+                pub(crate) fn rodata_mut(&mut self) -> &mut $rodata_types::rodata;
             }
         }
 
@@ -39,6 +40,7 @@ macro_rules! bpf_mock {
                 pub(crate) fn progs(&self) -> $mockProgs;
                 pub(crate) fn maps_mut(&mut self) -> $mockMapsMut;
                 pub(crate) fn maps(&mut self) -> $mockMaps;
+                pub(crate) fn rodata(&self) -> $rodata_types::rodata;
             }
         }
     };
