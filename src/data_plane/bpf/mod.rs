@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::configuration::Stream;
+use crate::configuration::{OutgoingL2, Stream};
 use anyhow::{anyhow, Context, Result};
-use libbpf_rs::{MapFlags, XdpFlags};
+use libbpf_rs::libbpf_sys;
+use libbpf_rs::{MapFlags, MapType, XdpFlags};
+use std::mem::size_of;
+use std::os::fd::AsRawFd;
 
 #[cfg(not(test))]
 #[allow(
@@ -21,7 +24,7 @@ use {
     data_plane_bpf::DataPlaneSkel,
     data_plane_bpf::DataPlaneSkelBuilder,
     libbpf_rs::skel::{OpenSkel, SkelBuilder},
-    libbpf_rs::Xdp,
+    libbpf_rs::{MapHandle, Xdp},
     std::os::fd::AsFd,
 };
 
@@ -32,23 +35,23 @@ mod mocks;
 #[cfg(test)]
 use {
     core_mocks::MockXdp as Xdp, mocks::MockDataPlaneSkel as DataPlaneSkel,
-    mocks::MockDataPlaneSkelBuilder as DataPlaneSkelBuilder,
+    mocks::MockDataPlaneSkelBuilder as DataPlaneSkelBuilder, mocks::MockMapHandle as MapHandle,
 };
 
 use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
 use crate::data_plane::DataPlane;
 
+const MAX_REPLICATIONS: u32 = 6;
+
 #[derive(Debug)]
 struct XdpStream {
     handle: u16,
-    outgoing_interface: u32,
 }
 
 impl XdpStream {
     fn to_bytes(&self) -> [u8; 6] {
         let mut result: [u8; 6] = [0; 6];
         result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]); // 2 bytes
-        result[2..6].copy_from_slice(&self.outgoing_interface.to_ne_bytes()[..]); // 4 bytes
         result
     }
 
@@ -56,11 +59,6 @@ impl XdpStream {
         Ok(Self {
             handle: u16::from_ne_bytes(
                 bytes[0..2]
-                    .try_into()
-                    .map_err(|_e| anyhow!("Invalid byte number"))?,
-            ),
-            outgoing_interface: u32::from_ne_bytes(
-                bytes[2..6]
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
@@ -75,20 +73,12 @@ struct XdpStreamBuilder {
 impl XdpStreamBuilder {
     const fn new() -> Self {
         Self {
-            stream: XdpStream {
-                handle: 0,
-                outgoing_interface: 0,
-            },
+            stream: XdpStream { handle: 0 },
         }
     }
 
     const fn handle(mut self, handle: u16) -> Self {
         self.stream.handle = handle;
-        self
-    }
-
-    const fn outgoing_interface(mut self, interface_idx: u32) -> Self {
-        self.stream.outgoing_interface = interface_idx;
         self
     }
 
@@ -99,11 +89,13 @@ impl XdpStreamBuilder {
 
 type GenerateSkelCallback = Box<dyn FnMut() -> DataPlaneSkelBuilder + Send>;
 type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
+type CreateDevmapCallback = Box<dyn FnMut() -> Result<MapHandle> + Send>;
 
 /// Installs eBPFs for packet handling
 pub struct BpfDataPlane<'a> {
     skels: SkelManager<DataPlaneSkel<'a>>,
     nametoindex: NameToIndexCallback,
+    create_devmap: CreateDevmapCallback,
 }
 
 struct DataPlaneAttacher {
@@ -114,9 +106,6 @@ struct DataPlaneAttacher {
 
 impl DataPlane for BpfDataPlane<'_> {
     fn setup_stream(&mut self, stream_config: &Stream) -> Result<()> {
-        let outgoing_interface =
-            (self.nametoindex)(stream_config.outgoing_l2()?.outgoing_interface()?)?.try_into()?;
-
         let stream_identification = stream_config.identification()?;
 
         self.skels
@@ -133,12 +122,16 @@ impl DataPlane for BpfDataPlane<'_> {
                     },
                 )?;
 
-                let xdp_stream = XdpStreamBuilder::new()
-                    .handle(stream_handle)
-                    .outgoing_interface(outgoing_interface)
-                    .build();
+                let xdp_stream = XdpStreamBuilder::new().handle(stream_handle).build();
 
-                update_stream_maps(skel, u32::from(stream_handle), &xdp_stream)
+                update_stream_maps(
+                    skel,
+                    u32::from(stream_handle),
+                    &xdp_stream,
+                    stream_config.outgoing_l2()?,
+                    &mut self.nametoindex,
+                    &mut self.create_devmap,
+                )
             })
             .context("Failed to configure stream")
     }
@@ -154,12 +147,38 @@ impl BpfDataPlane<'_> {
                 nametoindex: Box::new(nametoindex),
                 debug_output,
             })),
+            create_devmap: Box::new(create_devmap),
         }
     }
 }
 
 fn nametoindex(interface: &str) -> Result<i32> {
     Ok(i32::try_from(nix::net::if_::if_nametoindex(interface)?)?)
+}
+
+fn create_devmap() -> Result<MapHandle> {
+    let opts = libbpf_sys::bpf_map_create_opts {
+        sz: size_of::<libbpf_sys::bpf_map_create_opts>().try_into()?,
+        map_flags: libbpf_sys::BPF_ANY,
+        btf_fd: 0,
+        btf_key_type_id: 0,
+        btf_value_type_id: 0,
+        btf_vmlinux_value_type_id: 0,
+        inner_map_fd: 0,
+        map_extra: 0,
+        numa_node: 0,
+        map_ifindex: 0,
+        ..Default::default()
+    };
+
+    Ok(MapHandle::create::<&str>(
+        MapType::Devmap,
+        None,
+        4,
+        8,
+        MAX_REPLICATIONS,
+        &opts,
+    )?)
 }
 
 impl Default for BpfDataPlane<'_> {
@@ -191,7 +210,23 @@ fn update_stream_maps(
     skel: &mut DataPlaneSkel<'_>,
     stream_handle: u32,
     xdp_stream: &XdpStream,
+    outgoing_l2: &[OutgoingL2],
+    nametoindex: &mut NameToIndexCallback,
+    create_devmap: &mut CreateDevmapCallback,
 ) -> Result<()> {
+    let redirect_interfaces = create_devmap()?;
+
+    for (i, l2) in outgoing_l2.iter().enumerate() {
+        let ifidx = (nametoindex)(l2.outgoing_interface()?)?;
+        redirect_interfaces.update(&i.to_ne_bytes(), &ifidx.to_ne_bytes(), MapFlags::ANY)?;
+    }
+
+    skel.maps_mut().redirect_map().update(
+        &stream_handle.to_ne_bytes(),
+        &redirect_interfaces.as_fd().as_raw_fd().to_ne_bytes(),
+        MapFlags::ANY,
+    )?;
+
     let xdp_stream_bytes = xdp_stream.to_bytes();
 
     skel.maps_mut().streams().update(
@@ -218,6 +253,7 @@ mod tests {
     use mocks::MockDataPlaneMaps as DataPlaneMaps;
     use mocks::MockDataPlaneMapsMut as DataPlaneMapsMut;
     use mocks::MockDataPlaneProgs as DataPlaneProgs;
+    use mocks::MockMapHandle as MapHandle;
     use mocks::MockOpenDataPlaneSkel as OpenDataPlaneSkel;
     use std::os::fd::BorrowedFd;
 
@@ -298,6 +334,12 @@ mod tests {
             map
         });
 
+        maps_mut.expect_redirect_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_update().returning(|_key, _value, _| Ok(()));
+            map
+        });
+
         maps_mut
     }
 
@@ -327,6 +369,17 @@ mod tests {
         maps
     }
 
+    fn create_devmap() -> MapHandle {
+        let mut handle = MapHandle::default();
+        handle.expect_update().returning(|_key, _value, _| Ok(()));
+        handle.expect_as_fd().returning(||
+                                        // SAFETY: Only testing
+                                        unsafe {
+                                            BorrowedFd::borrow_raw(0)
+                                        });
+        handle
+    }
+
     #[test]
     fn test_setup_happy() -> Result<()> {
         let mut data_plane = BpfDataPlane {
@@ -336,16 +389,15 @@ mod tests {
                 nametoindex: Box::new(|_interface| Ok(3)),
                 debug_output: false,
             })),
+            create_devmap: Box::new(|| Ok(create_devmap())),
         };
 
         let mut stream_config = StreamBuilder::new()
             .identification(generate_stream_identification(3))
             .incoming_interface(INCOMING_INTERFACE.to_owned())
-            .outgoing_l2(
-                OutgoingL2Builder::new()
-                    .outgoing_interface(OUTGOING_INTERFACE.to_owned())
-                    .build(),
-            )
+            .outgoing_l2(vec![OutgoingL2Builder::new()
+                .outgoing_interface(OUTGOING_INTERFACE.to_owned())
+                .build()])
             .build();
 
         stream_config.fill_defaults()?;
@@ -364,16 +416,15 @@ mod tests {
                 nametoindex: Box::new(|_interface| Err(anyhow!("interface not found"))),
                 debug_output: false,
             })),
+            create_devmap: Box::new(|| Ok(create_devmap())),
         };
 
         let mut stream_config = StreamBuilder::new()
             .identification(generate_stream_identification(3))
             .incoming_interface(INCOMING_INTERFACE.to_owned())
-            .outgoing_l2(
-                OutgoingL2Builder::new()
-                    .outgoing_interface(OUTGOING_INTERFACE.to_owned())
-                    .build(),
-            )
+            .outgoing_l2(vec![OutgoingL2Builder::new()
+                .outgoing_interface(OUTGOING_INTERFACE.to_owned())
+                .build()])
             .build();
 
         stream_config.fill_defaults().unwrap();

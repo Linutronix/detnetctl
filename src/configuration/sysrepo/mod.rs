@@ -270,15 +270,13 @@ fn get_stream_config_from_app_flow(
     Ok(StreamBuilder::new()
         .incoming_interface_opt(app_flow.ingress_interface.clone())
         .identification_opt(app_flow.stream_id.clone())
-        .outgoing_l2(
-            OutgoingL2Builder::new()
-                .outgoing_interface_opt(
-                    stream_handling
-                        .as_ref()
-                        .and_then(|s| s.outgoing_interface.clone()),
-                )
-                .build(),
-        )
+        .outgoing_l2(vec![OutgoingL2Builder::new()
+            .outgoing_interface_opt(
+                stream_handling
+                    .as_ref()
+                    .and_then(|s| s.outgoing_interface.clone()),
+            )
+            .build()])
         .build())
 }
 
@@ -662,11 +660,36 @@ mod tests {
                         .vid(vid)
                         .build(),
                 )
-                .outgoing_l2(
-                    OutgoingL2Builder::new()
-                        .outgoing_interface("enp86s0".to_owned())
-                        .build()
+                .outgoing_l2(vec![OutgoingL2Builder::new()
+                    .outgoing_interface("enp86s0".to_owned())
+                    .build()])
+                .build()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_stream_config_happy_without_ip() -> Result<()> {
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-without-ip.json",
+        );
+        let config = sysrepo_config.get_stream("stream0")?;
+
+        let interface = String::from("enp86s0");
+        let vid = 5;
+        assert_eq!(
+            config.unwrap(),
+            StreamBuilder::new()
+                .incoming_interface(format!("{interface}.{vid}"))
+                .identification(
+                    StreamIdentificationBuilder::new()
+                        .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                        .vid(vid)
+                        .build(),
                 )
+                .outgoing_l2(vec![OutgoingL2Builder::new()
+                    .outgoing_interface("enp86s0".to_owned())
+                    .build()])
                 .build()
         );
         Ok(())

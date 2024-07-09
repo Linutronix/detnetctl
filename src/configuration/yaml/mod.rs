@@ -325,14 +325,14 @@ mod tests {
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
             "    outgoing_l2:\n",
-            "      outgoing_interface: eth0\n",
+            "      - outgoing_interface: eth0\n",
             "  stream1:\n",
             "    incoming_interface: eth3.1\n",
             "    identification:\n",
             "      destination_address: AB:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
             "    outgoing_l2:\n",
-            "      outgoing_interface: eth3\n",
+            "      - outgoing_interface: eth3\n",
             "interfaces:\n",
             "  eth0:\n",
             "    schedule:\n",
@@ -380,7 +380,7 @@ mod tests {
             "  stream0:\n",
             "    incoming_interface: eth0\n",
             "    outgoing_l2:\n",
-            "      outgoing_interface: eth0\n"
+            "      - outgoing_interface: eth0\n"
         );
 
         let mut config = YAMLConfiguration::default();
@@ -421,11 +421,9 @@ mod tests {
                     .vid(1)
                     .build(),
             )
-            .outgoing_l2(
-                OutgoingL2Builder::new()
-                    .outgoing_interface("eth0".to_owned())
-                    .build(),
-            )
+            .outgoing_l2(vec![OutgoingL2Builder::new()
+                .outgoing_interface("eth0".to_owned())
+                .build()])
             .build();
 
         let stream_1 = StreamBuilder::new()
@@ -436,11 +434,9 @@ mod tests {
                     .vid(2)
                     .build(),
             )
-            .outgoing_l2(
-                OutgoingL2Builder::new()
-                    .outgoing_interface("eth1".to_owned())
-                    .build(),
-            )
+            .outgoing_l2(vec![OutgoingL2Builder::new()
+                .outgoing_interface("eth1".to_owned())
+                .build()])
             .build();
 
         let mut streams = Streams::default();
