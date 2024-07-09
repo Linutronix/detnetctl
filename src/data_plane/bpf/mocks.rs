@@ -29,7 +29,8 @@ bpf_mock!(
     MockDataPlaneProgs,
     MockDataPlaneProgsMut,
     MockDataPlaneMapsMut,
-    MockDataPlaneMaps
+    MockDataPlaneMaps,
+    bpf_rodata_types
 );
 
 mock! {
@@ -83,5 +84,89 @@ mock! {
             // Only for testing
             BorrowedFd::borrow_raw(0)
         }
+    }
+}
+
+pub(crate) mod postprocessing_rodata_types {
+    #[derive(Debug, Default, Copy, Clone)]
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    pub(crate) struct vlan_ethhdr {
+        pub(crate) __anon_1: __anon_1,
+        pub(crate) h_vlan_proto: u16,
+        pub(crate) h_vlan_TCI: u16,
+        pub(crate) h_vlan_encapsulated_proto: u16,
+    }
+    #[derive(Copy, Clone)]
+    #[repr(C)]
+    pub(crate) union __anon_1 {
+        pub(crate) __anon_2: __anon_2,
+        pub(crate) addrs: __anon_2,
+    }
+    impl std::fmt::Debug for __anon_1 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "(???)")
+        }
+    }
+    impl Default for __anon_1 {
+        fn default() -> Self {
+            __anon_1 {
+                __anon_2: __anon_2::default(),
+            }
+        }
+    }
+    #[derive(Debug, Default, Copy, Clone)]
+    #[repr(C)]
+    pub(crate) struct __anon_2 {
+        pub(crate) h_dest: [u8; 6],
+        pub(crate) h_source: [u8; 6],
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    #[repr(C)]
+    pub(crate) struct rodata {
+        pub(crate) debug_output: bool,
+        pub(crate) overwrite_source_addr: bool,
+        pub(crate) overwrite_dest_addr: bool,
+        pub(crate) overwrite_vlan_proto_and_tci: bool,
+        pub(crate) overwrite_ether_type: bool,
+        pub(crate) target_outer_hdr: vlan_ethhdr,
+    }
+}
+
+bpf_mock!(
+    PostprocessingSkelBuilder,
+    MockOpenPostprocessingSkel,
+    OpenPostprocessingSkel,
+    MockPostprocessingSkel,
+    PostprocessingSkel,
+    MockPostprocessingProgs,
+    MockPostprocessingProgsMut,
+    MockPostprocessingMapsMut,
+    MockPostprocessingMaps,
+    postprocessing_rodata_types
+);
+
+mock! {
+    pub(crate) PostprocessingProgs {
+        pub(crate) fn xdp_bridge_postprocessing(&self) -> MockXdpProgram;
+    }
+}
+
+mock! {
+    pub(crate) PostprocessingProgsMut {
+        pub(crate) fn xdp_bridge_postprocessing(&mut self) -> MockXdpProgram;
+    }
+}
+
+mock! {
+    #[allow(clippy::empty_structs_with_brackets)]
+    pub(crate) PostprocessingMapsMut {
+    }
+}
+
+mock! {
+    #[allow(clippy::empty_structs_with_brackets)]
+    pub(crate) PostprocessingMaps {
     }
 }

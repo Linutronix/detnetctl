@@ -385,7 +385,7 @@ mod tests {
         builder
     }
 
-    fn generate_open_skel(cgroup: Arc<Path>) -> OpenDispatcherSkel {
+    fn generate_open_skel<'a>(cgroup: Arc<Path>) -> OpenDispatcherSkel<'a> {
         let mut open_skel = OpenDispatcherSkel::default();
         open_skel
             .expect_load()

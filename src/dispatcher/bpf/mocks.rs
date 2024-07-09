@@ -25,7 +25,8 @@ bpf_mock!(
     MockDispatcherProgs,
     MockDispatcherProgsMut,
     MockDispatcherMapsMut,
-    MockDispatcherMaps
+    MockDispatcherMaps,
+    bpf_rodata_types
 );
 
 mock! {
