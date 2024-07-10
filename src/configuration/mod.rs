@@ -53,6 +53,18 @@ pub trait FillDefaults {
     fn fill_defaults(&mut self) -> Result<()>;
 }
 
+macro_rules! fill_struct_defaults {
+    ($parent:ident, $field:ident, $builder:ident) => {
+        if let Some(val) = $parent.$field.as_mut() {
+            val.fill_defaults()?;
+        } else {
+            let mut $field = $builder::new().build();
+            $field.fill_defaults()?;
+            $parent.$field = Some($field);
+        }
+    };
+}
+
 #[cfg(test)]
 use mockall::automock;
 
@@ -79,9 +91,6 @@ pub struct AppConfig {
     /// TSN stream identification
     #[replace_none_options_recursively]
     stream: Option<StreamIdentification>,
-
-    /// IP addresses and prefix lengths of the logical interface
-    addresses: Option<Vec<(IpAddr, u8)>>,
 
     /// Allow only processes within this cgroup to generate traffic for this app
     cgroup: Option<PathBuf>,
@@ -139,7 +148,7 @@ pub use self::taprio::{Clock, Mode, QueueMapping, TaprioConfig, TaprioConfigBuil
 mod pcp;
 pub use self::pcp::{PcpEncodingTable, PcpEncodingTableBuilder};
 
-/// Contains the configuration for a TSN interface
+/// Contains the configuration for an interface
 #[derive(
     Debug,
     PartialEq,
@@ -151,7 +160,7 @@ pub use self::pcp::{PcpEncodingTable, PcpEncodingTableBuilder};
     OptionsGetters,
     OptionsBuilder,
 )]
-pub struct TsnInterfaceConfig {
+pub struct Interface {
     /// Qbv schedule
     schedule: Option<Schedule>,
 
@@ -161,34 +170,27 @@ pub struct TsnInterfaceConfig {
 
     /// PCP encoding table
     pcp_encoding: Option<PcpEncodingTable>,
+
+    /// IP addresses and prefix lengths to configure
+    addresses: Option<Vec<(IpAddr, u8)>>,
 }
 
-impl FillDefaults for TsnInterfaceConfig {
+impl FillDefaults for Interface {
     fn fill_defaults(&mut self) -> Result<()> {
         if let Some(schedule) = self.schedule.as_mut() {
             schedule.fill_defaults()?;
-        } else {
-            let mut schedule = ScheduleBuilder::new().build();
-            schedule.fill_defaults()?;
-            self.schedule = Some(schedule);
-        }
 
-        let num_tc = *self.schedule()?.number_of_traffic_classes()?;
-        if let Some(taprio) = self.taprio.as_mut() {
-            taprio.fill_defaults(num_tc)?;
-        } else {
-            let mut taprio = TaprioConfigBuilder::new().build();
-            taprio.fill_defaults(num_tc)?;
-            self.taprio = Some(taprio);
-        }
+            let num_tc = *self.schedule()?.number_of_traffic_classes()?;
+            if let Some(taprio) = self.taprio.as_mut() {
+                taprio.fill_defaults(num_tc)?;
+            } else {
+                let mut taprio = TaprioConfigBuilder::new().build();
+                taprio.fill_defaults(num_tc)?;
+                self.taprio = Some(taprio);
+            }
+        } // else keep schedule and taprio as None if not provided!
 
-        if let Some(pcp_encoding) = self.pcp_encoding.as_mut() {
-            pcp_encoding.fill_defaults()?;
-        } else {
-            let mut pcp_encoding = PcpEncodingTableBuilder::new().build();
-            pcp_encoding.fill_defaults()?;
-            self.pcp_encoding = Some(pcp_encoding);
-        }
+        fill_struct_defaults!(self, pcp_encoding, PcpEncodingTableBuilder);
 
         Ok(())
     }
@@ -230,7 +232,7 @@ pub trait Configuration {
     /// # Errors
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>>;
+    fn get_interfaces(&mut self) -> Result<BTreeMap<String, Interface>>;
 
     /// Get configuration for the given interface
     ///
@@ -238,7 +240,7 @@ pub trait Configuration {
     ///
     /// Will return `Err` if there is a general problem reading the configuration.
     /// If no interface was found for that `interface_name`, Ok(None) is returned.
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>>;
+    fn get_interface(&mut self, interface_name: &str) -> Result<Option<Interface>>;
 
     /// Get the configuration for a given `app_name`
     ///
