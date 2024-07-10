@@ -58,6 +58,7 @@ pub(crate) struct MockMapInfo {
 
 pub(crate) struct MockInnerMapInfo {
     pub(crate) max_entries: u32,
+    pub(crate) value_size: u32,
 }
 
 mock! {

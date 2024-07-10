@@ -42,6 +42,7 @@ mock! {
         pub(crate) fn num_streams(&mut self) -> &mut MockMap;
         pub(crate) fn streams(&mut self) -> &mut MockMap;
         pub(crate) fn redirect_map(&mut self) -> &mut MockMap;
+        pub(crate) fn seqgen_map(&mut self) -> &mut MockMap;
     }
 }
 
@@ -49,6 +50,7 @@ mock! {
     pub(crate) DataPlaneMaps {
         pub(crate) fn num_streams(&mut self) -> &mut MockMap;
         pub(crate) fn streams(&mut self) -> &mut MockMap;
+        pub(crate) fn seqgen_map(&mut self) -> &mut MockMap;
     }
 }
 

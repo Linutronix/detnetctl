@@ -486,7 +486,10 @@ mod tests {
             let mut map = Map::default();
             map.expect_info().returning(|| {
                 Ok(MockMapInfo {
-                    info: MockInnerMapInfo { max_entries: 100 },
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
                 })
             });
             map.expect_lookup().times(1).returning(|key, _flags| {

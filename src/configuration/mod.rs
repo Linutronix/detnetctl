@@ -170,6 +170,9 @@ pub struct Stream {
     identification: Option<StreamIdentification>,
 
     /// Directly send over L2 without DetNet handling
+    /// If more than one element is in the vector,
+    /// frame replication (according to IEEE 802.1CB)
+    /// is performed and an R-Tag is added.
     outgoing_l2: Option<Vec<OutgoingL2>>,
 }
 

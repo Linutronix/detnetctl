@@ -4,6 +4,7 @@
 
 use crate::configuration::{OutgoingL2, Stream};
 use anyhow::{anyhow, Context, Result};
+use flagset::{flags, FlagSet};
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::{MapFlags, MapType, XdpFlags};
 use std::mem::size_of;
@@ -43,15 +44,23 @@ use crate::data_plane::DataPlane;
 
 const MAX_REPLICATIONS: u32 = 6;
 
+flags! {
+    enum XdpStreamFlags: u8 {
+        SequenceGeneration = 0x1,
+    }
+}
+
 #[derive(Debug)]
 struct XdpStream {
     handle: u16,
+    flags: FlagSet<XdpStreamFlags>,
 }
 
 impl XdpStream {
     fn to_bytes(&self) -> [u8; 6] {
         let mut result: [u8; 6] = [0; 6];
         result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]); // 2 bytes
+        result[2] = self.flags.bits(); // 1 byte
         result
     }
 
@@ -62,6 +71,7 @@ impl XdpStream {
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
+            flags: FlagSet::new(bytes[2]).map_err(|e| anyhow!("Invalid bit {e}"))?,
         })
     }
 }
@@ -71,14 +81,26 @@ struct XdpStreamBuilder {
 }
 
 impl XdpStreamBuilder {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
-            stream: XdpStream { handle: 0 },
+            stream: XdpStream {
+                handle: 0,
+                flags: FlagSet::default(),
+            },
         }
     }
 
     const fn handle(mut self, handle: u16) -> Self {
         self.stream.handle = handle;
+        self
+    }
+
+    fn sequence_generation(mut self, enable: bool) -> Self {
+        if enable {
+            self.stream.flags |= XdpStreamFlags::SequenceGeneration;
+        } else {
+            self.stream.flags &= !XdpStreamFlags::SequenceGeneration;
+        }
         self
     }
 
@@ -122,13 +144,18 @@ impl DataPlane for BpfDataPlane<'_> {
                     },
                 )?;
 
-                let xdp_stream = XdpStreamBuilder::new().handle(stream_handle).build();
+                let outgoing_l2 = stream_config.outgoing_l2()?;
+
+                let xdp_stream = XdpStreamBuilder::new()
+                    .handle(stream_handle)
+                    .sequence_generation(outgoing_l2.len() > 1)
+                    .build();
 
                 update_stream_maps(
                     skel,
                     u32::from(stream_handle),
                     &xdp_stream,
-                    stream_config.outgoing_l2()?,
+                    outgoing_l2,
                     &mut self.nametoindex,
                     &mut self.create_devmap,
                 )
@@ -225,6 +252,21 @@ fn update_stream_maps(
         &stream_handle.to_ne_bytes(),
         &redirect_interfaces.as_fd().as_raw_fd().to_ne_bytes(),
         MapFlags::ANY,
+    )?;
+
+    let initial_seqgen = vec![
+        0;
+        skel.maps()
+            .seqgen_map()
+            .info()?
+            .info
+            .value_size
+            .try_into()?
+    ];
+    skel.maps_mut().seqgen_map().update(
+        &stream_handle.to_ne_bytes(),
+        &initial_seqgen,
+        MapFlags::NO_EXIST, // keep existing state
     )?;
 
     let xdp_stream_bytes = xdp_stream.to_bytes();
@@ -340,6 +382,12 @@ mod tests {
             map
         });
 
+        maps_mut.expect_seqgen_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_update().returning(|_key, _value, _| Ok(()));
+            map
+        });
+
         maps_mut
     }
 
@@ -357,11 +405,27 @@ mod tests {
             let mut map = Map::default();
             map.expect_info().returning(|| {
                 Ok(MockMapInfo {
-                    info: MockInnerMapInfo { max_entries: 100 },
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
                 })
             });
             map.expect_lookup().returning(|_key, _flags| {
                 Ok(Some(XdpStreamBuilder::new().build().to_bytes().into()))
+            });
+            map
+        });
+
+        maps.expect_seqgen_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_info().returning(|| {
+                Ok(MockMapInfo {
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
+                })
             });
             map
         });
