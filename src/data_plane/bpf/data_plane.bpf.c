@@ -6,11 +6,15 @@
 
 #include "../../bpf/vmlinux.h"
 #include "../../bpf/stream_identification.bpf.h"
+#include "frer.bpf.h"
 
 #define MAX_REPLICATIONS 6
 
+#define SEQUENCE_GENERATION_MASK 0x01
+
 struct stream {
 	u16 handle;
+	u8 flags;
 } __attribute__((__packed__));
 
 // Map of stream identification to stream handles
@@ -67,6 +71,29 @@ int xdp_bridge(struct xdp_md *ctx)
 			bpf_printk("Pass into stack");
 		}
 		return XDP_PASS;
+	}
+
+	/*************************
+	 *  SEQUENCE GENERATION  *
+	 *************************/
+	if (stream->flags & SEQUENCE_GENERATION_MASK) {
+		struct seq_gen *gen =
+			bpf_map_lookup_elem(&seqgen_map, &stream->handle);
+		if (!gen) {
+			if (debug_output) {
+				bpf_printk("Sequence generator not found");
+			}
+			return XDP_DROP;
+		}
+
+		uint16_t seq = genseq(gen);
+		int ret = add_rtag(ctx, &seq);
+		if (ret < 0) {
+			if (debug_output) {
+				bpf_printk("Adding RTAG failed");
+			}
+			return XDP_DROP;
+		}
 	}
 
 	/********************************
