@@ -31,7 +31,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::TsnInterfaceConfig;
+use crate::configuration::Interface;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -54,11 +54,7 @@ pub trait QueueSetup {
     /// Will return `Err` if the configuration could not be applied,
     /// e.g. because the configuration itself is invalid or the system
     /// is in a state that does not allow applying this configuration.
-    async fn apply_config(
-        &self,
-        interface_name: &str,
-        interface_config: &TsnInterfaceConfig,
-    ) -> Result<()>;
+    async fn apply_config(&self, interface_name: &str, interface_config: &Interface) -> Result<()>;
 }
 
 /// A queue setup doing nothing, but still providing the `QueueSetup` trait
@@ -72,7 +68,7 @@ impl QueueSetup for DummyQueueSetup {
     async fn apply_config(
         &self,
         _interface_name: &str,
-        _interface_config: &TsnInterfaceConfig,
+        _interface_config: &Interface,
     ) -> Result<()> {
         Ok(())
     }

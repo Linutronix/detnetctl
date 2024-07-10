@@ -4,14 +4,14 @@
 //
 //! Provides YAML-based network configuration
 
-use crate::configuration::{AppConfig, Configuration, PtpInstanceConfig, TsnInterfaceConfig};
+use crate::configuration::{AppConfig, Configuration, Interface, PtpInstanceConfig};
 use anyhow::{anyhow, Context, Result};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = "=0.4.*";
+const VERSION_REQ: &str = "=0.5.*";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -25,7 +25,7 @@ struct Config {
     version: String,
     apps: Option<AppConfigurations>,
     ptp: Option<PtpConfig>,
-    interfaces: Option<TsnInterfaceConfigs>,
+    interfaces: Option<Interfaces>,
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -37,14 +37,14 @@ struct PtpConfig {
 
 type AppConfigurations = BTreeMap<String, AppConfig>;
 type PtpInstanceConfigurations = BTreeMap<u32, PtpInstanceConfig>;
-type TsnInterfaceConfigs = BTreeMap<String, TsnInterfaceConfig>;
+type Interfaces = BTreeMap<String, Interface>;
 
 impl Configuration for YAMLConfiguration {
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
+    fn get_interfaces(&mut self) -> Result<BTreeMap<String, Interface>> {
         Ok(self.config.interfaces.clone().unwrap_or_default())
     }
 
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
+    fn get_interface(&mut self, interface_name: &str) -> Result<Option<Interface>> {
         Ok(self
             .config
             .interfaces
@@ -123,8 +123,7 @@ mod tests {
     use crate::configuration::{Configuration, StreamIdentification};
     use const_format::concatcp;
     use std::fs::File;
-    use std::net::{IpAddr, Ipv4Addr};
-    const VERSION: &str = "0.4.0";
+    const VERSION: &str = "0.5.0";
 
     #[test]
     fn test_get_app_config_happy() -> Result<()> {
@@ -139,7 +138,6 @@ mod tests {
             "    stream:\n",
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
-            "    addresses: [[192.168.0.3, 16]]\n",
             "    priority: 2\n",
             "  app1:\n",
             "    logical_interface: eth3.1\n",
@@ -147,7 +145,6 @@ mod tests {
             "    stream:\n",
             "      destination_address: AB:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
-            "    addresses: [[192.168.0.7, 32]]\n",
             "    priority: 3\n",
             "interfaces:\n",
             "  eth0:\n",
@@ -164,6 +161,10 @@ mod tests {
             "        - operation: SetGates\n",
             "          time_interval_ns: 20\n",
             "          traffic_classes: [2]\n",
+            "  eth0.1:\n",
+            "    addresses: [[192.168.0.3, 16]]\n",
+            "  eth3.1:\n",
+            "    addresses: [[192.168.0.7, 32]]\n",
         );
 
         let mut config = YAMLConfiguration::default();
@@ -177,6 +178,10 @@ mod tests {
         assert_eq!(
             config.get_app_config("app1")?.unwrap(),
             plain_config.apps.as_ref().unwrap()["app1"]
+        );
+        assert_eq!(
+            config.get_interface("eth0.1")?.unwrap(),
+            plain_config.interfaces.as_ref().unwrap()["eth0.1"]
         );
 
         Ok(())
@@ -230,7 +235,6 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(1),
             }),
-            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)]),
             cgroup: None,
             priority: Some(3),
         };
@@ -242,7 +246,6 @@ mod tests {
                 destination_address: Some("AB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(2),
             }),
-            addresses: Some(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 2)), 32)]),
             cgroup: None,
             priority: None,
         };
