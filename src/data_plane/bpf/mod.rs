@@ -4,7 +4,9 @@
 
 use crate::configuration::{OutgoingL2, Stream, StreamIdentification};
 use anyhow::{anyhow, Context, Result};
+use flagset::{flags, FlagSet};
 use libbpf_rs::libbpf_sys;
+use libbpf_rs::ErrorKind;
 use libbpf_rs::{MapFlags, MapType, XdpFlags};
 use std::fs::remove_file;
 use std::mem::size_of;
@@ -27,7 +29,7 @@ use {
     data_plane_bpf::DataPlaneSkel,
     data_plane_bpf::DataPlaneSkelBuilder,
     libbpf_rs::skel::{OpenSkel, SkelBuilder},
-    libbpf_rs::{MapHandle, Xdp},
+    libbpf_rs::{Map, MapHandle, Xdp},
     std::os::fd::AsFd,
 };
 
@@ -37,7 +39,8 @@ use crate::bpf::mocks as core_mocks;
 mod mocks;
 #[cfg(test)]
 use {
-    core_mocks::MockXdp as Xdp, mocks::MockDataPlaneSkel as DataPlaneSkel,
+    core_mocks::MockMap as Map, core_mocks::MockXdp as Xdp,
+    mocks::MockDataPlaneSkel as DataPlaneSkel,
     mocks::MockDataPlaneSkelBuilder as DataPlaneSkelBuilder, mocks::MockMapHandle as MapHandle,
 };
 
@@ -46,25 +49,34 @@ use crate::data_plane::DataPlane;
 
 const MAX_REPLICATIONS: u32 = 6;
 
+flags! {
+    enum XdpStreamFlags: u8 {
+        SequenceGeneration = 0x1,
+    }
+}
+
 #[derive(Debug)]
 struct XdpStream {
     handle: u16,
+    flags: FlagSet<XdpStreamFlags>,
 }
 
 impl XdpStream {
-    fn to_bytes(&self) -> [u8; 2] {
-        let mut result: [u8; 2] = [0; 2];
+    fn to_bytes(&self) -> [u8; 3] {
+        let mut result: [u8; 3] = [0; 3];
         result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]); // 2 bytes
+        result[2] = self.flags.bits(); // 1 byte
         result
     }
 
-    fn from_bytes(bytes: [u8; 2]) -> Result<Self> {
+    fn from_bytes(bytes: [u8; 3]) -> Result<Self> {
         Ok(Self {
             handle: u16::from_ne_bytes(
                 bytes[0..2]
                     .try_into()
                     .map_err(|_e| anyhow!("Invalid byte number"))?,
             ),
+            flags: FlagSet::new(bytes[2]).map_err(|e| anyhow!("Invalid bit {e}"))?,
         })
     }
 }
@@ -74,14 +86,26 @@ struct XdpStreamBuilder {
 }
 
 impl XdpStreamBuilder {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
-            stream: XdpStream { handle: 0 },
+            stream: XdpStream {
+                handle: 0,
+                flags: FlagSet::default(),
+            },
         }
     }
 
     const fn handle(mut self, handle: u16) -> Self {
         self.stream.handle = handle;
+        self
+    }
+
+    fn sequence_generation(mut self, enable: bool) -> Self {
+        if enable {
+            self.stream.flags |= XdpStreamFlags::SequenceGeneration;
+        } else {
+            self.stream.flags &= !XdpStreamFlags::SequenceGeneration;
+        }
         self
     }
 
@@ -141,14 +165,19 @@ impl DataPlane for BpfDataPlane<'_> {
                 )
                 .context("Failed to find or add stream")?;
 
-                let xdp_stream = XdpStreamBuilder::new().handle(stream_handle).build();
+                let outgoing_l2 = stream_config.outgoing_l2()?;
+
+                let xdp_stream = XdpStreamBuilder::new()
+                    .handle(stream_handle)
+                    .sequence_generation(outgoing_l2.len() > 1)
+                    .build();
 
                 update_stream_maps(
                     skel,
                     stream_handle,
                     stream_identification,
                     &xdp_stream,
-                    stream_config.outgoing_l2()?,
+                    outgoing_l2,
                     &mut self.nametoindex,
                     &mut self.create_devmap,
                 )
@@ -324,6 +353,9 @@ fn update_stream_maps(
         MapFlags::ANY,
     )?;
 
+    add_initial_entry(skel.maps_mut().seqgen_map(), stream_handle)?;
+    add_initial_entry(skel.maps_mut().seqrcvy_map(), stream_handle)?;
+
     let xdp_stream_bytes = xdp_stream.to_bytes();
 
     skel.maps_mut().streams().update(
@@ -331,6 +363,24 @@ fn update_stream_maps(
         &xdp_stream_bytes,
         MapFlags::ANY,
     )?;
+
+    Ok(())
+}
+
+fn add_initial_entry(map: &Map, stream_handle: u16) -> Result<()> {
+    let initial_value = vec![0; map.info()?.info.value_size.try_into()?];
+    map.update(
+        &stream_handle.to_ne_bytes(),
+        &initial_value,
+        MapFlags::NO_EXIST, // keep existing state
+    )
+    .or_else(|err| {
+        if err.kind() == ErrorKind::AlreadyExists {
+            Ok(()) // ignore existing entry to keep state
+        } else {
+            Err(err)
+        }
+    })?;
 
     Ok(())
 }
@@ -437,6 +487,34 @@ mod tests {
             map
         });
 
+        maps_mut.expect_seqgen_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_update().returning(|_key, _value, _| Ok(()));
+            map.expect_info().returning(|| {
+                Ok(MockMapInfo {
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
+                })
+            });
+            map
+        });
+
+        maps_mut.expect_seqrcvy_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_update().returning(|_key, _value, _| Ok(()));
+            map.expect_info().returning(|| {
+                Ok(MockMapInfo {
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
+                })
+            });
+            map
+        });
+
         maps_mut
     }
 
@@ -454,7 +532,10 @@ mod tests {
             let mut map = Map::default();
             map.expect_info().returning(|| {
                 Ok(MockMapInfo {
-                    info: MockInnerMapInfo { max_entries: 100 },
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
                 })
             });
             map.expect_lookup().returning(|_key, _flags| {

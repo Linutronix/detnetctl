@@ -434,7 +434,7 @@ mod tests {
                 if key == [0; 8] {
                     assert_eq!(stream.egress_priority, 0);
                     assert_eq!(stream.shifted_pcp, 0);
-                } else if key == generate_stream_identification(3).to_bytes()? {
+                } else if key == generate_stream_identification(3).to_bytes().unwrap() {
                     assert_eq!(stream.egress_priority, PRIORITY);
                     assert_eq!(stream.shifted_pcp, u16::from(PCP) << 13);
                 } else {
@@ -456,7 +456,8 @@ mod tests {
                     let raw_fd = u32::from_ne_bytes(
                         value
                             .try_into()
-                            .map_err(|_e| anyhow!("Invalid byte number"))?,
+                            .map_err(|_e| anyhow!("Invalid byte number"))
+                            .unwrap(),
                     );
                     let captured_cgroup =
                         Path::new(&format!("/proc/self/fd/{raw_fd}")).read_link()?;
@@ -486,7 +487,10 @@ mod tests {
             let mut map = Map::default();
             map.expect_info().returning(|| {
                 Ok(MockMapInfo {
-                    info: MockInnerMapInfo { max_entries: 100 },
+                    info: MockInnerMapInfo {
+                        max_entries: 100,
+                        value_size: 8,
+                    },
                 })
             });
             map.expect_lookup().times(1).returning(|key, _flags| {

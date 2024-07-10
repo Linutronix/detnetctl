@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #![allow(clippy::pedantic, clippy::nursery, single_use_lifetimes)]
-use anyhow::Result;
 use libbpf_rs::MapFlags;
+use libbpf_rs::Result;
 use libbpf_rs::TcAttachPoint;
 use libbpf_rs::XdpFlags;
 use mockall::mock;
@@ -61,6 +61,7 @@ pub(crate) struct MockMapInfo {
 
 pub(crate) struct MockInnerMapInfo {
     pub(crate) max_entries: u32,
+    pub(crate) value_size: u32,
 }
 
 mock! {
