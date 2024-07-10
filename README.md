@@ -83,7 +83,7 @@ This will only read the configurations from the configuration file, performs a d
 ```console
 Setup of DetNet system
   Fetched from configuration module: {
-    "enp86s0": TsnInterfaceConfig {
+    "enp86s0": Interface {
         schedule: Some(
             Schedule {
                 number_of_traffic_classes: Some(
@@ -181,6 +181,35 @@ Setup of DetNet system
                 ),
             },
         ),
+        addresses: None,
+    },
+    "enp86s0.5": Interface {
+        schedule: None,
+        taprio: None,
+        pcp_encoding: Some(
+            PcpEncodingTable {
+                map: Some(
+                    {
+                        0: 0,
+                        1: 1,
+                        2: 2,
+                        3: 3,
+                        4: 4,
+                        5: 5,
+                        6: 6,
+                        7: 7,
+                    },
+                ),
+            },
+        ),
+        addresses: Some(
+            [
+                (
+                    10.5.1.1,
+                    24,
+                ),
+            ],
+        ),
     },
 } {
     "app0": AppConfig {
@@ -199,14 +228,6 @@ Setup of DetNet system
                     5,
                 ),
             },
-        ),
-        addresses: Some(
-            [
-                (
-                    10.5.1.1,
-                    24,
-                ),
-            ],
         ),
         cgroup: Some(
             "/user.slice/",
@@ -232,13 +253,13 @@ Setup of DetNet system
                 ),
             },
         ),
-        addresses: None,
         cgroup: None,
         priority: Some(
             5,
         ),
     },
 }
+  Added 10.5.1.1/24 to enp86s0.5
   Interface enp86s0 down
   Queues set up
   Dispatcher installed for stream StreamIdentification {
@@ -251,7 +272,6 @@ Setup of DetNet system
 } with priority 7 on enp86s0
   with protection for cgroup "/user.slice/"
   VLAN interface enp86s0.5 properly configured
-  Added 10.5.1.1/24 to enp86s0.5
   Dispatcher installed for stream StreamIdentification {
     destination_address: Some(
         MacAddress("48:21:0b:56:db:da"),
@@ -261,11 +281,10 @@ Setup of DetNet system
     ),
 } with priority 5 on enp86s0
   VLAN interface enp86s0.3 properly configured
-  No IP address configured, since none was provided
   Interface enp86s0 up
   Interface enp86s0.5 up
   Interface enp86s0.3 up
-  Finished after 2.9ms
+  Finished after 883.6µs
 ```
 
 ## D-Bus Interface
@@ -298,7 +317,7 @@ The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, s
 
 Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
 ```yaml
-version: 0.4.0
+version: 0.5.0
 apps:
   app0:
     logical_interface: enp86s0
@@ -331,17 +350,18 @@ Up to now the transmission took place directly via the physical interface. Now, 
 ### Configuration
 Adapt the configuration to include the interface configuration, e.g.
 ```yaml
-version: 0.4.0
+version: 0.5.0:
 apps:
   app0:
     logical_interface: enp86s0.5
     physical_interface: enp86s0
-    addresses: [[10.5.1.1, 24]]
     stream:
       vid: 5
 interfaces:
   enp86s0:
     schedule: null
+  enp86s0.5:
+    addresses: [[10.5.1.1, 24]]
 ```
 
 ### Prepare second computer
@@ -390,18 +410,19 @@ How the cgroups are managed is system-dependent. Today, this is usually the resp
 ### Configuration
 To properly identify the TSN stream in the dispatcher and to set the PCP, we now also need to add the destination MAC address and the PCP to the configuration:
 ```yaml
-version: 0.4.0
+version: 0.5.0
 apps:
   app0:
     logical_interface: enp86s0.5
     physical_interface: enp86s0
-    addresses: [[10.5.1.1, 24]]
     stream:
       vid: 5
       destination_address: 48:21:0b:56:db:da
 interfaces:
   enp86s0:
     schedule: null
+  enp86s0.5:
+    addresses: [[10.5.1.1, 24]]
 ```
 
 ### Build
@@ -577,12 +598,11 @@ interfaces:
 Apart from the priority, the schedule needs to be configured, like
 
 ```yaml
-version: 0.4.0
+version: 0.5.0
 apps:
   app0:
     logical_interface: enp86s0.5
     physical_interface: enp86s0
-    addresses: [[10.5.1.1, 24]]
     stream:
       vid: 5
       destination_address: 48:21:0b:56:db:da
@@ -596,6 +616,8 @@ interfaces:
           traffic_classes: [0]
         - time_interval_ns: 5000
           traffic_classes: [1]
+  enp86s0.5:
+    addresses: [[10.5.1.1, 24]]
 ```
 
 There are several other configuration options:

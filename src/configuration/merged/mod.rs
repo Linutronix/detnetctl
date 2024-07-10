@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::configuration::{
-    AppConfig, Configuration, PtpInstanceConfig, ReplaceNoneOptions, TsnInterfaceConfig,
+    AppConfig, Configuration, Interface, PtpInstanceConfig, ReplaceNoneOptions,
 };
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -46,16 +46,16 @@ where
 }
 
 impl Configuration for MergedConfiguration {
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
+    fn get_interfaces(&mut self) -> Result<BTreeMap<String, Interface>> {
         Ok(merge_maps(
-            self.config.get_interface_configs()?,
-            self.fallback.get_interface_configs()?,
+            self.config.get_interfaces()?,
+            self.fallback.get_interfaces()?,
         ))
     }
 
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
-        let mut merged = self.config.get_interface_config(interface_name)?;
-        merged.replace_none_options(self.fallback.get_interface_config(interface_name)?);
+    fn get_interface(&mut self, interface_name: &str) -> Result<Option<Interface>> {
+        let mut merged = self.config.get_interface(interface_name)?;
+        merged.replace_none_options(self.fallback.get_interface(interface_name)?);
         Ok(merged)
     }
 
@@ -89,15 +89,16 @@ impl Configuration for MergedConfiguration {
 mod tests {
     use super::*;
     use crate::configuration::{
-        Configuration, StreamIdentification, SysrepoConfiguration, YAMLConfiguration,
+        Configuration, InterfaceBuilder, StreamIdentification, SysrepoConfiguration,
+        YAMLConfiguration,
     };
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    const VERSION: &str = "0.4.0";
+    const VERSION: &str = "0.5.0";
 
     #[test]
-    fn test_get_app_config_happy() -> Result<()> {
+    fn test_merged_app_config() -> Result<()> {
         let interface = String::from("enp86s0");
         let vid = 5;
         let expected = AppConfig {
@@ -107,35 +108,14 @@ mod tests {
                 destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                 vid: Some(vid),
             }),
-            addresses: Some(vec![
-                (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
-                (
-                    IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
-                    64,
-                ),
-            ]),
             cgroup: None,
             priority: Some(3),
         };
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
-        let mut sysrepo_config_wo_ip = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-without-ip.json",
-        );
 
         assert_eq!(sysrepo_config.get_app_config("app0")?.unwrap(), expected);
-
-        // expected not to match because addresses are missing
-        assert_ne!(
-            sysrepo_config_wo_ip.get_app_config("app0")?.unwrap(),
-            expected
-        );
-
-        println!(
-            "{:?}",
-            sysrepo_config_wo_ip.get_app_config("app0")?.unwrap()
-        );
 
         let yaml = format!(
             concat!(
@@ -144,19 +124,62 @@ mod tests {
                 "  app0:\n",
                 "    logical_interface: {1}.{2}\n",
                 "    physical_interface: {1}\n",
-                "    addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
             ),
             VERSION, interface, vid
         );
-        println!("{yaml}");
 
         let mut config = YAMLConfiguration::default();
         config.read(yaml.as_bytes())?;
-        println!("{config:?}");
+
+        let mut merged = MergedConfiguration::new(Box::new(sysrepo_config), Box::new(config));
+
+        assert_eq!(merged.get_app_config("app0")?.unwrap(), expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merged_interfaces() -> Result<()> {
+        let interface = String::from("enp86s0.5");
+        let expected = InterfaceBuilder::new()
+            .addresses(vec![
+                (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
+                (
+                    IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
+                    64,
+                ),
+            ])
+            .build();
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-successful.json",
+        );
+        let mut sysrepo_config_wo_ip = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-without-ip.json",
+        );
+
+        assert_eq!(sysrepo_config.get_interface(&interface)?.unwrap(), expected);
+
+        assert_eq!(
+            sysrepo_config_wo_ip.get_interface(&interface)?.unwrap(),
+            InterfaceBuilder::new().build()
+        );
+
+        let yaml = format!(
+            concat!(
+                "version: {0}\n",
+                "interfaces:\n",
+                "  {1}:\n",
+                "    addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
+            ),
+            VERSION, interface
+        );
+
+        let mut config = YAMLConfiguration::default();
+        config.read(yaml.as_bytes())?;
 
         let mut merged = MergedConfiguration::new(Box::new(sysrepo_config_wo_ip), Box::new(config));
 
-        assert_eq!(merged.get_app_config("app0")?.unwrap(), expected);
+        assert_eq!(merged.get_interface(&interface)?.unwrap(), expected);
 
         Ok(())
     }

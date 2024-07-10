@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 
 use crate::configuration::{
     schedule::{GateControlEntry, GateControlEntryBuilder, GateOperation},
-    AppConfig, Configuration, PcpEncodingTable, PcpEncodingTableBuilder, Schedule, ScheduleBuilder,
-    StreamIdentification, TsnInterfaceConfig,
+    AppConfig, Configuration, Interface, PcpEncodingTable, PcpEncodingTableBuilder, Schedule,
+    ScheduleBuilder, StreamIdentification,
 };
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
@@ -41,10 +41,6 @@ struct ForwardingSublayer {
     outgoing_interface: Option<String>,
 }
 
-struct VLANInterface {
-    addresses: Option<Vec<(IpAddr, u8)>>,
-}
-
 #[derive(Default)]
 struct StreamHandling {
     tsn_handle: Option<u32>,
@@ -52,8 +48,30 @@ struct StreamHandling {
     priority: Option<u8>,
 }
 
+fn create_interface_config(interface: &DataNodeRef<'_>) -> Result<Interface> {
+    let mut schedule = None;
+    let mut pcp_encoding = None;
+
+    if let Some(bridge_port) = interface
+        .find_xpath("ieee802-dot1q-bridge:bridge-port")?
+        .next()
+    {
+        schedule = Some(parse_schedule(&bridge_port)?);
+        pcp_encoding = Some(parse_pcp_encoding(&bridge_port)?);
+    }
+
+    let addresses = get_interface_addresses(interface)?;
+
+    Ok(Interface {
+        schedule,
+        taprio: None,
+        pcp_encoding,
+        addresses,
+    })
+}
+
 impl Configuration for SysrepoConfiguration {
-    fn get_interface_configs(&mut self) -> Result<BTreeMap<String, TsnInterfaceConfig>> {
+    fn get_interfaces(&mut self) -> Result<BTreeMap<String, Interface>> {
         let tree = self.reader.get_config("/interfaces")?;
         let interfaces = tree.find_xpath(concat!(
             "/interfaces/interface[",
@@ -65,41 +83,22 @@ impl Configuration for SysrepoConfiguration {
         interfaces
             .into_iter()
             .try_fold(BTreeMap::new(), |mut acc, interface| {
-                if let Some(bridge_port) = interface
-                    .find_xpath("ieee802-dot1q-bridge:bridge-port")?
-                    .next()
-                {
-                    if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
-                        let tsn_interface_config = TsnInterfaceConfig {
-                            schedule: Some(parse_schedule(&bridge_port)?),
-                            taprio: None,
-                            pcp_encoding: Some(parse_pcp_encoding(&bridge_port)?),
-                        };
-                        acc.insert(name, tsn_interface_config);
-                    }
+                if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
+                    acc.insert(name, create_interface_config(&interface)?);
                 }
 
                 Ok(acc)
             })
     }
 
-    fn get_interface_config(&mut self, interface_name: &str) -> Result<Option<TsnInterfaceConfig>> {
+    fn get_interface(&mut self, interface_name: &str) -> Result<Option<Interface>> {
         let tree = self.reader.get_config("/interfaces")?;
         let interfaces = tree.find_xpath("/interfaces/interface")?;
 
         for interface in interfaces {
             if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
                 if name == interface_name {
-                    let bridge_port = &interface
-                        .find_xpath("ieee802-dot1q-bridge:bridge-port")?
-                        .next()
-                        .ok_or_else(|| anyhow!("bridge-port section not found for interface"))?;
-                    let tsn_interface_config = TsnInterfaceConfig {
-                        schedule: Some(parse_schedule(bridge_port)?),
-                        taprio: None,
-                        pcp_encoding: Some(parse_pcp_encoding(bridge_port)?),
-                    };
-                    return Ok(Some(tsn_interface_config));
+                    return Ok(Some(create_interface_config(&interface)?));
                 }
             }
         }
@@ -234,12 +233,6 @@ fn get_app_config_from_app_flow(
         .map(|ofsl| get_forwarding_sublayer(tree, &ofsl))
         .transpose()?
         .flatten();
-    let logical_interface_cfg = app_flow
-        .logical_interface
-        .as_ref()
-        .map(|iface| get_logical_interface(tree, iface))
-        .transpose()?
-        .flatten();
 
     let ilan_interface = forwarding_sublayer.and_then(|fsl| fsl.outgoing_interface);
     let stream_handling = ilan_interface
@@ -259,9 +252,6 @@ fn get_app_config_from_app_flow(
             .as_ref()
             .and_then(|s| s.outgoing_interface.clone()),
         stream: app_flow.stream_id.clone(),
-        addresses: logical_interface_cfg
-            .as_ref()
-            .and_then(|iface| iface.addresses.clone()),
         cgroup: None,
         priority: stream_handling.and_then(|s| s.priority),
     })
@@ -400,45 +390,34 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpIn
     Ok(None)
 }
 
-fn get_logical_interface(tree: &DataTree, interface_name: &str) -> Result<Option<VLANInterface>> {
-    let interfaces = tree.find_xpath("/interfaces/interface")?;
-    for interface in interfaces {
-        if let Some(name) = interface.get_value_for_xpath::<String>("name")? {
-            if name == interface_name {
-                let addresses = interface
-                    .find_xpath("ipv4/address | ipv6/address")
-                    .ok()
-                    .map(|addrs| -> Result<Option<Vec<(IpAddr, u8)>>> {
-                        let collected = addrs
-                            .map(|address| -> Result<(IpAddr, u8)> {
-                                let ip = address
-                                    .get_value_for_xpath::<String>("ip")?
-                                    .map(|addr| addr.parse::<IpAddr>())
-                                    .transpose()?
-                                    .ok_or_else(|| anyhow!("ip missing"))?;
-                                let prefix_length: u8 = address
-                                    .get_value_for_xpath("prefix-length")?
-                                    .ok_or_else(|| anyhow!("ip missing"))?;
+fn get_interface_addresses(interface: &DataNodeRef<'_>) -> Result<Option<Vec<(IpAddr, u8)>>> {
+    Ok(interface
+        .find_xpath("ipv4/address | ipv6/address")
+        .ok()
+        .map(|addrs| -> Result<Option<Vec<(IpAddr, u8)>>> {
+            let collected = addrs
+                .map(|address| -> Result<(IpAddr, u8)> {
+                    let ip = address
+                        .get_value_for_xpath::<String>("ip")?
+                        .map(|addr| addr.parse::<IpAddr>())
+                        .transpose()?
+                        .ok_or_else(|| anyhow!("ip missing"))?;
+                    let prefix_length: u8 = address
+                        .get_value_for_xpath("prefix-length")?
+                        .ok_or_else(|| anyhow!("ip missing"))?;
 
-                                Ok((ip, prefix_length))
-                            })
-                            .collect::<Result<Vec<(IpAddr, u8)>>>()?;
+                    Ok((ip, prefix_length))
+                })
+                .collect::<Result<Vec<(IpAddr, u8)>>>()?;
 
-                        if collected.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(collected))
-                        }
-                    })
-                    .transpose()?
-                    .flatten();
-
-                return Ok(Some(VLANInterface { addresses }));
+            if collected.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(collected))
             }
-        }
-    }
-
-    Ok(None)
+        })
+        .transpose()?
+        .flatten())
 }
 
 fn parse_schedule(tree: &DataNodeRef<'_>) -> Result<Schedule> {
@@ -635,7 +614,7 @@ fn get_stream_handling(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{AppConfig, Configuration, TsnInterfaceConfigBuilder};
+    use crate::configuration::{AppConfig, Configuration, InterfaceBuilder};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use test_log::test;
 
@@ -657,39 +636,6 @@ mod tests {
                     destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
                     vid: Some(vid),
                 }),
-                addresses: Some(vec![
-                    (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
-                    (
-                        IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
-                        64
-                    )
-                ]),
-                cgroup: None,
-                priority: Some(3),
-            }
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_get_app_config_happy_without_ip() -> Result<()> {
-        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
-            "./src/configuration/sysrepo/test-without-ip.json",
-        );
-        let config = sysrepo_config.get_app_config("app0")?;
-
-        let interface = String::from("enp86s0");
-        let vid = 5;
-        assert_eq!(
-            config.unwrap(),
-            AppConfig {
-                logical_interface: Some(format!("{interface}.{vid}")),
-                physical_interface: Some(interface),
-                stream: Some(StreamIdentification {
-                    destination_address: Some("CB:cb:cb:cb:cb:CB".parse()?),
-                    vid: Some(vid),
-                }),
-                addresses: None,
                 cgroup: None,
                 priority: Some(3),
             }
@@ -736,16 +682,16 @@ mod tests {
     }
 
     #[test]
-    fn test_get_interface_config_happy() -> Result<()> {
+    fn test_get_interface_happy() -> Result<()> {
         let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
             "./src/configuration/sysrepo/test-successful.json",
         );
         let interface = String::from("enp86s0");
-        let config = sysrepo_config.get_interface_config(&interface)?;
+        let config = sysrepo_config.get_interface(&interface)?;
 
         assert_eq!(
             config.unwrap(),
-            TsnInterfaceConfigBuilder::new()
+            InterfaceBuilder::new()
                 .schedule(
                     ScheduleBuilder::new()
                         .number_of_traffic_classes(4)
@@ -779,6 +725,32 @@ mod tests {
                 )
                 .build()
         );
+
+        let config_vlan = sysrepo_config.get_interface("enp86s0.5")?;
+        assert_eq!(
+            config_vlan.unwrap(),
+            InterfaceBuilder::new()
+                .addresses(vec![
+                    (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
+                    (
+                        IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
+                        64
+                    )
+                ])
+                .build()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_interface_happy_without_ip() -> Result<()> {
+        let mut sysrepo_config = SysrepoConfiguration::mock_from_file(
+            "./src/configuration/sysrepo/test-without-ip.json",
+        );
+        let config = sysrepo_config.get_interface("enp86s0.5")?;
+
+        assert_eq!(config.unwrap(), InterfaceBuilder::new().build());
         Ok(())
     }
 

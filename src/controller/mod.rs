@@ -42,7 +42,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::configuration::{AppConfig, Configuration, FillDefaults, TsnInterfaceConfig};
+use crate::configuration::{AppConfig, Configuration, FillDefaults, Interface};
 use crate::dispatcher::Dispatcher;
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use crate::queue_setup::QueueSetup;
@@ -95,12 +95,9 @@ impl Controller {
 
 async fn fetch_configurations(
     configuration: Arc<Mutex<dyn Configuration + Send>>,
-) -> Result<(
-    BTreeMap<String, TsnInterfaceConfig>,
-    BTreeMap<String, AppConfig>,
-)> {
+) -> Result<(BTreeMap<String, Interface>, BTreeMap<String, AppConfig>)> {
     let mut config = configuration.lock().await;
-    Ok((config.get_interface_configs()?, config.get_app_configs()?))
+    Ok((config.get_interfaces()?, config.get_app_configs()?))
 }
 
 #[async_trait]
@@ -122,7 +119,9 @@ impl Setup for Controller {
 
         for interface_config in interface_configs.values_mut() {
             interface_config.fill_defaults()?;
-            validate_are_some!(interface_config, schedule, taprio, pcp_encoding)?;
+            if interface_config.schedule_opt().is_some() {
+                validate_are_some!(interface_config, schedule, taprio, pcp_encoding)?;
+            }
         }
 
         for app_config in app_configs.values_mut() {
@@ -138,10 +137,30 @@ impl Setup for Controller {
 
         println!("  Fetched from configuration module: {interface_configs:#?} {app_configs:#?}");
 
-        // Iterate over all physical interfaces
+        // Configure IP addresses
+        {
+            let locked_interface_setup = interface_setup.lock().await;
+            for (interface_name, interface_config) in &interface_configs {
+                if let Some(addresses) = &interface_config.addresses_opt() {
+                    for (ip, prefix_length) in *addresses {
+                        locked_interface_setup
+                            .add_address(*ip, *prefix_length, interface_name)
+                            .await
+                            .context("Adding address to interface failed")?;
+                        println!("  Added {ip}/{prefix_length} to {interface_name}");
+                    }
+                }
+            }
+        }
+
+        // Iterate over all interfaces with schedule configuration
         // By this approach, instead of iterating over the app_configs,
         // we need to setup each interface only once.
         for (interface_name, interface_config) in interface_configs {
+            if interface_config.schedule_opt().is_none() {
+                continue;
+            }
+
             let locked_interface_setup = interface_setup.lock().await;
 
             let app_configs_for_interface = app_configs.iter().try_fold(
@@ -233,23 +252,25 @@ impl Protection for Controller {
 }
 
 async fn setup_before_interface_up(
-    physical_interface: &str,
-    interface_config: &TsnInterfaceConfig,
+    interface: &str,
+    interface_config: &Interface,
     app_configs: &BTreeMap<&String, &AppConfig>,
     queue_setup: Arc<Mutex<dyn QueueSetup + Send>>,
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
-    set_interface_state(physical_interface, LinkState::Down, interface_setup).await?;
+    set_interface_state(interface, LinkState::Down, interface_setup).await?;
 
     // Setup Queue
-    queue_setup
-        .lock()
-        .await
-        .apply_config(physical_interface, interface_config)
-        .await
-        .context("Setting up the queue failed")?;
-    println!("  Queues set up");
+    if interface_config.schedule_is_some() {
+        queue_setup
+            .lock()
+            .await
+            .apply_config(interface, interface_config)
+            .await
+            .with_context(|| format!("Setting up the queue for {interface} failed"))?;
+        println!("  Queues for {interface} set up");
+    }
 
     for app_config in app_configs.values() {
         let logical_interface = app_config.logical_interface()?;
@@ -264,7 +285,7 @@ async fn setup_before_interface_up(
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
             .configure_stream(
-                physical_interface,
+                interface,
                 stream_id,
                 (*priority).into(),
                 Some(
@@ -278,7 +299,7 @@ async fn setup_before_interface_up(
             )
             .context("Installing protection via the dispatcher failed")?;
         println!(
-            "  Dispatcher installed for stream {stream_id:#?} with priority {priority} on {physical_interface}",
+            "  Dispatcher installed for stream {stream_id:#?} with priority {priority} on {interface}",
         );
 
         if let Some(cgroup) = &app_config.cgroup_opt() {
@@ -288,23 +309,10 @@ async fn setup_before_interface_up(
         // Setup logical interface
         if let Some(vid) = stream_id.vid_opt() {
             interface_setup
-                .setup_vlan_interface(physical_interface, logical_interface, *vid)
+                .setup_vlan_interface(interface, logical_interface, *vid)
                 .await
                 .context("Setting up VLAN interface failed")?;
             println!("  VLAN interface {logical_interface} properly configured");
-        }
-
-        // Add address to logical interface
-        if let Some(addresses) = &app_config.addresses_opt() {
-            for (ip, prefix_length) in *addresses {
-                interface_setup
-                    .add_address(*ip, *prefix_length, logical_interface)
-                    .await
-                    .context("Adding address to VLAN interface failed")?;
-                println!("  Added {ip}/{prefix_length} to {logical_interface}");
-            }
-        } else {
-            println!("  No IP address configured, since none was provided");
         }
     }
 
@@ -329,9 +337,9 @@ async fn set_interface_state(
 mod tests {
     use super::*;
     use crate::configuration::{
-        AppConfig, AppConfigBuilder, GateControlEntryBuilder, GateOperation, MockConfiguration,
-        Mode, QueueMapping, ScheduleBuilder, StreamIdentificationBuilder, TaprioConfigBuilder,
-        TsnInterfaceConfigBuilder,
+        AppConfig, AppConfigBuilder, GateControlEntryBuilder, GateOperation, InterfaceBuilder,
+        MockConfiguration, Mode, QueueMapping, ScheduleBuilder, StreamIdentificationBuilder,
+        TaprioConfigBuilder,
     };
     use crate::dispatcher::MockDispatcher;
     use crate::interface_setup::MockInterfaceSetup;
@@ -341,8 +349,8 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
 
-    fn generate_interface_config() -> TsnInterfaceConfig {
-        TsnInterfaceConfigBuilder::new()
+    fn generate_interface_config() -> Interface {
+        InterfaceBuilder::new()
             .schedule(
                 ScheduleBuilder::new()
                     .basetime_ns(10)
@@ -374,6 +382,7 @@ mod tests {
                     ])
                     .build(),
             )
+            .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
             .build()
     }
 
@@ -387,17 +396,9 @@ mod tests {
                     .vid(vid)
                     .build(),
             )
-            .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
             .build();
 
-        validate_are_some!(
-            app_config,
-            logical_interface,
-            physical_interface,
-            stream,
-            addresses
-        )
-        .unwrap();
+        validate_are_some!(app_config, logical_interface, physical_interface, stream,).unwrap();
 
         app_config
     }
@@ -407,16 +408,14 @@ mod tests {
         let interface2 = interface.clone();
         let interface3 = interface.clone();
         configuration
-            .expect_get_interface_config()
+            .expect_get_interface()
             .returning(move |_| Ok(Some(generate_interface_config())));
-        configuration
-            .expect_get_interface_configs()
-            .returning(move || {
-                Ok(BTreeMap::from([(
-                    interface3.clone(),
-                    generate_interface_config(),
-                )]))
-            });
+        configuration.expect_get_interfaces().returning(move || {
+            Ok(BTreeMap::from([(
+                interface3.clone(),
+                generate_interface_config(),
+            )]))
+        });
         configuration
             .expect_get_app_config()
             .returning(move |_| Ok(Some(generate_app_config(interface.clone(), vid))));
@@ -432,10 +431,10 @@ mod tests {
     fn configuration_failing() -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
         configuration
-            .expect_get_interface_config()
+            .expect_get_interface()
             .returning(|_| Err(anyhow!("failed")));
         configuration
-            .expect_get_interface_configs()
+            .expect_get_interfaces()
             .returning(|| Err(anyhow!("failed")));
         configuration
             .expect_get_app_config()
@@ -551,7 +550,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Setting up the queue failed")]
+    #[should_panic(expected = "Setting up the queue for abc failed")]
     async fn test_setup_queue_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_failing()));
@@ -579,7 +578,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Setting interface abc down failed")]
+    #[should_panic(expected = "Adding address to interface failed")]
     async fn test_setup_interface_setup_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));

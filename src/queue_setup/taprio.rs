@@ -11,7 +11,7 @@ use options_struct_derive::validate_are_some;
 use rtnetlink::Error::NetlinkError;
 use std::process::Command;
 
-use crate::configuration::{Mode, Schedule, TaprioConfig, TsnInterfaceConfig};
+use crate::configuration::{Interface, Mode, Schedule, TaprioConfig};
 use crate::interface_setup::NetlinkSetup;
 use crate::queue_setup::QueueSetup;
 
@@ -25,11 +25,7 @@ impl QueueSetup for TaprioSetup {
     /// # Errors
     ///
     /// Will return `Err` if it was not possible to setup the schedule.
-    async fn apply_config(
-        &self,
-        interface_name: &str,
-        interface_config: &TsnInterfaceConfig,
-    ) -> Result<()> {
+    async fn apply_config(&self, interface_name: &str, interface_config: &Interface) -> Result<()> {
         let schedule = interface_config.schedule()?;
         let taprio = interface_config.taprio()?;
         validate_are_some!(
