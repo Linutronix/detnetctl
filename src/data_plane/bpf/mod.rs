@@ -234,8 +234,8 @@ impl DataPlane for BpfDataPlane<'_> {
                 self.skels
                     .with_interface(interface, |skel| {
                         let stream_handle = find_or_add_stream(
-                            skel.maps().streams(),
-                            skel.maps().num_streams(),
+                            skel.maps().detnetctl_data_plane_streams(),
+                            skel.maps().detnetctl_data_plane_num_streams(),
                             stream_identification,
                             |s| {
                                 Ok(XdpStream::from_bytes(
@@ -383,13 +383,13 @@ fn update_stream_maps(
     let initial_seqgen = vec![
         0;
         skel.maps()
-            .seqgen_map()
+            .detnetctl_data_plane_seqgen()
             .info()?
             .info
             .value_size
             .try_into()?
     ];
-    skel.maps_mut().seqgen_map().update(
+    skel.maps_mut().detnetctl_data_plane_seqgen().update(
         &stream_handle.to_ne_bytes(),
         &initial_seqgen,
         MapFlags::NO_EXIST, // keep existing state
@@ -397,7 +397,7 @@ fn update_stream_maps(
 
     let xdp_stream_bytes = xdp_stream.to_bytes();
 
-    skel.maps_mut().streams().update(
+    skel.maps_mut().detnetctl_data_plane_streams().update(
         &stream_handle.to_ne_bytes(),
         &xdp_stream_bytes,
         MapFlags::ANY,
@@ -532,21 +532,25 @@ mod tests {
 
     fn generate_maps_mut() -> DataPlaneMapsMut {
         let mut maps_mut = DataPlaneMapsMut::default();
-        maps_mut.expect_streams().returning(|| {
-            let mut map = Map::default();
-            map.expect_update()
-                .times(1)
-                .returning(|_key, _value, _| Ok(()));
-            map
-        });
+        maps_mut
+            .expect_detnetctl_data_plane_streams()
+            .returning(|| {
+                let mut map = Map::default();
+                map.expect_update()
+                    .times(1)
+                    .returning(|_key, _value, _| Ok(()));
+                map
+            });
 
-        maps_mut.expect_num_streams().returning(|| {
-            let mut map = Map::default();
-            map.expect_update()
-                .times(1)
-                .returning(|_key, _value, _| Ok(()));
-            map
-        });
+        maps_mut
+            .expect_detnetctl_data_plane_num_streams()
+            .returning(|| {
+                let mut map = Map::default();
+                map.expect_update()
+                    .times(1)
+                    .returning(|_key, _value, _| Ok(()));
+                map
+            });
 
         maps_mut.expect_redirect_map().returning(|| {
             let mut map = Map::default();
@@ -554,7 +558,7 @@ mod tests {
             map
         });
 
-        maps_mut.expect_seqgen_map().returning(|| {
+        maps_mut.expect_detnetctl_data_plane_seqgen().returning(|| {
             let mut map = Map::default();
             map.expect_update().returning(|_key, _value, _| Ok(()));
             map
@@ -566,14 +570,15 @@ mod tests {
     fn generate_maps() -> DataPlaneMaps {
         let mut maps = DataPlaneMaps::default();
 
-        maps.expect_num_streams().returning(|| {
-            let mut map = Map::default();
-            map.expect_lookup()
-                .returning(|_key, _value| Ok(Some(vec![1, 0])));
-            map
-        });
+        maps.expect_detnetctl_data_plane_num_streams()
+            .returning(|| {
+                let mut map = Map::default();
+                map.expect_lookup()
+                    .returning(|_key, _value| Ok(Some(vec![1, 0])));
+                map
+            });
 
-        maps.expect_streams().returning(|| {
+        maps.expect_detnetctl_data_plane_streams().returning(|| {
             let mut map = Map::default();
             map.expect_info().returning(|| {
                 Ok(MockMapInfo {
@@ -589,7 +594,7 @@ mod tests {
             map
         });
 
-        maps.expect_seqgen_map().returning(|| {
+        maps.expect_detnetctl_data_plane_seqgen().returning(|| {
             let mut map = Map::default();
             map.expect_info().returning(|| {
                 Ok(MockMapInfo {

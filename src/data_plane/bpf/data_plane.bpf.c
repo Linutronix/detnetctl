@@ -25,7 +25,8 @@ struct {
 	__uint(max_entries, MAX_STREAMS);
 	__type(key, struct null_stream_identification);
 	__type(value, struct stream);
-} streams SEC(".maps");
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} detnetctl_data_plane_streams SEC(".maps");
 
 // Number of streams (including default stream handle 0)
 struct {
@@ -33,7 +34,8 @@ struct {
 	__type(key, u32);
 	__type(value, u16);
 	__uint(max_entries, 1);
-} num_streams SEC(".maps");
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} detnetctl_data_plane_num_streams SEC(".maps");
 
 struct redirect_interfaces {
 	__uint(type, BPF_MAP_TYPE_DEVMAP);
@@ -60,8 +62,9 @@ int xdp_bridge(struct xdp_md *ctx)
 
 	struct null_stream_identification stream_id = {};
 	struct stream *stream = 0;
-	if (stream_identification((struct bpf_map *)&streams, data, data_end, 0,
-				  &stream_id, &stream) < 0) {
+	if (stream_identification(
+		    (struct bpf_map *)&detnetctl_data_plane_streams, data,
+		    data_end, 0, &stream_id, &stream) < 0) {
 		return XDP_DROP;
 	}
 
@@ -75,8 +78,8 @@ int xdp_bridge(struct xdp_md *ctx)
 	 *  SEQUENCE GENERATION  *
 	 *************************/
 	if (stream->flags & SEQUENCE_GENERATION_MASK) {
-		struct seq_gen *gen =
-			bpf_map_lookup_elem(&seqgen_map, &stream->handle);
+		struct seq_gen *gen = bpf_map_lookup_elem(
+			&detnetctl_data_plane_seqgen, &stream->handle);
 		if (!gen) {
 			if (debug_output) {
 				bpf_printk("Sequence generator not found");

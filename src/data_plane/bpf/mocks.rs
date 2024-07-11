@@ -40,18 +40,18 @@ mock! {
 
 mock! {
     pub(crate) DataPlaneMapsMut {
-        pub(crate) fn num_streams(&mut self) -> &mut MockMap;
-        pub(crate) fn streams(&mut self) -> &mut MockMap;
+        pub(crate) fn detnetctl_data_plane_num_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn detnetctl_data_plane_streams(&mut self) -> &mut MockMap;
         pub(crate) fn redirect_map(&mut self) -> &mut MockMap;
-        pub(crate) fn seqgen_map(&mut self) -> &mut MockMap;
+        pub(crate) fn detnetctl_data_plane_seqgen(&mut self) -> &mut MockMap;
     }
 }
 
 mock! {
     pub(crate) DataPlaneMaps {
-        pub(crate) fn num_streams(&mut self) -> &mut MockMap;
-        pub(crate) fn streams(&mut self) -> &mut MockMap;
-        pub(crate) fn seqgen_map(&mut self) -> &mut MockMap;
+        pub(crate) fn detnetctl_data_plane_num_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn detnetctl_data_plane_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn detnetctl_data_plane_seqgen(&mut self) -> &mut MockMap;
     }
 }
 

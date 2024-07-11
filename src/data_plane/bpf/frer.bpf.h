@@ -127,7 +127,8 @@ struct {
 	__uint(max_entries, 8);
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(struct seq_gen));
-} seqgen_map SEC(".maps");
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} detnetctl_data_plane_seqgen SEC(".maps");
 
 // Stream handle ---> Seq recovery
 struct {
@@ -135,7 +136,8 @@ struct {
 	__uint(max_entries, 8);
 	__type(key, u16);
 	__type(value, struct seq_rcvy_and_hist);
-} seqrcvy_map SEC(".maps");
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} detnetctl_data_plane_seqrcvy SEC(".maps");
 
 volatile int packets_seen = 0;
 volatile int dropped = 0;
@@ -164,7 +166,8 @@ end:
 
 static void timer_cb()
 {
-	bpf_for_each_map_elem(&seqrcvy_map, reset_recovery_cb, NULL, 0);
+	bpf_for_each_map_elem(&detnetctl_data_plane_seqrcvy, reset_recovery_cb,
+			      NULL, 0);
 }
 
 static inline ulong bit_range(HST value, int from, int to)
