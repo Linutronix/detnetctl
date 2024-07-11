@@ -12,7 +12,7 @@ jobs:
       - name: Install dependencies
         uses: awalsh128/cache-apt-pkgs-action@v1.4.2
         with:
-          packages: libelf-dev clang libdbus-1-dev protobuf-compiler
+          packages: libelf-dev clang libdbus-1-dev protobuf-compiler gcc-multilib
       - name: Run clippy
         run: |
           # TODO for the moment do not use sysrepo feature, upstream packages are still too old
