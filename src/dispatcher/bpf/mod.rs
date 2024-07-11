@@ -148,7 +148,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         protection: Protection,
     ) -> Result<()> {
         self.skels
-            .with_interface(interface, |skel| {
+            .with_interfaces(&[interface], |skel| {
                 let stream_handle = find_or_add_stream(
                     skel.maps().streams(),
                     skel.maps().num_streams(),
@@ -196,7 +196,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         protection: Protection,
     ) -> Result<()> {
         self.skels
-            .with_interface(interface, |skel| {
+            .with_interfaces(&[interface], |skel| {
                 let stream_id_bytes = stream_identification.to_bytes()?;
 
                 let stream = Stream::from_bytes(
@@ -227,7 +227,7 @@ impl Dispatcher for BPFDispatcher<'_> {
         protection: Protection,
     ) -> Result<()> {
         self.skels
-            .with_interface(interface, |skel| {
+            .with_interfaces(&[interface], |skel| {
                 let stream_id = StreamIdentificationBuilder::new()
                     .destination_address(MacAddress::new([0; 6]))
                     .vid(0)
@@ -263,27 +263,29 @@ impl Default for BPFDispatcher<'_> {
 }
 
 impl<'a> Attacher<DispatcherSkel<'a>> for DispatcherAttacher {
-    fn attach_interface(&mut self, interface: &str) -> Result<DispatcherSkel<'a>> {
+    fn attach_interfaces(&mut self, interfaces: &[&str]) -> Result<DispatcherSkel<'a>> {
         let skel_builder = (self.generate_skel)();
         let mut open_skel = skel_builder.open()?;
         open_skel.rodata_mut().debug_output = self.debug_output;
 
         let mut skel = open_skel.load()?;
 
-        let ifidx = (self.nametoindex)(interface)?;
+        for interface in interfaces {
+            let ifidx = (self.nametoindex)(interface)?;
 
-        let progs = skel.progs();
-        let mut tc_builder = TcHookBuilder::new(progs.tc_egress().as_fd());
-        tc_builder
-            .ifindex(ifidx)
-            .replace(true)
-            .handle(1)
-            .priority(1);
+            let progs = skel.progs();
+            let mut tc_builder = TcHookBuilder::new(progs.tc_egress().as_fd());
+            tc_builder
+                .ifindex(ifidx)
+                .replace(true)
+                .handle(1)
+                .priority(1);
 
-        let mut tc_egress = tc_builder.hook(TC_EGRESS);
+            let mut tc_egress = tc_builder.hook(TC_EGRESS);
 
-        tc_egress.create()?;
-        tc_egress.attach()?;
+            tc_egress.create()?;
+            tc_egress.attach()?;
+        }
 
         // configure default best-effort
         skel.maps_mut()

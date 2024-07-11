@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Linutronix GmbH
 # SPDX-License-Identifier: 0BSD
 
-version: 0.7.0
+version: 0.8.0
 bridged_apps:
   app0:
     vlans: [1]
@@ -9,32 +9,22 @@ bridged_apps:
     netns_app: app0
     virtual_interface_bridge: vethapp0
 streams:
-  stream_out_broadcast:
-    incoming_interface: vethapp0
-    identification:
-      destination_address: ff:ff:ff:ff:ff:ff
-      vid: 1
+  stream_out:
+    incoming_interfaces: [vethapp0]
+    identifications:
+      - destination_address: 02:00:00:00:00:02
+        vid: 1
+      - destination_address: ff:ff:ff:ff:ff:ff
+        vid: 1
     outgoing_l2:
       - outgoing_interface: enp87s0
-  stream_out_unicast:
-    incoming_interface: vethapp0
-    identification:
-      destination_address: 02:00:00:00:00:02
-      vid: 1
-    outgoing_l2:
-      - outgoing_interface: enp87s0
-  stream_in_broadcast:
-    incoming_interface: enp87s0
-    identification:
-      destination_address: ff:ff:ff:ff:ff:ff
-      vid: 1
-    outgoing_l2:
-      - outgoing_interface: vethapp0
-  stream_in_unicast:
-    incoming_interface: enp87s0
-    identification:
-      destination_address: &myapp0mac 02:00:00:00:00:01
-      vid: 1
+  stream_in:
+    incoming_interfaces: [enp87s0]
+    identifications:
+      - destination_address: &myapp0mac 02:00:00:00:00:01
+        vid: 1
+      - destination_address: ff:ff:ff:ff:ff:ff
+        vid: 1
     outgoing_l2:
       - outgoing_interface: vethapp0
 interfaces:

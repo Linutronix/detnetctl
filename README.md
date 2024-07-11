@@ -319,7 +319,7 @@ The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, s
 
 Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
 ```yaml
-version: 0.7.0
+version: 0.8.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0
@@ -352,7 +352,7 @@ Up to now the transmission took place directly via the physical interface. Now, 
 ### Configuration
 Adapt the configuration to include the interface configuration, e.g.
 ```yaml
-version: 0.7.0
+version: 0.8.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0.5
@@ -412,7 +412,7 @@ How the cgroups are managed is system-dependent. Today, this is usually the resp
 ### Configuration
 To properly identify the TSN stream in the dispatcher and to set the PCP, we now also need to add the destination MAC address and the PCP to the configuration:
 ```yaml
-version: 0.7.0
+version: 0.8.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0.5
@@ -600,7 +600,7 @@ interfaces:
 Apart from the priority, the schedule needs to be configured, like
 
 ```yaml
-version: 0.7.0
+version: 0.8.0
 apps:
   app0:
     bind_interface: enp86s0.5

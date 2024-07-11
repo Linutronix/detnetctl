@@ -12,11 +12,11 @@
 //! use std::path::Path;
 //! let mut data_plane = BpfDataPlane::new(false);
 //! let stream_config = StreamBuilder::new()
-//!     .identification(
+//!     .identifications(vec![
 //!       StreamIdentificationBuilder::new()
 //!       .destination_address("CB:CB:CB:CB:CB:CB".parse()?)
 //!       .vid(5)
-//!       .build()
+//!       .build()]
 //!     )
 //!     .outgoing_l2(vec![OutgoingL2Builder::new()
 //!       .outgoing_interface("eth0".to_owned())

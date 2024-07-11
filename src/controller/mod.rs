@@ -161,7 +161,7 @@ async fn fetch_expanded_configuration(
 
     for stream in streams.values_mut() {
         stream.fill_defaults()?;
-        validate_are_some!(stream, incoming_interface, identification, outgoing_l2)?;
+        validate_are_some!(stream, incoming_interfaces, identifications, outgoing_l2)?;
     }
 
     println!("Fetched from configuration module:");
@@ -196,19 +196,20 @@ fn collect_expanded_interfaces(
             for stream in streams.values() {
                 for outgoing_l2 in stream.outgoing_l2()? {
                     if outgoing_l2.outgoing_interface()? == name {
-                        let mut stream_id = StreamIdentificationBuilder::from_struct(
-                            stream.identification()?.clone(),
-                        );
+                        for id in stream.identifications()? {
+                            let mut stream_id =
+                                StreamIdentificationBuilder::from_struct(id.clone());
 
-                        if let Some(destination) = outgoing_l2.destination_opt() {
-                            stream_id = stream_id.destination_address(*destination);
+                            if let Some(destination) = outgoing_l2.destination_opt() {
+                                stream_id = stream_id.destination_address(*destination);
+                            }
+
+                            if let Some(vid) = outgoing_l2.vid_opt() {
+                                stream_id = stream_id.vid(*vid);
+                            }
+
+                            streams_to_protect.push(stream_id.build());
                         }
-
-                        if let Some(vid) = outgoing_l2.vid_opt() {
-                            stream_id = stream_id.vid(*vid);
-                        }
-
-                        streams_to_protect.push(stream_id.build());
                     }
                 }
             }
@@ -324,15 +325,12 @@ impl Setup for Controller {
                 // Disable VLAN offload for all incoming traffic
                 // so XDP can properly process the VLAN tags
                 let locked_interface_setup = interface_setup.lock().await;
-                locked_interface_setup
-                    .set_vlan_offload(
-                        stream.incoming_interface()?,
-                        Some(false),
-                        Some(false),
-                        &None,
-                    )
-                    .await
-                    .context("Disabling VLAN offload failed")?;
+                for interface in stream.incoming_interfaces()? {
+                    locked_interface_setup
+                        .set_vlan_offload(interface, Some(false), Some(false), &None)
+                        .await
+                        .context("Disabling VLAN offload failed")?;
+                }
             }
         }
 
@@ -715,13 +713,11 @@ mod tests {
 
     fn generate_stream_config(interface: String, vid: u16) -> Stream {
         let stream_config = StreamBuilder::new()
-            .incoming_interface(format!("{interface}-br"))
-            .identification(
-                StreamIdentificationBuilder::new()
-                    .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
-                    .vid(vid)
-                    .build(),
-            )
+            .incoming_interfaces(vec![format!("{interface}-br")])
+            .identifications(vec![StreamIdentificationBuilder::new()
+                .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
+                .vid(vid)
+                .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(interface)
                 .build()])
@@ -729,8 +725,8 @@ mod tests {
 
         validate_are_some!(
             stream_config,
-            incoming_interface,
-            identification,
+            incoming_interfaces,
+            identifications,
             outgoing_l2
         )
         .unwrap();
