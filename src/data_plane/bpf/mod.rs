@@ -233,45 +233,50 @@ struct DataPlaneAttacher {
 
 impl DataPlane for BpfDataPlane<'_> {
     fn setup_stream(&mut self, stream_config: &Stream) -> Result<()> {
-        let stream_identification = stream_config.identification()?;
+        let interfaces = stream_config
+            .incoming_interfaces()?
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<&str>>();
+        for stream_identification in stream_config.identifications()? {
+            self.skels
+                .with_interfaces(&interfaces, |skel| {
+                    let stream_handle = find_or_add_stream(
+                        skel.maps().streams(),
+                        skel.maps().num_streams(),
+                        stream_identification,
+                        |s| {
+                            Ok(XdpStream::from_bytes(
+                                s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
+                            )?
+                            .handle)
+                        },
+                    )
+                    .context("Failed to find or add stream")?;
 
-        self.skels
-            .with_interface(stream_config.incoming_interface()?, |skel| {
-                let stream_handle = find_or_add_stream(
-                    skel.maps().streams(),
-                    skel.maps().num_streams(),
-                    stream_identification,
-                    |s| {
-                        Ok(XdpStream::from_bytes(
-                            s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
-                        )?
-                        .handle)
-                    },
-                )
-                .context("Failed to find or add stream")?;
+                    let outgoing_l2 = stream_config.outgoing_l2()?;
 
-                let outgoing_l2 = stream_config.outgoing_l2()?;
+                    let xdp_stream = XdpStreamBuilder::new()
+                        .handle(stream_handle)
+                        .sequence_generation(outgoing_l2.len() > 1)
+                        .build();
 
-                let xdp_stream = XdpStreamBuilder::new()
-                    .handle(stream_handle)
-                    .sequence_generation(outgoing_l2.len() > 1)
-                    .build();
-
-                update_stream_maps(
-                    skel,
-                    stream_handle,
-                    stream_identification,
-                    &xdp_stream,
-                    outgoing_l2,
-                    &mut UpdateStreamCallbacks {
-                        nametoindex: &mut self.nametoindex,
-                        create_devmap: &mut self.create_devmap,
-                        generate_skel_postprocessing: &mut self.generate_skel_postprocessing,
-                    },
-                )
-                .context("Failed to update stream maps")
-            })
-            .context("Failed to configure stream")?;
+                    update_stream_maps(
+                        skel,
+                        stream_handle,
+                        stream_identification,
+                        &xdp_stream,
+                        outgoing_l2,
+                        &mut UpdateStreamCallbacks {
+                            nametoindex: &mut self.nametoindex,
+                            create_devmap: &mut self.create_devmap,
+                            generate_skel_postprocessing: &mut self.generate_skel_postprocessing,
+                        },
+                    )
+                    .context("Failed to update stream maps")
+                })
+                .context("Failed to configure stream")?;
+        }
 
         // Install blank XDP program on outgoing_interface.
         // Otherwise, redirected packets will not be sent out.
@@ -281,11 +286,13 @@ impl DataPlane for BpfDataPlane<'_> {
         // it will be reused and filled with proper stream configurations.
         for outgoing_l2 in stream_config.outgoing_l2()? {
             let outgoing_interface = outgoing_l2.outgoing_interface()?;
-            self.skels
-                .with_interface(outgoing_interface, |_skel| Ok(()))
-                .with_context(|| {
-                    format!("Failed to configure blank XDP on {outgoing_interface}")
-                })?;
+            if !self.skels.xdp_already_attached(outgoing_interface) {
+                self.skels
+                    .with_interfaces(&[outgoing_interface], |_skel| Ok(()))
+                    .with_context(|| {
+                        format!("Failed to configure blank XDP on {outgoing_interface}")
+                    })?;
+            }
         }
 
         Ok(())
@@ -377,9 +384,7 @@ impl Default for BpfDataPlane<'_> {
 }
 
 impl<'a> Attacher<DataPlaneSkel<'a>> for DataPlaneAttacher {
-    fn attach_interface(&mut self, interface: &str) -> Result<DataPlaneSkel<'a>> {
-        let ifidx = (self.nametoindex)(interface)?;
-
+    fn attach_interfaces(&mut self, interfaces: &[&str]) -> Result<DataPlaneSkel<'a>> {
         let skel_builder = (self.generate_skel)();
         let mut open_skel = skel_builder.open()?;
         open_skel.rodata_mut().debug_output = self.debug_output;
@@ -389,7 +394,11 @@ impl<'a> Attacher<DataPlaneSkel<'a>> for DataPlaneAttacher {
         let progs = skel.progs();
 
         let xdp = Xdp::new(progs.xdp_bridge().as_fd());
-        xdp.attach(ifidx, XdpFlags::NONE)?;
+
+        for interface in interfaces {
+            let ifidx = (self.nametoindex)(interface)?;
+            xdp.attach(ifidx, XdpFlags::NONE)?;
+        }
 
         // configure default stream handling
         // the handle 0 is explicitly handled inside the BPF
@@ -778,8 +787,8 @@ mod tests {
         };
 
         let mut stream_config = StreamBuilder::new()
-            .identification(generate_stream_identification(3))
-            .incoming_interface(INCOMING_INTERFACE.to_owned())
+            .identifications(vec![generate_stream_identification(3)])
+            .incoming_interfaces(vec![INCOMING_INTERFACE.to_owned()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(OUTGOING_INTERFACE.to_owned())
                 .source(SOURCE)
@@ -810,8 +819,8 @@ mod tests {
         };
 
         let mut stream_config = StreamBuilder::new()
-            .identification(generate_stream_identification(3))
-            .incoming_interface(INCOMING_INTERFACE.to_owned())
+            .identifications(vec![generate_stream_identification(3)])
+            .incoming_interfaces(vec![INCOMING_INTERFACE.to_owned()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(OUTGOING_INTERFACE.to_owned())
                 .source(SOURCE)

@@ -117,7 +117,7 @@ sudo ./examples/utils/traffic.sh enp86s0 3Gbit
 9. In the next step we use detnetctl to both reduce the latency for our test application as well as ensure a proper time synchronization even with high parallel traffic. For that, we setup a configuration like
 
 ```yaml
-version: 0.7.0
+version: 0.8.0
 apps:
   measurement:
     bind_interface: enp86s0.5

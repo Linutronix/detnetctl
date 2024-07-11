@@ -6,7 +6,7 @@
 use crate::configuration::StreamIdentification;
 use anyhow::{anyhow, Context, Result};
 use libbpf_rs::{set_print, MapFlags, PrintLevel};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(not(test))]
 use libbpf_rs::Map;
@@ -31,17 +31,18 @@ impl StreamIdentification {
 
 /// Defines how a BPF can be attached to an interface
 pub trait Attacher<T> {
-    /// Attach a BPF to the given interface and return the skel
+    /// Attach a BPF to the given interfaces and return the skel
     ///
     /// # Errors
-    /// If attaching the BPF to the interface fails
-    fn attach_interface(&mut self, interface: &str) -> Result<T>;
+    /// If attaching the BPF to the interfaces fails
+    fn attach_interfaces(&mut self, interfaces: &[&str]) -> Result<T>;
 }
 
 /// Manages BPF skels for interfaces
 pub struct SkelManager<T> {
-    skels: HashMap<String, T>,
+    skels: HashMap<Vec<String>, T>,
     attacher: Box<dyn Attacher<T> + Send>,
+    interfaces_with_attachment: HashSet<String>,
 }
 
 impl<T> SkelManager<T> {
@@ -52,33 +53,51 @@ impl<T> SkelManager<T> {
         Self {
             skels: HashMap::default(),
             attacher,
+            interfaces_with_attachment: HashSet::default(),
         }
     }
 
-    /// Call the given method with a BPF skel matching to the given interface
-    /// If no BPF is attached to this interface, attach one first
+    /// Call the given method with a BPF skel matching to the given interfaces
+    /// If no BPF is attached to these interfaces, attach it first
     ///
     /// # Errors
-    /// If no matching skel was found and/or attaching the BPF to the interface failed
-    pub fn with_interface<F>(&mut self, interface: &str, f: F) -> Result<()>
+    /// If no matching skel was found and/or attaching the BPF to an interface failed
+    pub fn with_interfaces<F>(&mut self, interfaces: &[&str], f: F) -> Result<()>
     where
         F: FnOnce(&mut T) -> Result<()>,
     {
-        if let Some(existing_interface) = self.skels.get_mut(interface) {
+        let mut key = interfaces
+            .iter()
+            .map(|x| String::from(*x))
+            .collect::<Vec<String>>();
+        key.sort_unstable(); // order carries no meaning
+
+        if let Some(existing_interface) = self.skels.get_mut(&key) {
             f(existing_interface)
         } else {
             let skel = self
                 .attacher
-                .attach_interface(interface)
-                .context("Failed to attach eBPF to interface")?;
+                .attach_interfaces(interfaces)
+                .context("Failed to attach eBPF to interfaces")?;
 
-            self.skels.insert(String::from(interface), skel);
+            for &interface in interfaces {
+                self.interfaces_with_attachment.insert(interface.to_owned());
+            }
+
+            self.skels.insert(key.clone(), skel);
 
             f(self
                 .skels
-                .get_mut(interface)
+                .get_mut(&key)
                 .ok_or_else(|| anyhow!("Interface missing even after attach"))?)
         }
+    }
+
+    /// Check if this `SkelManager` has already attached an
+    /// XDP to this interface
+    #[must_use]
+    pub fn xdp_already_attached(&self, interface: &str) -> bool {
+        self.interfaces_with_attachment.contains(interface)
     }
 }
 

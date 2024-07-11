@@ -149,6 +149,9 @@ impl FillDefaults for BridgedApp {
 
 /// Contains the configuration for a TSN Stream
 /// If used in DetNet context, this matches a tsn-app-flow
+/// If packets arrive with R-Tag,
+/// frame eleminiation (according to IEEE 802.1CB)
+/// is performed and the R-Tag is removed.
 #[derive(
     Debug,
     PartialEq,
@@ -162,12 +165,11 @@ impl FillDefaults for BridgedApp {
 )]
 #[serde(deny_unknown_fields)]
 pub struct Stream {
-    /// Interface where the traffic is incoming
-    incoming_interface: Option<String>,
+    /// Interfaces where the traffic is incoming
+    incoming_interfaces: Option<Vec<String>>,
 
-    /// TSN stream identification for ingress
-    #[replace_none_options_recursively]
-    identification: Option<StreamIdentification>,
+    /// TSN stream identifications for ingress
+    identifications: Option<Vec<StreamIdentification>>,
 
     /// Directly send over L2 without DetNet handling
     /// If more than one element is in the vector,
@@ -180,7 +182,11 @@ impl FillDefaults for Stream {
     /// Fill unset fields with defaults.
     /// For `identification` and `outgoing_l2`, see the respective structs.
     fn fill_defaults(&mut self) -> Result<()> {
-        fill_struct_defaults!(self, identification, StreamIdentificationBuilder);
+        if let Some(identifications) = &mut self.identifications {
+            for identification in identifications {
+                identification.fill_defaults()?;
+            }
+        }
 
         if let Some(vecl2) = &mut self.outgoing_l2 {
             for l2 in vecl2 {
