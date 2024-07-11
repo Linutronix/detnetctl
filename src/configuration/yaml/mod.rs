@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = "=0.6.*";
+const VERSION_REQ: &str = "=0.7.*";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -156,7 +156,7 @@ mod tests {
     };
     use const_format::concatcp;
     use std::fs::File;
-    const VERSION: &str = "0.6.0";
+    const VERSION: &str = "0.7.0";
 
     #[test]
     fn test_get_unbridged_app_happy() -> Result<()> {
@@ -320,17 +320,17 @@ mod tests {
             "\n",
             "streams:\n",
             "  stream0:\n",
-            "    incoming_interface: eth0.1\n",
-            "    identification:\n",
-            "      destination_address: cb:cb:cb:cb:cb:cb\n",
-            "      vid: 1\n",
+            "    incoming_interfaces: [eth0.1]\n",
+            "    identifications:\n",
+            "      - destination_address: cb:cb:cb:cb:cb:cb\n",
+            "        vid: 1\n",
             "    outgoing_l2:\n",
             "      - outgoing_interface: eth0\n",
             "  stream1:\n",
-            "    incoming_interface: eth3.1\n",
-            "    identification:\n",
-            "      destination_address: AB:cb:cb:cb:cb:cb\n",
-            "      vid: 1\n",
+            "    incoming_interfaces: [eth3.1]\n",
+            "    identifications:\n",
+            "      - destination_address: AB:cb:cb:cb:cb:cb\n",
+            "        vid: 1\n",
             "    outgoing_l2:\n",
             "      - outgoing_interface: eth3\n",
             "interfaces:\n",
@@ -378,7 +378,7 @@ mod tests {
             "\n",
             "streams:\n",
             "  stream0:\n",
-            "    incoming_interface: eth0\n",
+            "    incoming_interfaces: [eth0]\n",
             "    outgoing_l2:\n",
             "      - outgoing_interface: eth0\n"
         );
@@ -402,7 +402,7 @@ mod tests {
             "foo: bar\n",
             "streams:\n",
             "  stream0:\n",
-            "    incoming_interface: eth0\n",
+            "    incoming_interfaces: [eth0]\n",
             "    outgoing_l2:\n",
             "      outgoing_interface: eth0\n"
         );
@@ -414,26 +414,22 @@ mod tests {
     #[test]
     fn test_get_stream_happy_with_serialization() -> Result<()> {
         let stream_0 = StreamBuilder::new()
-            .incoming_interface("eth0.1".to_owned())
-            .identification(
-                StreamIdentificationBuilder::new()
-                    .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
-                    .vid(1)
-                    .build(),
-            )
+            .incoming_interfaces(vec!["eth0.1".to_owned()])
+            .identifications(vec![StreamIdentificationBuilder::new()
+                .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                .vid(1)
+                .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface("eth0".to_owned())
                 .build()])
             .build();
 
         let stream_1 = StreamBuilder::new()
-            .incoming_interface("eth1.2".to_owned())
-            .identification(
-                StreamIdentificationBuilder::new()
-                    .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
-                    .vid(2)
-                    .build(),
-            )
+            .incoming_interfaces(vec!["eth1.2".to_owned()])
+            .identifications(vec![StreamIdentificationBuilder::new()
+                .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                .vid(2)
+                .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface("eth1".to_owned())
                 .build()])

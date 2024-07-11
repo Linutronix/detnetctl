@@ -30,7 +30,7 @@ pub struct SysrepoConfiguration {
 }
 
 struct AppFlow {
-    ingress_interface: Option<String>,
+    ingress_interfaces: Option<Vec<String>>,
     stream_id: Option<StreamIdentification>,
 }
 
@@ -234,8 +234,18 @@ fn parse_app_flow(app_flow: &DataNodeRef<'_>) -> Result<AppFlow> {
         .map(|addr| addr.parse())
         .transpose()?;
 
+    let ingress_interfaces = app_flow
+        .find_xpath("ingress/interface")
+        .ok()
+        .map(|ifaces| -> Result<Vec<String>> {
+            ifaces
+                .filter_map(|iface| iface.get_value_for_xpath(".").transpose())
+                .collect()
+        })
+        .transpose()?;
+
     Ok(AppFlow {
-        ingress_interface: app_flow.get_value_for_xpath("ingress/interface")?,
+        ingress_interfaces,
         stream_id: Some(StreamIdentification {
             destination_address,
             vid: app_flow.get_value_for_xpath("ingress/tsn-app-flow/vlan-id")?,
@@ -268,8 +278,8 @@ fn get_stream_config_from_app_flow(
         .flatten();
 
     Ok(StreamBuilder::new()
-        .incoming_interface_opt(app_flow.ingress_interface.clone())
-        .identification_opt(app_flow.stream_id.clone())
+        .incoming_interfaces_opt(app_flow.ingress_interfaces.clone())
+        .identifications(app_flow.stream_id.clone().map_or(Vec::new(), |v| vec![v]))
         .outgoing_l2(vec![OutgoingL2Builder::new()
             .outgoing_interface_opt(
                 stream_handling
@@ -653,13 +663,11 @@ mod tests {
         assert_eq!(
             config.unwrap(),
             StreamBuilder::new()
-                .incoming_interface(format!("{interface}.{vid}"))
-                .identification(
-                    StreamIdentificationBuilder::new()
-                        .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
-                        .vid(vid)
-                        .build(),
-                )
+                .incoming_interfaces(vec![format!("{interface}.{vid}")])
+                .identifications(vec![StreamIdentificationBuilder::new()
+                    .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                    .vid(vid)
+                    .build()])
                 .outgoing_l2(vec![OutgoingL2Builder::new()
                     .outgoing_interface("enp86s0".to_owned())
                     .build()])
@@ -680,13 +688,11 @@ mod tests {
         assert_eq!(
             config.unwrap(),
             StreamBuilder::new()
-                .incoming_interface(format!("{interface}.{vid}"))
-                .identification(
-                    StreamIdentificationBuilder::new()
-                        .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
-                        .vid(vid)
-                        .build(),
-                )
+                .incoming_interfaces(vec![format!("{interface}.{vid}")])
+                .identifications(vec![StreamIdentificationBuilder::new()
+                    .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                    .vid(vid)
+                    .build()])
                 .outgoing_l2(vec![OutgoingL2Builder::new()
                     .outgoing_interface("enp86s0".to_owned())
                     .build()])

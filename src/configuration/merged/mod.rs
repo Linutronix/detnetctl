@@ -122,20 +122,18 @@ mod tests {
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    const VERSION: &str = "0.6.0";
+    const VERSION: &str = "0.7.0";
 
     #[test]
     fn test_merged_streams() -> Result<()> {
         let interface = String::from("enp86s0");
         let vid = 5;
         let expected = StreamBuilder::new()
-            .incoming_interface(format!("{interface}.{vid}"))
-            .identification(
-                StreamIdentificationBuilder::new()
-                    .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
-                    .vid(vid)
-                    .build(),
-            )
+            .incoming_interfaces(vec![format!("{interface}.{vid}")])
+            .identifications(vec![StreamIdentificationBuilder::new()
+                .destination_address("CB:cb:cb:cb:cb:CB".parse()?)
+                .vid(vid)
+                .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(interface.clone())
                 .build()])
@@ -152,7 +150,7 @@ mod tests {
                 "version: {0}\n",
                 "streams:\n",
                 "  stream0:\n",
-                "    incoming_interface: {1}.{2}\n",
+                "    incoming_interfaces: [{1}.{2}]\n",
                 "    outgoing_l2:\n",
                 "      - outgoing_interface: {1}\n",
             ),

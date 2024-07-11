@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Linutronix GmbH
 # SPDX-License-Identifier: 0BSD
 
-version: 0.6.0
+version: 0.7.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0.5

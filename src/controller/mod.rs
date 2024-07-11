@@ -162,7 +162,7 @@ async fn fetch_expanded_configuration(
 
     for stream in streams.values_mut() {
         stream.fill_defaults()?;
-        validate_are_some!(stream, incoming_interface, identification, outgoing_l2)?;
+        validate_are_some!(stream, incoming_interfaces, identifications, outgoing_l2)?;
     }
 
     println!("Fetched from configuration module:");
@@ -191,19 +191,20 @@ fn collect_expanded_interfaces(
             for stream in streams.values() {
                 for outgoing_l2 in stream.outgoing_l2()? {
                     if outgoing_l2.outgoing_interface()? == name {
-                        let mut stream_id = StreamIdentificationBuilder::from_struct(
-                            stream.identification()?.clone(),
-                        );
+                        for id in stream.identifications()? {
+                            let mut stream_id =
+                                StreamIdentificationBuilder::from_struct(id.clone());
 
-                        if let Some(destination) = outgoing_l2.destination_opt() {
-                            stream_id = stream_id.destination_address(*destination);
+                            if let Some(destination) = outgoing_l2.destination_opt() {
+                                stream_id = stream_id.destination_address(*destination);
+                            }
+
+                            if let Some(vid) = outgoing_l2.vid_opt() {
+                                stream_id = stream_id.vid(*vid);
+                            }
+
+                            streams_to_protect.push(stream_id.build());
                         }
-
-                        if let Some(vid) = outgoing_l2.vid_opt() {
-                            stream_id = stream_id.vid(*vid);
-                        }
-
-                        streams_to_protect.push(stream_id.build());
                     }
                 }
             }
@@ -243,8 +244,11 @@ fn collect_expanded_bridged_apps(
                 stream: streams
                     .values()
                     .map(|stream| -> Result<Option<Stream>> {
-                        Ok((stream.incoming_interface()? == virtual_interface_bridge)
-                            .then_some(stream.clone()))
+                        Ok((stream
+                            .incoming_interfaces()?
+                            .iter()
+                            .any(|x| x == virtual_interface_bridge))
+                        .then_some(stream.clone()))
                     })
                     .find_map(Result::transpose) // get first element not Ok(None)
                     .ok_or_else(|| anyhow!("Flow associated to app {name} not found"))??,
@@ -274,16 +278,18 @@ impl Setup for Controller {
         // Setup all veth pairs for the bridged applications
         for app_config in config.bridged_apps {
             let locked_interface_setup = interface_setup.lock().await;
-            locked_interface_setup
-                .setup_veth_pair_with_vlan(
-                    app_config.app.virtual_interface_app()?,
-                    app_config.app.netns_app()?,
-                    app_config.app.virtual_interface_bridge()?,
-                    app_config.app.bind_interface()?,
-                    *app_config.stream.identification()?.vid()?,
-                )
-                .await
-                .with_context(|| "Setting up veth pair failed")?;
+            for identification in app_config.stream.identifications()? {
+                locked_interface_setup
+                    .setup_veth_pair_with_vlan(
+                        app_config.app.virtual_interface_app()?,
+                        app_config.app.netns_app()?,
+                        app_config.app.virtual_interface_bridge()?,
+                        app_config.app.bind_interface()?,
+                        *identification.vid()?,
+                    )
+                    .await
+                    .with_context(|| "Setting up veth pair failed")?;
+            }
         }
 
         // Install all XDPs for the streams
@@ -597,13 +603,11 @@ mod tests {
 
     fn generate_stream_config(interface: String, vid: u16) -> Stream {
         let stream_config = StreamBuilder::new()
-            .incoming_interface(format!("{interface}-br"))
-            .identification(
-                StreamIdentificationBuilder::new()
-                    .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
-                    .vid(vid)
-                    .build(),
-            )
+            .incoming_interfaces(vec![format!("{interface}-br")])
+            .identifications(vec![StreamIdentificationBuilder::new()
+                .destination_address("8b:de:82:a1:59:5a".parse().unwrap())
+                .vid(vid)
+                .build()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(interface)
                 .build()])
@@ -611,8 +615,8 @@ mod tests {
 
         validate_are_some!(
             stream_config,
-            incoming_interface,
-            identification,
+            incoming_interfaces,
+            identifications,
             outgoing_l2
         )
         .unwrap();

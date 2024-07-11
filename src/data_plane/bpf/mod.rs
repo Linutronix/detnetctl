@@ -229,40 +229,44 @@ struct DataPlaneAttacher {
 
 impl DataPlane for BpfDataPlane<'_> {
     fn setup_stream(&mut self, stream_config: &Stream) -> Result<()> {
-        let stream_identification = stream_config.identification()?;
+        for interface in stream_config.incoming_interfaces()? {
+            for stream_identification in stream_config.identifications()? {
+                self.skels
+                    .with_interface(interface, |skel| {
+                        let stream_handle = find_or_add_stream(
+                            skel.maps().streams(),
+                            skel.maps().num_streams(),
+                            stream_identification,
+                            |s| {
+                                Ok(XdpStream::from_bytes(
+                                    s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
+                                )?
+                                .handle)
+                            },
+                        )?;
 
-        self.skels
-            .with_interface(stream_config.incoming_interface()?, |skel| {
-                let stream_handle = find_or_add_stream(
-                    skel.maps().streams(),
-                    skel.maps().num_streams(),
-                    stream_identification,
-                    |s| {
-                        Ok(XdpStream::from_bytes(
-                            s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
-                        )?
-                        .handle)
-                    },
-                )?;
+                        let outgoing_l2 = stream_config.outgoing_l2()?;
 
-                let outgoing_l2 = stream_config.outgoing_l2()?;
+                        let xdp_stream = XdpStreamBuilder::new()
+                            .handle(stream_handle)
+                            .sequence_generation(outgoing_l2.len() > 1)
+                            .build();
 
-                let xdp_stream = XdpStreamBuilder::new()
-                    .handle(stream_handle)
-                    .sequence_generation(outgoing_l2.len() > 1)
-                    .build();
+                        update_stream_maps(
+                            skel,
+                            u32::from(stream_handle),
+                            &xdp_stream,
+                            outgoing_l2,
+                            &mut self.nametoindex,
+                            &mut self.create_devmap,
+                            &mut self.generate_skel_postprocessing,
+                        )
+                    })
+                    .context("Failed to configure stream")?;
+            }
+        }
 
-                update_stream_maps(
-                    skel,
-                    u32::from(stream_handle),
-                    &xdp_stream,
-                    outgoing_l2,
-                    &mut self.nametoindex,
-                    &mut self.create_devmap,
-                    &mut self.generate_skel_postprocessing,
-                )
-            })
-            .context("Failed to configure stream")
+        Ok(())
     }
 }
 
@@ -678,8 +682,8 @@ mod tests {
         };
 
         let mut stream_config = StreamBuilder::new()
-            .identification(generate_stream_identification(3))
-            .incoming_interface(INCOMING_INTERFACE.to_owned())
+            .identifications(vec![generate_stream_identification(3)])
+            .incoming_interfaces(vec![INCOMING_INTERFACE.to_owned()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(OUTGOING_INTERFACE.to_owned())
                 .source(SOURCE)
@@ -709,8 +713,8 @@ mod tests {
         };
 
         let mut stream_config = StreamBuilder::new()
-            .identification(generate_stream_identification(3))
-            .incoming_interface(INCOMING_INTERFACE.to_owned())
+            .identifications(vec![generate_stream_identification(3)])
+            .incoming_interfaces(vec![INCOMING_INTERFACE.to_owned()])
             .outgoing_l2(vec![OutgoingL2Builder::new()
                 .outgoing_interface(OUTGOING_INTERFACE.to_owned())
                 .source(SOURCE)
