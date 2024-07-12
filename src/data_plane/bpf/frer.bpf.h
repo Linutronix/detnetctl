@@ -29,6 +29,8 @@
 
 #include <stdbool.h>
 
+#define ETH_P_RTAG 0xF1C1
+
 // HST = history window, sequence number, take any
 // 0th-46th bit means the history window
 // 47th-62nd bit means the sequence number
@@ -280,7 +282,7 @@ static inline int add_rtag(struct xdp_md *pkt, ushort *seq)
 	// Prepare the R-tag
 	__builtin_memset(rtag, 0, rtaghdr_sz);
 	rtag->nexthdr = vhdr->h_vlan_encapsulated_proto;
-	vhdr->h_vlan_encapsulated_proto = bpf_htons(0xf1c1);
+	vhdr->h_vlan_encapsulated_proto = bpf_htons(ETH_P_RTAG);
 	rtag->seq = bpf_htons(*seq);
 
 	return 0;
