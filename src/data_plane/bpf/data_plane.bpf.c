@@ -75,6 +75,45 @@ int xdp_bridge(struct xdp_md *ctx)
 	}
 
 	/*************************
+	 *   SEQUENCE RECOVERY   *
+	 *************************/
+	struct vlan_ethhdr *eth = data;
+	u16 vlan_proto = bpf_ntohs(eth->h_vlan_proto);
+	u16 vlan_encaps_proto = bpf_ntohs(eth->h_vlan_proto);
+	if ((vlan_proto == ETH_P_8021Q || vlan_proto == ETH_P_8021AD) &&
+	    vlan_encaps_proto == ETH_P_RTAG) {
+		struct seq_rcvy_and_hist *rec = bpf_map_lookup_elem(
+			&detnetctl_data_plane_seqrcvy, &stream->handle);
+		if (!rec) {
+			if (debug_output) {
+				bpf_printk("Sequence generator not found");
+			}
+			return XDP_DROP;
+		}
+
+		ushort seq;
+		int ret = rm_rtag(ctx, &seq);
+		if (ret < 0) {
+			if (debug_output) {
+				bpf_printk("Failed to remove R-TAG");
+			}
+			return XDP_DROP;
+		}
+
+		bpf_spin_lock(&(rec->lock));
+		bool pass = recover(rec, seq);
+		bpf_spin_unlock(&(rec->lock));
+		if (!pass) {
+			if (debug_output) {
+				bpf_printk("Dropped as intended due to FRER");
+			}
+			return XDP_DROP;
+		}
+
+		rec->last_packet_ns = bpf_ktime_get_ns();
+	}
+
+	/*************************
 	 *  SEQUENCE GENERATION  *
 	 *************************/
 	if (stream->flags & SEQUENCE_GENERATION_MASK) {
