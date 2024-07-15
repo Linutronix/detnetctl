@@ -77,6 +77,10 @@ int xdp_bridge(struct xdp_md *ctx)
 	/*************************
 	 *   SEQUENCE RECOVERY   *
 	 *************************/
+	// reset history window if needed
+	u64 now = bpf_ktime_get_coarse_ns();
+	sequence_recovery_timer_cb(&now);
+
 	struct vlan_ethhdr *eth = data;
 	u16 vlan_proto = bpf_ntohs(eth->h_vlan_proto);
 	u16 vlan_encaps_proto = bpf_ntohs(eth->h_vlan_encapsulated_proto);
@@ -110,7 +114,7 @@ int xdp_bridge(struct xdp_md *ctx)
 			return XDP_DROP;
 		}
 
-		rec->last_packet_ns = bpf_ktime_get_ns();
+		rec->last_packet_ns = now;
 	}
 
 	/*************************
