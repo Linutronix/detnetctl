@@ -45,7 +45,7 @@
 //! ```
 
 use crate::configuration::{
-    BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification,
+    BridgedApp, Configuration, FillDefaults, Interface, OutgoingL2, Stream, StreamIdentification,
     StreamIdentificationBuilder, UnbridgedApp,
 };
 use crate::data_plane::DataPlane;
@@ -115,10 +115,15 @@ struct ExpandedInterface {
     network_namespace: Option<String>,
 }
 
+struct ExpandedStream {
+    stream: Stream,
+    queues: BTreeMap<(String, u8), u16>, // egress queues calculated from priority of each outgoing_l2
+}
+
 struct ExpandedConfiguration {
     interfaces: BTreeMap<String, ExpandedInterface>,
     bridged_apps: BTreeMap<String, BridgedApp>,
-    streams: Vec<Stream>,
+    streams: Vec<ExpandedStream>,
 }
 
 async fn fetch_expanded_configuration(
@@ -178,7 +183,7 @@ async fn fetch_expanded_configuration(
             &streams,
         )?,
         bridged_apps,
-        streams: streams.into_values().collect(),
+        streams: collect_expanded_streams(&streams, &interfaces)?,
     })
 }
 
@@ -256,6 +261,60 @@ fn collect_expanded_interfaces(
         .collect()
 }
 
+fn queue_from_outgoing_l2(
+    outgoing_l2: &OutgoingL2,
+    interfaces: &BTreeMap<String, Interface>,
+) -> Result<Option<((String, u8), u16)>> {
+    let interface_name = outgoing_l2.outgoing_interface()?;
+    let Some(interface) = interfaces.get(interface_name) else {
+        return Ok(None);
+    };
+
+    let Some(priority) = outgoing_l2.priority_opt() else {
+        return Ok(None);
+    };
+
+    let Some(prio_to_tc) = interface.schedule_opt().and_then(|s| s.priority_map_opt()) else {
+        return Ok(None);
+    };
+
+    let Some(tc_to_queue) = interface.taprio_opt().and_then(|t| t.queues_opt()) else {
+        return Ok(None);
+    };
+
+    let tc = prio_to_tc
+        .get(priority)
+        .ok_or_else(|| anyhow!("Priority not found in priority_map"))?;
+    let queue_mapping = tc_to_queue
+        .get(usize::from(*tc))
+        .ok_or_else(|| anyhow!("TC not found in queue mapping"))?;
+
+    // select just the first queue for this tc for now
+    let queue = queue_mapping.offset;
+
+    Ok(Some(((interface_name.clone(), *priority), queue)))
+}
+
+fn collect_expanded_streams(
+    streams: &BTreeMap<String, Stream>,
+    interfaces: &BTreeMap<String, Interface>,
+) -> Result<Vec<ExpandedStream>> {
+    streams
+        .values()
+        .map(|stream| -> Result<ExpandedStream> {
+            Ok(ExpandedStream {
+                stream: stream.clone(),
+                queues: stream
+                    .outgoing_l2()?
+                    .iter()
+                    .map(|outgoing_l2| queue_from_outgoing_l2(outgoing_l2, interfaces))
+                    .filter_map(Result::transpose)
+                    .collect::<Result<BTreeMap<(String, u8), u16>>>()?,
+            })
+        })
+        .collect()
+}
+
 #[async_trait]
 impl Setup for Controller {
     async fn setup(
@@ -319,13 +378,13 @@ impl Setup for Controller {
             let mut locked_data_plane = data_plane.lock().await;
             for stream in &config.streams {
                 locked_data_plane
-                    .setup_stream(stream)
+                    .setup_stream(&stream.stream, &stream.queues)
                     .context("Installing stream via XDP failed")?;
 
                 // Disable VLAN offload for all incoming traffic
                 // so XDP can properly process the VLAN tags
                 let locked_interface_setup = interface_setup.lock().await;
-                for interface in stream.incoming_interfaces()? {
+                for interface in stream.stream.incoming_interfaces()? {
                     locked_interface_setup
                         .set_vlan_offload(interface, Some(false), Some(false), &None)
                         .await
@@ -825,7 +884,7 @@ mod tests {
 
     fn data_plane_happy() -> MockDataPlane {
         let mut data_plane = MockDataPlane::new();
-        data_plane.expect_setup_stream().returning(|_| Ok(()));
+        data_plane.expect_setup_stream().returning(|_, _| Ok(()));
         data_plane.expect_load_xdp_pass().returning(|_| Ok(()));
         data_plane.expect_pin_xdp_pass().returning(|_| Ok(()));
         data_plane
@@ -835,7 +894,7 @@ mod tests {
         let mut data_plane = MockDataPlane::new();
         data_plane
             .expect_setup_stream()
-            .returning(|_| Err(anyhow!("failed")));
+            .returning(|_, _| Err(anyhow!("failed")));
         data_plane
             .expect_load_xdp_pass()
             .returning(|_| Err(anyhow!("failed")));

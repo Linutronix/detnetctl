@@ -131,6 +131,8 @@ pub(crate) mod postprocessing_rodata_types {
         pub(crate) overwrite_vlan_proto_and_tci: bool,
         pub(crate) overwrite_ether_type: bool,
         pub(crate) target_outer_hdr: vlan_ethhdr,
+        pub(crate) fixed_egress_cpu: bool,
+        pub(crate) outgoing_cpu: u32,
     }
 }
 
@@ -162,6 +164,7 @@ mock! {
 mock! {
     #[allow(clippy::empty_structs_with_brackets)]
     pub(crate) PostprocessingMapsMut {
+        pub(crate) fn cpu_map(&mut self) -> &mut MockMap;
     }
 }
 
