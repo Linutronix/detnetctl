@@ -77,6 +77,8 @@ int xdp_bridge(struct xdp_md *ctx)
 	/*************************
 	 *   SEQUENCE RECOVERY   *
 	 *************************/
+	sequence_recovery_timer_cb(); // reset history window if needed
+
 	struct vlan_ethhdr *eth = data;
 	u16 vlan_proto = bpf_ntohs(eth->h_vlan_proto);
 	u16 vlan_encaps_proto = bpf_ntohs(eth->h_vlan_proto);
