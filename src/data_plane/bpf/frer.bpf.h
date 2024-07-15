@@ -149,7 +149,7 @@ static inline long reset_recovery_cb(struct bpf_map *map, const void *key,
 	if (rec && ((rec->hist_recvseq_takeany >> TAKE_ANY) & 1LU) == true)
 		goto end;
 
-	if (bpf_ktime_get_ns() - rec->last_packet_ns < FRER_RCVY_TIMEOUT_NS)
+	if ((*(u64 *)ctx) - rec->last_packet_ns < FRER_RCVY_TIMEOUT_NS)
 		goto end;
 
 	// Reset history window
@@ -163,9 +163,9 @@ end:
 	return 0;
 }
 
-static void timer_cb()
+static void sequence_recovery_timer_cb(u64 *now)
 {
-	bpf_for_each_map_elem(&seqrcvy_map, reset_recovery_cb, NULL, 0);
+	bpf_for_each_map_elem(&seqrcvy_map, reset_recovery_cb, now, 0);
 }
 
 static inline ulong bit_range(HST value, int from, int to)
@@ -311,13 +311,6 @@ static inline int rm_rtag(struct xdp_md *pkt, ushort *seq)
 		return -1;
 
 	return 0;
-}
-
-SEC("xdp")
-int check_reset(void)
-{
-	timer_cb();
-	return 1;
 }
 
 char LICENSE[] SEC("license") = "GPL";
