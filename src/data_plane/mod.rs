@@ -10,6 +10,7 @@
 //!                                OutgoingL2Builder};
 //! use detnetctl::data_plane::{DataPlane, BpfDataPlane};
 //! use std::path::Path;
+//! use std::collections::BTreeMap;
 //! let mut data_plane = BpfDataPlane::new(false);
 //! let stream_config = StreamBuilder::new()
 //!     .identifications(vec![
@@ -23,12 +24,15 @@
 //!       .build()])
 //!       .build();
 //!
-//! data_plane.setup_stream(&stream_config)?;
+//! data_plane.setup_stream(&stream_config,
+//!            &BTreeMap::from([(("eth0".to_owned(), 1), 3)]))?;
+//!
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
 use crate::configuration::Stream;
 use anyhow::Result;
+use std::collections::BTreeMap;
 
 #[cfg(test)]
 use mockall::automock;
@@ -43,7 +47,11 @@ pub trait DataPlane {
     /// Will return `Err` if it was not possible to install a data plane,
     /// e.g. if the interface does not exist or there was a conflict
     /// creating the eBPF hook.
-    fn setup_stream(&mut self, stream_config: &Stream) -> Result<()>;
+    fn setup_stream(
+        &mut self,
+        stream_config: &Stream,
+        queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()>;
 }
 
 #[cfg(feature = "bpf")]
@@ -57,7 +65,11 @@ pub use bpf::BpfDataPlane;
 pub struct DummyDataPlane;
 
 impl DataPlane for DummyDataPlane {
-    fn setup_stream(&mut self, _stream_config: &Stream) -> Result<()> {
+    fn setup_stream(
+        &mut self,
+        _stream_config: &Stream,
+        _queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()> {
         Ok(())
     }
 }

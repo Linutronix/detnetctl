@@ -18,10 +18,22 @@ volatile const bool overwrite_dest_addr = false;
 volatile const bool overwrite_source_addr = false;
 volatile const bool overwrite_vlan_proto_and_tci = false;
 volatile const bool overwrite_ether_type = false;
+volatile const bool fixed_egress_cpu = false;
+volatile const u32 outgoing_cpu = 0;
+
+struct {
+	__uint(type, BPF_MAP_TYPE_CPUMAP);
+	__type(key, __u32);
+	__type(value, struct bpf_cpumap_val);
+	__uint(max_entries, 12);
+} cpu_map SEC(".maps");
 
 SEC("xdp/devmap")
 int xdp_bridge_postprocessing(struct xdp_md *ctx)
 {
+	/*********************
+	 *   SET L2 HEADER   *
+	 *********************/
 	void *data_end = (void *)(long)ctx->data_end;
 	void *data = (void *)(long)ctx->data;
 	struct vlan_ethhdr *outer_vlan_eth = data;
@@ -85,7 +97,36 @@ int xdp_bridge_postprocessing(struct xdp_md *ctx)
 				 sizeof(outer_vlan_eth->h_source));
 	}
 
-	return XDP_PASS;
+	/*********************
+	 *   QUEUE MAPPING   *
+	 *********************/
+	/* There is currently no way to specify the egress queue for packets
+	 * processed by XDP and even if it were, that would be prone to CPUs
+	 * fighting for access to queues
+	 * (see https://lore.kernel.org/xdp-newbies/c8072891-6d5c-42c3-8b13-e8ca9ab6c43c@linutronix.de/T/#u )
+	 * However, most network card drivers, in particular the igc driver
+	 * for Intels i225/i226 use a mapping of CPU to queue
+	 * (see https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/net/ethernet/intel/igc/igc_main.c?h=v6.8-rc4#n2453 )
+	 * Therefore, for the moment, going over to the associated CPU will
+	 * feed the packet into the correct queue, until there is a better
+	 * way to configure this in the kernel.
+	 */
+	if (!fixed_egress_cpu) {
+		// We don't care about the CPU, just pass
+		return XDP_PASS;
+	}
+
+	u32 cpu = bpf_get_smp_processor_id();
+	if (cpu == outgoing_cpu) {
+		// We are already on the correct CPU, just pass
+		return XDP_PASS;
+	}
+
+	// We are not on the correct CPU, go over CPUMAP.
+	// Since this is a per-stream loaded XDP, the
+	// first entry in the CPUMAP is always configured
+	// for the correct queue.
+	return bpf_redirect_map(&cpu_map, 0, 0);
 }
 
 char __license[] SEC("license") = "GPL";

@@ -9,6 +9,8 @@ use eui48::MacAddress;
 use flagset::{flags, FlagSet};
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::{MapFlags, MapType, XdpFlags};
+use std::cmp::max;
+use std::collections::BTreeMap;
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, RawFd};
 
@@ -64,6 +66,7 @@ use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
 use crate::data_plane::DataPlane;
 
 const MAX_REPLICATIONS: u32 = 6;
+const CPUMAP_QUEUE_SIZE: u32 = 4096;
 
 flags! {
     enum XdpStreamFlags: u8 {
@@ -208,6 +211,20 @@ impl BpfDevmapVal {
     }
 }
 
+struct BpfCpumapVal {
+    qsize: u32,
+    bpf_prog: RawFd,
+}
+
+impl BpfCpumapVal {
+    fn to_bytes(&self) -> [u8; 8] {
+        let mut result: [u8; 8] = [0; 8];
+        result[0..4].copy_from_slice(&self.qsize.to_ne_bytes()[..]); // 4 bytes
+        result[4..8].copy_from_slice(&self.bpf_prog.to_ne_bytes()[..]); // 4 bytes
+        result
+    }
+}
+
 type GenerateSkelCallback = Box<dyn FnMut() -> DataPlaneSkelBuilder + Send>;
 type GenerateSkelPostprocessingCallback = Box<dyn FnMut() -> PostprocessingSkelBuilder + Send>;
 type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
@@ -228,7 +245,11 @@ struct DataPlaneAttacher {
 }
 
 impl DataPlane for BpfDataPlane<'_> {
-    fn setup_stream(&mut self, stream_config: &Stream) -> Result<()> {
+    fn setup_stream(
+        &mut self,
+        stream_config: &Stream,
+        queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()> {
         for interface in stream_config.incoming_interfaces()? {
             for stream_identification in stream_config.identifications()? {
                 self.skels
@@ -257,9 +278,13 @@ impl DataPlane for BpfDataPlane<'_> {
                             u32::from(stream_handle),
                             &xdp_stream,
                             outgoing_l2,
-                            &mut self.nametoindex,
-                            &mut self.create_devmap,
-                            &mut self.generate_skel_postprocessing,
+                            queues,
+                            &mut UpdateStreamCallbacks {
+                                nametoindex: &mut self.nametoindex,
+                                create_devmap: &mut self.create_devmap,
+                                generate_skel_postprocessing: &mut self
+                                    .generate_skel_postprocessing,
+                            },
                         )
                     })
                     .context("Failed to configure stream")?;
@@ -340,30 +365,61 @@ impl<'a> Attacher<DataPlaneSkel<'a>> for DataPlaneAttacher {
     }
 }
 
+struct UpdateStreamCallbacks<'a> {
+    nametoindex: &'a mut NameToIndexCallback,
+    create_devmap: &'a mut CreateDevmapCallback,
+    generate_skel_postprocessing: &'a mut GenerateSkelPostprocessingCallback,
+}
+
 fn update_stream_maps(
     skel: &mut DataPlaneSkel<'_>,
     stream_handle: u32,
     xdp_stream: &XdpStream,
     outgoing_l2: &[OutgoingL2],
-    nametoindex: &mut NameToIndexCallback,
-    create_devmap: &mut CreateDevmapCallback,
-    generate_skel_postprocessing: &mut GenerateSkelPostprocessingCallback,
+    queues: &BTreeMap<(String, u8), u16>,
+    callbacks: &mut UpdateStreamCallbacks<'_>,
 ) -> Result<()> {
-    let redirect_interfaces = create_devmap()?;
+    let redirect_interfaces = (callbacks.create_devmap)()?;
 
     for (i, l2) in outgoing_l2.iter().enumerate() {
         // Load dedicated postprocessing BPF
-        let skel_builder = (generate_skel_postprocessing)();
+        let skel_builder = (callbacks.generate_skel_postprocessing)();
         let mut open_skel = skel_builder.open()?;
         open_skel.rodata_mut().debug_output = skel.rodata().debug_output;
 
         assemble_target_ethernet_header(&mut open_skel, l2)?;
 
-        // Update map
-        let postprocessing_skel = open_skel.load()?;
+        // Configure egress CPU for queue mapping
+        // For the moment assume a 1:1 mapping from
+        // queue to cpu as it is the case for the igc driver
+        // as long as at least 4 CPUs are available
+        // (see postprocessing.bpf.c for background)
+        let mut max_cpu = 0;
+        if let Some(cpu) = queues.get(&(l2.outgoing_interface()?.to_owned(), *l2.priority()?)) {
+            max_cpu = max(max_cpu, *cpu);
+            open_skel.rodata_mut().fixed_egress_cpu = true;
+            open_skel.rodata_mut().outgoing_cpu = (*cpu).into();
+        }
 
+        let mut postprocessing_skel = open_skel.load()?;
+
+        // Initialize CPUMAP
+        for cpu in 0..max_cpu {
+            let cpumap_val = BpfCpumapVal {
+                qsize: CPUMAP_QUEUE_SIZE,
+                bpf_prog: 0,
+            };
+
+            postprocessing_skel.maps_mut().cpu_map().update(
+                &cpu.to_ne_bytes(),
+                &cpumap_val.to_bytes(),
+                MapFlags::ANY,
+            )?;
+        }
+
+        // Update map
         let devmap_val = BpfDevmapVal {
-            ifindex: (nametoindex)(l2.outgoing_interface()?)?.try_into()?,
+            ifindex: (callbacks.nametoindex)(l2.outgoing_interface()?)?.try_into()?,
             bpf_prog: postprocessing_skel
                 .progs()
                 .xdp_bridge_postprocessing()
@@ -461,6 +517,7 @@ mod tests {
     use mocks::MockMapHandle as MapHandle;
     use mocks::MockOpenDataPlaneSkel as OpenDataPlaneSkel;
     use mocks::MockOpenPostprocessingSkel as OpenPostprocessingSkel;
+    use mocks::MockPostprocessingMapsMut as PostprocessingMapsMut;
     use mocks::MockPostprocessingProgs as PostprocessingProgs;
     use mocks::MockPostprocessingSkel as PostprocessingSkel;
     use std::os::fd::BorrowedFd;
@@ -645,6 +702,8 @@ mod tests {
                 overwrite_vlan_proto_and_tci: false,
                 overwrite_ether_type: false,
                 target_outer_hdr: vlan_ethhdr::default(),
+                fixed_egress_cpu: false,
+                outgoing_cpu: 0,
             });
         open_skel
     }
@@ -652,6 +711,8 @@ mod tests {
     fn generate_postprocessing_skel<'a>() -> PostprocessingSkel<'a> {
         let mut skel = PostprocessingSkel::default();
         skel.expect_progs().returning(generate_postprocessing_progs);
+        skel.expect_maps_mut()
+            .returning(generate_postprocessing_maps_mut);
         skel
     }
 
@@ -661,6 +722,18 @@ mod tests {
             .expect_xdp_bridge_postprocessing()
             .returning(generate_postprocessing_program);
         progs
+    }
+
+    fn generate_postprocessing_maps_mut() -> PostprocessingMapsMut {
+        let mut maps_mut = PostprocessingMapsMut::default();
+        maps_mut.expect_cpu_map().returning(|| {
+            let mut map = Map::default();
+            map.expect_update()
+                .times(1)
+                .returning(|_key, _value, _| Ok(()));
+            map
+        });
+        maps_mut
     }
 
     fn generate_postprocessing_program() -> Program {
@@ -701,7 +774,10 @@ mod tests {
 
         stream_config.fill_defaults()?;
 
-        data_plane.setup_stream(&stream_config)?;
+        data_plane.setup_stream(
+            &stream_config,
+            &BTreeMap::from([((OUTGOING_INTERFACE.to_owned(), PRIORITY), 3)]),
+        )?;
         Ok(())
     }
 
@@ -733,6 +809,11 @@ mod tests {
 
         stream_config.fill_defaults().unwrap();
 
-        data_plane.setup_stream(&stream_config).unwrap();
+        data_plane
+            .setup_stream(
+                &stream_config,
+                &BTreeMap::from([((OUTGOING_INTERFACE.to_owned(), PRIORITY), 3)]),
+            )
+            .unwrap();
     }
 }
