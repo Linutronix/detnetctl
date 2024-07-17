@@ -30,6 +30,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use crate::configuration::detnet::Flow;
 use crate::configuration::Stream;
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -41,7 +42,7 @@ use mockall::automock;
 /// Defines how to request interference protection
 #[cfg_attr(test, automock)]
 pub trait DataPlane {
-    /// Setup the stream according to the provided configuration.
+    /// Setup the TSN stream according to the provided configuration.
     ///
     /// # Errors
     ///
@@ -51,6 +52,19 @@ pub trait DataPlane {
     fn setup_stream(
         &mut self,
         stream_config: &Stream,
+        queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()>;
+
+    /// Setup the DetNet flow according to the provided configuration.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to install a data plane,
+    /// e.g. if the interface does not exist or there was a conflict
+    /// creating the eBPF hook.
+    fn setup_flow(
+        &mut self,
+        flow_config: &Flow,
         queues: &BTreeMap<(String, u8), u16>,
     ) -> Result<()>;
 
@@ -90,6 +104,14 @@ impl DataPlane for DummyDataPlane {
     fn setup_stream(
         &mut self,
         _stream_config: &Stream,
+        _queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn setup_flow(
+        &mut self,
+        _flow_config: &Flow,
         _queues: &BTreeMap<(String, u8), u16>,
     ) -> Result<()> {
         Ok(())
