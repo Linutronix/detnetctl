@@ -20,6 +20,14 @@ volatile const bool overwrite_vlan_proto_and_tci = false;
 volatile const bool overwrite_ether_type = false;
 volatile const bool fixed_egress_cpu = false;
 volatile const u32 outgoing_cpu = 0;
+volatile const bool mpls_encapsulation = false;
+volatile const u32 mpls_stack_entry;
+volatile const bool udp_ip_encapsulation = false;
+volatile const u8 udp_header[sizeof(struct udphdr)];
+volatile const u8 ip_header[sizeof(struct ipv6hdr)];
+
+#define TSN_MAX_FRAME_SIZE \
+	1400 // TODO investigate, should be 1518 but does not work with survilliance camera...
 
 struct {
 	__uint(type, BPF_MAP_TYPE_CPUMAP);
@@ -46,11 +54,101 @@ void *memcpy_v(void *dst, const volatile void *src, size_t n)
 SEC("xdp/devmap")
 int xdp_bridge_postprocessing(struct xdp_md *ctx)
 {
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data = (void *)(long)ctx->data;
+
+	/*************************
+	 *     ENCAPSULATION     *
+	 *************************/
+	if (mpls_encapsulation || udp_ip_encapsulation) {
+		u16 total_encapsulation_size = sizeof(struct vlan_ethhdr);
+		if (udp_ip_encapsulation) {
+			total_encapsulation_size +=
+				sizeof(struct ipv6hdr) + sizeof(struct udphdr);
+		}
+		if (mpls_encapsulation) { // without control word that was added before redirect
+			total_encapsulation_size += sizeof(mpls_stack_entry);
+		}
+
+		u16 payload_len = data_end - data;
+
+		if (payload_len + total_encapsulation_size >
+		    TSN_MAX_FRAME_SIZE) {
+			if (debug_output) {
+				bpf_printk(
+					"Packet with encapsulation header does not fit into MTU");
+			}
+			return XDP_DROP;
+		}
+
+		if (bpf_xdp_adjust_head(ctx, -total_encapsulation_size)) {
+			if (debug_output) {
+				bpf_printk(
+					"Changing packet size for encapsulation failed");
+			}
+			return XDP_DROP;
+		}
+
+		data = (void *)(long)ctx->data;
+		data_end = (void *)(long)ctx->data_end;
+
+		// make space for outer Ethernet header but write to it
+		// under "SET L2 HEADER" that is also used to overwrite
+		// the existing Ethernet header if no encapsulation takes place
+
+		void *mplsh = data + sizeof(struct vlan_ethhdr);
+
+		if (udp_ip_encapsulation) {
+			struct ipv6hdr *ip6h =
+				data + sizeof(struct vlan_ethhdr);
+			struct udphdr *udph =
+				(void *)ip6h + sizeof(struct ipv6hdr);
+			mplsh = ((void *)mplsh) + sizeof(struct ipv6hdr) +
+				sizeof(struct udphdr);
+
+			if ((void *)udph + sizeof(struct udphdr) > data_end ||
+			    (void *)ip6h + sizeof(struct ipv6hdr) > data_end) {
+				if (debug_output) {
+					bpf_printk(
+						"UDP IP encapsulation failed");
+				}
+
+				return XDP_DROP;
+			}
+
+			memcpy_v(udph, udp_header, sizeof(struct udphdr));
+			memcpy_v(ip6h, ip_header, sizeof(struct ipv6hdr));
+
+			// Keep at 0 for the moment
+			// Also aligns with RFC 6935 (IPv6 and UDP Checksums for Tunneled Packets)
+			// to allow 0 for tunneling purposes.
+			udph->check = 0;
+
+			if (mpls_encapsulation) {
+				payload_len += sizeof(mpls_stack_entry);
+			}
+			udph->len = bpf_htons(payload_len);
+			payload_len += sizeof(struct udphdr);
+			ip6h->payload_len = bpf_htons(payload_len);
+		}
+
+		if (mpls_encapsulation) {
+			if ((void *)mplsh + sizeof(mpls_stack_entry) >
+			    data_end) {
+				if (debug_output) {
+					bpf_printk("MPLS encapsulation failed");
+				}
+
+				return XDP_DROP;
+			}
+
+			*(u32 *)mplsh = mpls_stack_entry;
+		}
+	}
+
 	/*********************
 	 *   SET L2 HEADER   *
 	 *********************/
-	void *data_end = (void *)(long)ctx->data_end;
-	void *data = (void *)(long)ctx->data;
 	struct vlan_ethhdr *outer_vlan_eth = data;
 	u16 *ether_type = &outer_vlan_eth->h_vlan_encapsulated_proto;
 
@@ -62,8 +160,9 @@ int xdp_bridge_postprocessing(struct xdp_md *ctx)
 	}
 
 	u16 vlan_proto = bpf_ntohs(outer_vlan_eth->h_vlan_proto);
-	if (vlan_proto != ETH_P_8021Q && vlan_proto != ETH_P_8021AD) {
-		// There is no VLAN tag yet
+	if (!mpls_encapsulation && !udp_ip_encapsulation &&
+	    vlan_proto != ETH_P_8021Q && vlan_proto != ETH_P_8021AD) {
+		// There is no VLAN tag yet and no encapsulation shall take place
 		if (overwrite_vlan_proto_and_tci) {
 			// The VLAN tag needs to be pushed and not just changed
 			int offset = sizeof(struct vlan_ethhdr) -

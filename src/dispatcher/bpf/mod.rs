@@ -38,7 +38,7 @@ use {
     mocks::MockDispatcherSkelBuilder as DispatcherSkelBuilder,
 };
 
-use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
+use crate::bpf::{find_or_add_stream_or_flow, Attacher, Identification, SkelManager};
 use crate::configuration::{StreamIdentification, StreamIdentificationBuilder};
 use crate::dispatcher::{Dispatcher, Protection};
 
@@ -149,10 +149,10 @@ impl Dispatcher for BPFDispatcher<'_> {
     ) -> Result<()> {
         self.skels
             .with_interfaces(&[interface], |skel| {
-                let stream_handle = find_or_add_stream(
+                let stream_handle = find_or_add_stream_or_flow(
                     skel.maps().streams(),
-                    skel.maps().num_streams(),
-                    stream_identification,
+                    skel.maps().num_streams_or_flows(),
+                    &Identification::Stream(stream_identification.clone()),
                     |s| {
                         Ok(Stream::from_bytes(
                             s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
@@ -298,7 +298,7 @@ impl<'a> Attacher<DispatcherSkel<'a>> for DispatcherAttacher {
             .context("Failed to configure initial best-effort stream")?;
 
         skel.maps_mut()
-            .num_streams()
+            .num_streams_or_flows()
             .update(&0_u32.to_ne_bytes(), &1_u16.to_ne_bytes(), MapFlags::ANY)
             .context("Failed to set num_streams")?;
 
@@ -471,7 +471,7 @@ mod tests {
             map
         });
 
-        maps_mut.expect_num_streams().returning(|| {
+        maps_mut.expect_num_streams_or_flows().returning(|| {
             let mut map = Map::default();
             map.expect_update()
                 .times(1)
@@ -507,7 +507,7 @@ mod tests {
             map
         });
 
-        maps.expect_num_streams().returning(|| {
+        maps.expect_num_streams_or_flows().returning(|| {
             let mut map = Map::default();
             map.expect_lookup()
                 .returning(|_key, _value| Ok(Some(vec![1, 0])));
