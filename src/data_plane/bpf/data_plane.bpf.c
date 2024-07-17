@@ -11,7 +11,8 @@
 
 #define MAX_REPLICATIONS 6
 
-#define SEQUENCE_GENERATION_MASK 0x01
+#define L2_SEQUENCE_GENERATION_MASK 0x01
+#define L3_SEQUENCE_GENERATION_MASK 0x02
 
 struct stream {
 	u16 handle;
@@ -118,7 +119,7 @@ int xdp_bridge(struct xdp_md *ctx)
 	/*************************
 	 *  SEQUENCE GENERATION  *
 	 *************************/
-	if (stream->flags & SEQUENCE_GENERATION_MASK) {
+	if (stream->flags & (L2_SEQUENCE_GENERATION_MASK | L3_SEQUENCE_GENERATION_MASK)) {
 		struct seq_gen *gen = bpf_map_lookup_elem(
 			&detnetctl_data_plane_seqgen, &stream->handle);
 		if (!gen) {
@@ -129,12 +130,23 @@ int xdp_bridge(struct xdp_md *ctx)
 		}
 
 		uint16_t seq = genseq(gen);
-		int ret = add_rtag(ctx, &seq);
-		if (ret < 0) {
-			if (debug_output) {
-				bpf_printk("Adding RTAG failed");
+
+		if (stream->flags & L2_SEQUENCE_GENERATION_MASK) {
+			int ret = add_rtag(ctx, &seq);
+			if (ret < 0) {
+				if (debug_output) {
+					bpf_printk("Adding RTAG failed");
+				}
+				return XDP_DROP;
 			}
-			return XDP_DROP;
+		} else {
+			int ret = add_detnet_cw(ctx, &seq);
+			if (ret < 0) {
+				if (debug_output) {
+					bpf_printk("Adding DetNet CW failed");
+				}
+				return XDP_DROP;
+			}
 		}
 	}
 

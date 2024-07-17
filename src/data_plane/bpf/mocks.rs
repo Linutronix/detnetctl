@@ -122,6 +122,11 @@ pub(crate) mod postprocessing_rodata_types {
         pub(crate) target_outer_hdr: vlan_ethhdr,
         pub(crate) fixed_egress_cpu: bool,
         pub(crate) outgoing_cpu: u32,
+        pub(crate) mpls_encapsulation: bool,
+        pub(crate) mpls_stack_entry: u32,
+        pub(crate) udp_ip_encapsulation: bool,
+        pub(crate) udp_header: [u8; 8],
+        pub(crate) ip_header: [u8; 40],
     }
 }
 

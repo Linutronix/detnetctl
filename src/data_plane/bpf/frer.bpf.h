@@ -293,6 +293,33 @@ static inline int add_rtag(struct xdp_md *pkt, ushort *seq)
 	return 0;
 }
 
+// TODO change to actually add DetNet CW and not R-TAG!!!
+static inline int add_detnet_cw(struct xdp_md *pkt, ushort *seq)
+{
+	// Make room for R-tag
+	if (bpf_xdp_adjust_head(pkt, 0 - (int)rtaghdr_sz))
+		return -1;
+
+	void *data = (void *)(long)pkt->data;
+	void *data_end = (void *)(long)pkt->data_end;
+	if (data + rtaghdr_sz + ethhdr_sz + vlanhdr_sz >
+	    data_end) // bound check for verifier
+		return -1;
+
+	// Move Ethernet+VLAN headers to the front of the buffer
+	__builtin_memmove(data, data + rtaghdr_sz, ethhdr_sz + vlanhdr_sz);
+	struct vlan_hdr *vhdr = data + ethhdr_sz;
+	struct rtaghdr *rtag = data + ethhdr_sz + vlanhdr_sz;
+
+	// Prepare the R-tag
+	__builtin_memset(rtag, 0, rtaghdr_sz);
+	rtag->nexthdr = vhdr->h_vlan_encapsulated_proto;
+	vhdr->h_vlan_encapsulated_proto = bpf_htons(ETH_P_RTAG);
+	rtag->seq = bpf_htons(*seq);
+
+	return 0;
+}
+
 static inline int rm_rtag(struct xdp_md *pkt, ushort *seq)
 {
 	// Find the R-tag in the header
