@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::configuration::detnet::Flow;
 use crate::configuration::{OutgoingL2, Stream, StreamIdentification};
 use anyhow::{anyhow, Context, Result};
 use etherparse::{EtherType, Ethernet2Header, SingleVlanHeader, VlanId, VlanPcp};
@@ -241,18 +242,7 @@ impl DataPlane for BpfDataPlane<'_> {
         for stream_identification in stream_config.identifications()? {
             self.skels
                 .with_interfaces(&interfaces, |skel| {
-                    let stream_handle = find_or_add_stream(
-                        skel.maps().streams(),
-                        skel.maps().num_streams(),
-                        stream_identification,
-                        |s| {
-                            Ok(XdpStream::from_bytes(
-                                s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
-                            )?
-                            .handle)
-                        },
-                    )
-                    .context("Failed to find or add stream")?;
+                    let stream_handle = get_stream_handle(skel, stream_identification)?;
 
                     let outgoing_l2 = stream_config.outgoing_l2()?;
 
@@ -278,20 +268,71 @@ impl DataPlane for BpfDataPlane<'_> {
                 .context("Failed to configure stream")?;
         }
 
-        // Install blank XDP program on outgoing_interface.
-        // Otherwise, redirected packets will not be sent out.
-        // (see https://lore.kernel.org/xdp-newbies/87v86tg5qp.fsf@toke.dk/ )
-        // If streams are configured in the other direction as well
-        // (with this `outgoing_interface` as `incoming_interface`)
-        // it will be reused and filled with proper stream configurations.
         for outgoing_l2 in stream_config.outgoing_l2()? {
-            let outgoing_interface = outgoing_l2.outgoing_interface()?;
-            if !self.skels.xdp_already_attached(outgoing_interface) {
+            self.load_default_xdp(outgoing_l2)?;
+        }
+
+        Ok(())
+    }
+
+    fn setup_flow(&mut self, flow_config: &Flow) -> Result<()> {
+        if let Some(app_flows) = flow_config.incoming_app_flows_opt() {
+            for app_flow in app_flows {
+                let interfaces = app_flow
+                    .ingress_interfaces()?
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<&str>>();
+
+                let stream_identification = app_flow.ingress_identification()?;
                 self.skels
-                    .with_interfaces(&[outgoing_interface], |_skel| Ok(()))
-                    .with_context(|| {
-                        format!("Failed to configure blank XDP on {outgoing_interface}")
-                    })?;
+                    .with_interfaces(&interfaces, |skel| {
+                        let stream_handle = get_stream_handle(skel, stream_identification)?;
+
+                        for of in flow_config.outgoing_forwarding()? {
+                            let outgoing_l2 = of.outgoing_l2()?;
+
+                            let xdp_stream = XdpStreamBuilder::new()
+                                .handle(stream_handle)
+                                .sequence_generation(outgoing_l2.len() > 1)
+                                .build();
+
+                            update_stream_maps(
+                                skel,
+                                stream_handle,
+                                stream_identification,
+                                &xdp_stream,
+                                outgoing_l2,
+                                &mut UpdateStreamCallbacks {
+                                    nametoindex: &mut self.nametoindex,
+                                    create_devmap: &mut self.create_devmap,
+                                    generate_skel_postprocessing: &mut self
+                                        .generate_skel_postprocessing,
+                                },
+                            )?;
+                        }
+
+                        Ok(())
+                    })
+                    .context("Failed to configure flow")?;
+            }
+        }
+
+        if let Some(ofs) = flow_config.outgoing_forwarding_opt() {
+            for of in ofs {
+                if let Some(l2s) = of.outgoing_l2_opt() {
+                    for l2 in l2s {
+                        self.load_default_xdp(l2)?;
+                    }
+                }
+            }
+        }
+
+        if let Some(appflows) = flow_config.outgoing_app_flows_opt() {
+            for appflow in appflows {
+                if let Some(egress_l2) = appflow.egress_l2_opt() {
+                    self.load_default_xdp(egress_l2)?;
+                }
             }
         }
 
@@ -331,6 +372,25 @@ impl DataPlane for BpfDataPlane<'_> {
     }
 }
 
+#[allow(clippy::needless_pass_by_ref_mut)] // only not mut in testing
+fn get_stream_handle(
+    skel: &mut DataPlaneSkel<'_>,
+    stream_identification: &StreamIdentification,
+) -> Result<u16> {
+    find_or_add_stream(
+        skel.maps().streams(),
+        skel.maps().num_streams(),
+        stream_identification,
+        |s| {
+            Ok(
+                XdpStream::from_bytes(s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?)?
+                    .handle,
+            )
+        },
+    )
+    .context("Failed to find or add stream")
+}
+
 impl BpfDataPlane<'_> {
     /// Create a new `BpfDataPlane`
     pub fn new(debug_output: bool) -> Self {
@@ -345,6 +405,25 @@ impl BpfDataPlane<'_> {
             create_devmap: Box::new(create_devmap),
             generate_skel_postprocessing: Box::new(PostprocessingSkelBuilder::default),
         }
+    }
+
+    // Install blank XDP program on outgoing_interface.
+    // Otherwise, redirected packets will not be sent out.
+    // (see https://lore.kernel.org/xdp-newbies/87v86tg5qp.fsf@toke.dk/ )
+    // If streams are configured in the other direction as well
+    // (with this `outgoing_interface` as `incoming_interface`)
+    // it will be reused and filled with proper stream configurations.
+    fn load_default_xdp(&mut self, outgoing_l2: &OutgoingL2) -> Result<()> {
+        let outgoing_interface = outgoing_l2.outgoing_interface()?;
+        if !self.skels.xdp_already_attached(outgoing_interface) {
+            self.skels
+                .with_interfaces(&[outgoing_interface], |_skel| Ok(()))
+                .with_context(|| {
+                    format!("Failed to configure blank XDP on {outgoing_interface}")
+                })?;
+        }
+
+        Ok(())
     }
 }
 
