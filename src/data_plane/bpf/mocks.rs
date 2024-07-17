@@ -49,8 +49,9 @@ mock! {
 
 mock! {
     pub(crate) DataPlaneMapsMut {
-        pub(crate) fn num_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn num_streams_or_flows(&mut self) -> &mut MockMap;
         pub(crate) fn streams(&mut self) -> &mut MockMap;
+        pub(crate) fn flows(&mut self) -> &mut MockMap;
         pub(crate) fn redirect_map(&mut self) -> &mut MockMap;
         pub(crate) fn seqgen_map(&mut self) -> &mut MockMap;
         pub(crate) fn seqrcvy_map(&mut self) -> &mut MockMap;
@@ -59,8 +60,9 @@ mock! {
 
 mock! {
     pub(crate) DataPlaneMaps {
-        pub(crate) fn num_streams(&mut self) -> &mut MockMap;
+        pub(crate) fn num_streams_or_flows(&mut self) -> &mut MockMap;
         pub(crate) fn streams(&mut self) -> &mut MockMap;
+        pub(crate) fn flows(&mut self) -> &mut MockMap;
         pub(crate) fn seqgen_map(&mut self) -> &mut MockMap;
         pub(crate) fn seqrcvy_map(&mut self) -> &mut MockMap;
     }
@@ -131,6 +133,11 @@ pub(crate) mod postprocessing_rodata_types {
         pub(crate) overwrite_vlan_proto_and_tci: bool,
         pub(crate) overwrite_ether_type: bool,
         pub(crate) target_outer_hdr: vlan_ethhdr,
+        pub(crate) mpls_encapsulation: bool,
+        pub(crate) mpls_stack_entry: u32,
+        pub(crate) udp_ip_encapsulation: bool,
+        pub(crate) udp_header: [u8; 8],
+        pub(crate) ip_header: [u8; 40],
     }
 }
 

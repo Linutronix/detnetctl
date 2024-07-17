@@ -12,7 +12,7 @@
 #define DROP_WITHOUT_SK_MASK 0x02
 #define DROP_WITH_WRONG_CGROUP_MASK 0x03
 
-struct stream {
+struct stream_or_flow {
 	u16 handle;
 	u8 flags;
 	u16 shifted_pcp;
@@ -23,9 +23,9 @@ struct stream {
 // default stream handle 0 is also in the map for all zeros in the key
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, MAX_STREAMS);
+	__uint(max_entries, MAX_STREAMS_OR_FLOWS);
 	__type(key, struct null_stream_identification);
-	__type(value, struct stream);
+	__type(value, struct stream_or_flow);
 } streams SEC(".maps");
 
 // Number of streams (including default stream handle 0)
@@ -34,14 +34,14 @@ struct {
 	__type(key, u32);
 	__type(value, u16);
 	__uint(max_entries, 1);
-} num_streams SEC(".maps");
+} num_streams_or_flows SEC(".maps");
 
 // Array of cgroups for each stream
 // Only accessed and checked if indicated
 // by stream.restrictions
 struct {
 	__uint(type, BPF_MAP_TYPE_CGROUP_ARRAY);
-	__uint(max_entries, MAX_STREAMS);
+	__uint(max_entries, MAX_STREAMS_OR_FLOWS);
 	__type(key, u32); // stream handle
 	__type(value, u32);
 } stream_cgroups SEC(".maps");
@@ -56,7 +56,7 @@ int tc_egress(struct __sk_buff *ctx)
 	void *data = (void *)(long)ctx->data;
 
 	struct null_stream_identification stream_id = {};
-	struct stream *stream = 0;
+	struct stream_or_flow *stream = 0;
 	if (stream_identification((struct bpf_map *)&streams, data, data_end,
 				  ctx->vlan_tci, &stream_id, &stream) < 0) {
 		return TC_ACT_SHOT;
