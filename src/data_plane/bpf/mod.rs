@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::configuration::{OutgoingL2, Stream};
+use crate::configuration::detnet::Flow;
+use crate::configuration::{OutgoingL2, Stream, StreamIdentification};
 use anyhow::{anyhow, Context, Result};
 use etherparse::{EtherType, Ethernet2Header, SingleVlanHeader, VlanId, VlanPcp};
 use eui48::MacAddress;
@@ -254,17 +255,7 @@ impl DataPlane for BpfDataPlane<'_> {
             for stream_identification in stream_config.identifications()? {
                 self.skels
                     .with_interface(interface, |skel| {
-                        let stream_handle = find_or_add_stream(
-                            skel.maps().detnetctl_data_plane_streams(),
-                            skel.maps().detnetctl_data_plane_num_streams(),
-                            stream_identification,
-                            |s| {
-                                Ok(XdpStream::from_bytes(
-                                    s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
-                                )?
-                                .handle)
-                            },
-                        )?;
+                        let stream_handle = get_stream_handle(skel, stream_identification)?;
 
                         let outgoing_l2 = stream_config.outgoing_l2()?;
 
@@ -293,6 +284,70 @@ impl DataPlane for BpfDataPlane<'_> {
 
         Ok(())
     }
+
+    fn setup_flow(
+        &mut self,
+        flow_config: &Flow,
+        queues: &BTreeMap<(String, u8), u16>,
+    ) -> Result<()> {
+        if let Some(app_flows) = flow_config.incoming_app_flows_opt() {
+            for app_flow in app_flows {
+                for interface in app_flow.ingress_interfaces()? {
+                    let stream_identification = app_flow.ingress_identification()?;
+                    self.skels
+                        .with_interface(interface, |skel| {
+                            let stream_handle = get_stream_handle(skel, stream_identification)?;
+
+                            for of in flow_config.outgoing_forwarding()? {
+                                let outgoing_l2 = of.outgoing_l2()?;
+
+                                let xdp_stream = XdpStreamBuilder::new()
+                                    .handle(stream_handle)
+                                    .sequence_generation(outgoing_l2.len() > 1)
+                                    .build();
+
+                                update_stream_maps(
+                                    skel,
+                                    u32::from(stream_handle),
+                                    &xdp_stream,
+                                    outgoing_l2,
+                                    queues,
+                                    &mut UpdateStreamCallbacks {
+                                        nametoindex: &mut self.nametoindex,
+                                        create_devmap: &mut self.create_devmap,
+                                        generate_skel_postprocessing: &mut self
+                                            .generate_skel_postprocessing,
+                                    },
+                                )?;
+                            }
+
+                            Ok(())
+                        })
+                        .context("Failed to configure flow")?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[allow(clippy::needless_pass_by_ref_mut)] // only not mut in testing
+fn get_stream_handle(
+    skel: &mut DataPlaneSkel<'_>,
+    stream_identification: &StreamIdentification,
+) -> Result<u16> {
+    find_or_add_stream(
+        skel.maps().detnetctl_data_plane_streams(),
+        skel.maps().detnetctl_data_plane_num_streams(),
+        stream_identification,
+        |s| {
+            Ok(
+                XdpStream::from_bytes(s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?)?
+                    .handle,
+            )
+        },
+    )
 }
 
 impl BpfDataPlane<'_> {
