@@ -44,6 +44,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use crate::configuration::detnet::Flow;
 use crate::configuration::{
     BridgedApp, Configuration, FillDefaults, Interface, Stream, StreamIdentification,
     StreamIdentificationBuilder, UnbridgedApp,
@@ -115,10 +116,19 @@ struct ExpandedInterface {
     network_namespace: Option<String>,
 }
 
+struct ExpandedStream {
+    stream: Stream,
+}
+
+struct ExpandedFlow {
+    flow: Flow,
+}
+
 struct ExpandedConfiguration {
     interfaces: BTreeMap<String, ExpandedInterface>,
     bridged_apps: BTreeMap<String, BridgedApp>,
-    streams: Vec<Stream>,
+    streams: Vec<ExpandedStream>,
+    flows: Vec<ExpandedFlow>,
 }
 
 async fn fetch_expanded_configuration(
@@ -130,6 +140,7 @@ async fn fetch_expanded_configuration(
     let mut unbridged_apps = config.get_unbridged_apps()?;
     let mut bridged_apps = config.get_bridged_apps()?;
     let mut streams = config.get_streams()?;
+    let mut flows = config.get_flows()?;
 
     for interface_config in interfaces.values_mut() {
         interface_config.fill_defaults()?;
@@ -140,13 +151,7 @@ async fn fetch_expanded_configuration(
 
     for app_config in unbridged_apps.values_mut() {
         app_config.fill_defaults()?;
-        validate_are_some!(
-            app_config,
-            physical_interface,
-            bind_interface,
-            stream,
-            priority
-        )?;
+        validate_are_some!(app_config, physical_interface, bind_interface, stream)?;
     }
 
     for app_config in bridged_apps.values_mut() {
@@ -164,11 +169,28 @@ async fn fetch_expanded_configuration(
         validate_are_some!(stream, incoming_interfaces, identifications, outgoing_l2)?;
     }
 
+    for (flow_name, flow) in &mut flows {
+        flow.fill_defaults()?;
+
+        if flow.incoming_app_flows_is_some() && !flow.outgoing_forwarding_is_some() {
+            return Err(anyhow!(
+                "{flow_name}: Incoming app flows, but no outgoing forwarding"
+            ));
+        }
+
+        if flow.incoming_forwarding_is_some() && !flow.outgoing_app_flows_is_some() {
+            return Err(anyhow!(
+                "{flow_name}: Incoming forwarding, but no outgoing app flows"
+            ));
+        }
+    }
+
     println!("Fetched from configuration module:");
     println!("Interfaces: {interfaces:#?}");
     println!("Unbridged Apps: {unbridged_apps:#?}");
     println!("Bridged Apps: {bridged_apps:#?}");
-    println!("Streams: {streams:#?}");
+    println!("TSN Streams: {streams:#?}");
+    println!("DetNet Flows: {flows:#?}");
 
     Ok(ExpandedConfiguration {
         interfaces: collect_expanded_interfaces(
@@ -176,9 +198,11 @@ async fn fetch_expanded_configuration(
             &unbridged_apps,
             &bridged_apps,
             &streams,
+            &flows,
         )?,
         bridged_apps,
-        streams: streams.into_values().collect(),
+        streams: collect_expanded_streams(&streams)?,
+        flows: collect_expanded_flows(&flows)?,
     })
 }
 
@@ -187,6 +211,7 @@ fn collect_expanded_interfaces(
     unbridged_apps: &BTreeMap<String, UnbridgedApp>,
     bridged_apps: &BTreeMap<String, BridgedApp>,
     streams: &BTreeMap<String, Stream>,
+    flows: &BTreeMap<String, Flow>,
 ) -> Result<BTreeMap<String, ExpandedInterface>> {
     interfaces
         .iter()
@@ -207,6 +232,33 @@ fn collect_expanded_interfaces(
                             if let Some(vid) = outgoing_l2.vid_opt() {
                                 stream_id = stream_id.vid(*vid);
                             }
+
+                            streams_to_protect.push(stream_id.build());
+                        }
+                    }
+                }
+            }
+
+            // also add the encapsulated flows as streams to protect
+            for flow in flows.values() {
+                let Some(outgoings) = flow.outgoing_forwarding_opt() else {
+                    continue;
+                };
+
+                for outgoing in outgoings {
+                    for outgoing_l2 in outgoing.outgoing_l2()? {
+                        if outgoing_l2.outgoing_interface()? == name {
+                            let stream_id = StreamIdentificationBuilder::new()
+                                .destination_address(
+                                    *outgoing_l2
+                                        .destination()
+                                        .context("Destination needed for DetNet over L2")?,
+                                )
+                                .vid(
+                                    *outgoing_l2
+                                        .vid()
+                                        .context("VLAN ID needed for DetNet over L2")?,
+                                );
 
                             streams_to_protect.push(stream_id.build());
                         }
@@ -253,6 +305,24 @@ fn collect_expanded_interfaces(
                 },
             ))
         })
+        .collect()
+}
+
+fn collect_expanded_streams(streams: &BTreeMap<String, Stream>) -> Result<Vec<ExpandedStream>> {
+    streams
+        .values()
+        .map(|stream| -> Result<ExpandedStream> {
+            Ok(ExpandedStream {
+                stream: stream.clone(),
+            })
+        })
+        .collect()
+}
+
+fn collect_expanded_flows(flows: &BTreeMap<String, Flow>) -> Result<Vec<ExpandedFlow>> {
+    flows
+        .values()
+        .map(|flow| -> Result<ExpandedFlow> { Ok(ExpandedFlow { flow: flow.clone() }) })
         .collect()
 }
 
@@ -314,25 +384,8 @@ impl Setup for Controller {
                 })?;
         }
 
-        // Install all XDPs for the streams
-        {
-            let mut locked_data_plane = data_plane.lock().await;
-            for stream in &config.streams {
-                locked_data_plane
-                    .setup_stream(stream)
-                    .context("Installing stream via XDP failed")?;
-
-                // Disable VLAN offload for all incoming traffic
-                // so XDP can properly process the VLAN tags
-                let locked_interface_setup = interface_setup.lock().await;
-                for interface in stream.incoming_interfaces()? {
-                    locked_interface_setup
-                        .set_vlan_offload(interface, Some(false), Some(false), &None)
-                        .await
-                        .context("Disabling VLAN offload failed")?;
-                }
-            }
-        }
+        // Install all XDPs for the streams and flows
+        install_xdps(&config, &data_plane, &interface_setup).await?;
 
         // Configure IP and MAC addresses and promiscuous mode
         perform_interface_setup(&config, &interface_setup).await?;
@@ -392,6 +445,51 @@ impl Setup for Controller {
 
         Ok(())
     }
+}
+
+async fn install_xdps(
+    config: &ExpandedConfiguration,
+    data_plane: &Arc<Mutex<dyn DataPlane + Send>>,
+    interface_setup: &Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
+) -> Result<()> {
+    let mut locked_data_plane = data_plane.lock().await;
+    let locked_interface_setup = interface_setup.lock().await;
+
+    for stream in &config.streams {
+        locked_data_plane
+            .setup_stream(&stream.stream)
+            .context("Installing stream via XDP failed")?;
+
+        // Disable VLAN offload for all incoming traffic
+        // so XDP can properly process the VLAN tags
+        for interface in stream.stream.incoming_interfaces()? {
+            locked_interface_setup
+                .set_vlan_offload(interface, Some(false), Some(false), &None)
+                .await
+                .context("Disabling VLAN offload failed")?;
+        }
+    }
+
+    for flow in &config.flows {
+        locked_data_plane
+            .setup_flow(&flow.flow)
+            .context("Installing flow via XDP failed")?;
+
+        // Disable VLAN offload for all incoming traffic
+        // so XDP can properly process the VLAN tags
+        if let Some(incoming_flows) = flow.flow.incoming_app_flows_opt() {
+            for app_flow in incoming_flows {
+                for interface in app_flow.ingress_interfaces()? {
+                    locked_interface_setup
+                        .set_vlan_offload(interface, Some(false), Some(false), &None)
+                        .await
+                        .context("Disabling VLAN offload failed")?;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn perform_interface_setup(
@@ -584,7 +682,7 @@ async fn setup_before_interface_up(
         }
     }
 
-    // Protect all configured streams from coming via TC, they shall only come via XDP
+    // Protect all configured streams and encapsulated flows from coming via TC, they shall only come via XDP
     for stream_id in &interface.streams_to_protect {
         let mut locked_dispatcher = dispatcher.lock().await;
         locked_dispatcher
@@ -623,6 +721,10 @@ async fn set_interface_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::configuration::detnet::{
+        AppFlowBuilder, FlowBuilder, MplsHeaderBuilder, OutgoingForwardingBuilder,
+        UdpIpHeaderBuilder,
+    };
     use crate::configuration::{
         BridgedAppBuilder, GateControlEntryBuilder, GateOperation, InterfaceBuilder,
         MockConfiguration, Mode, OutgoingL2Builder, QueueMapping, ScheduleBuilder, Stream,
@@ -734,6 +836,37 @@ mod tests {
         stream_config
     }
 
+    fn generate_flow_config(interface: String, vid: u16) -> Flow {
+        let flow_config = FlowBuilder::new()
+            .incoming_app_flows(vec![AppFlowBuilder::new()
+                .ingress_interfaces(vec![interface.clone()])
+                .ingress_identification(
+                    StreamIdentificationBuilder::new()
+                        .destination_address("CB:cb:cb:cb:cb:AB".parse().unwrap())
+                        .vid(vid)
+                        .build(),
+                )
+                .build()])
+            .outgoing_forwarding(vec![OutgoingForwardingBuilder::new()
+                .mpls(MplsHeaderBuilder::new().label(1234).build())
+                .ip(UdpIpHeaderBuilder::new()
+                    .source("10.0.1.1".parse().unwrap())
+                    .destination("10.0.1.2".parse().unwrap())
+                    .source_port(3456)
+                    .build())
+                .outgoing_l2(vec![OutgoingL2Builder::new()
+                    .outgoing_interface(interface)
+                    .destination("CB:cb:cb:cb:cb:AB".parse().unwrap())
+                    .vid(vid)
+                    .build()])
+                .build()])
+            .build();
+
+        validate_are_some!(flow_config, incoming_app_flows, outgoing_forwarding,).unwrap();
+
+        flow_config
+    }
+
     fn configuration_happy(interface: String, vid: u16) -> MockConfiguration {
         let mut configuration = MockConfiguration::new();
         let interface2 = interface.clone();
@@ -742,6 +875,7 @@ mod tests {
         let interface5 = interface.clone();
         let interface6 = interface.clone();
         let interface7 = interface.clone();
+        let interface8 = interface.clone();
 
         configuration
             .expect_get_interface()
@@ -779,6 +913,12 @@ mod tests {
             Ok(BTreeMap::from([(
                 String::from("stream0"),
                 generate_stream_config(interface7.clone(), vid),
+            )]))
+        });
+        configuration.expect_get_flows().returning(move || {
+            Ok(BTreeMap::from([(
+                String::from("ssl-1"),
+                generate_flow_config(interface8.clone(), vid),
             )]))
         });
         configuration
@@ -826,6 +966,7 @@ mod tests {
     fn data_plane_happy() -> MockDataPlane {
         let mut data_plane = MockDataPlane::new();
         data_plane.expect_setup_stream().returning(|_| Ok(()));
+        data_plane.expect_setup_flow().returning(|_| Ok(()));
         data_plane.expect_load_xdp_pass().returning(|_| Ok(()));
         data_plane.expect_pin_xdp_pass().returning(|_| Ok(()));
         data_plane
@@ -835,6 +976,9 @@ mod tests {
         let mut data_plane = MockDataPlane::new();
         data_plane
             .expect_setup_stream()
+            .returning(|_| Err(anyhow!("failed")));
+        data_plane
+            .expect_setup_flow()
             .returning(|_| Err(anyhow!("failed")));
         data_plane
             .expect_load_xdp_pass()
