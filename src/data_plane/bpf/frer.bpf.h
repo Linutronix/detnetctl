@@ -288,6 +288,25 @@ static inline int add_rtag(struct xdp_md *pkt, ushort *seq)
 	return 0;
 }
 
+static inline int add_detnet_cw(struct xdp_md *pkt, ushort *seq)
+{
+	// Make room for DetNet Control Word
+	if (bpf_xdp_adjust_head(pkt, -4))
+		return -1;
+
+	void *data = (void *)(long)pkt->data;
+	void *data_end = (void *)(long)pkt->data_end;
+	if (data + 4 > data_end) // bound check for verifier
+		return -1;
+
+	// Currently only 16-bit sequence number
+	// Once 28 bit sequence number is supported,
+	// make sure to mask the upper bits
+	*(u32 *)data = bpf_htonl(*seq);
+
+	return 0;
+}
+
 static inline int rm_rtag(struct xdp_md *pkt, ushort *seq)
 {
 	// Find the R-tag in the header

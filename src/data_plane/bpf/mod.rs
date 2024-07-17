@@ -2,10 +2,14 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::configuration::detnet::Flow;
-use crate::configuration::{OutgoingL2, Stream, StreamIdentification};
+use crate::configuration::detnet::{
+    Flow, MplsHeader, OutgoingForwarding, OutgoingForwardingBuilder, UdpIpHeader,
+};
+use crate::configuration::{OutgoingL2, Stream};
 use anyhow::{anyhow, Context, Result};
-use etherparse::{EtherType, Ethernet2Header, SingleVlanHeader, VlanId, VlanPcp};
+use etherparse::{
+    EtherType, Ethernet2Header, IpNumber, Ipv6Header, SingleVlanHeader, UdpHeader, VlanId, VlanPcp,
+};
 use eui48::MacAddress;
 use flagset::{flags, FlagSet};
 use libbpf_rs::libbpf_sys;
@@ -13,6 +17,7 @@ use libbpf_rs::ErrorKind;
 use libbpf_rs::{MapFlags, MapType, XdpFlags};
 use std::fs::remove_file;
 use std::mem::size_of;
+use std::net::IpAddr::V6;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
@@ -64,24 +69,38 @@ use {
     mocks::MockPostprocessingSkelBuilder as PostprocessingSkelBuilder,
 };
 
-use crate::bpf::{find_or_add_stream, Attacher, SkelManager};
+use crate::bpf::{find_or_add_stream_or_flow, Attacher, Identification, SkelManager};
 use crate::data_plane::DataPlane;
 
 const MAX_REPLICATIONS: u32 = 6;
 
+const MPLS_LABEL_SHIFT: u32 = 12;
+const MPLS_TC_SHIFT: u32 = 9;
+const MPLS_BOS_SHIFT: u32 = 8;
+const MPLS_TTL_SHIFT: u32 = 0;
+
+const MAX_LABEL: u32 = (1 << 20) - 1;
+const MAX_TC: u32 = (1 << 3) - 1;
+const MAX_BOS: u32 = 1;
+const MAX_TTL: u32 = (1 << 8) - 1;
+
+const IPV6_ETHER_TYPE: u16 = 0x86DD;
+const MPLS_ETHER_TYPE: u16 = 0x8847;
+
 flags! {
-    enum XdpStreamFlags: u8 {
-        SequenceGeneration = 0x1,
+    enum XdpStreamOrFlowFlags: u8 {
+        L2SequenceGeneration = 0x1,
+        L3SequenceGeneration = 0x2,
     }
 }
 
 #[derive(Debug)]
-struct XdpStream {
+struct XdpStreamOrFlow {
     handle: u16,
-    flags: FlagSet<XdpStreamFlags>,
+    flags: FlagSet<XdpStreamOrFlowFlags>,
 }
 
-impl XdpStream {
+impl XdpStreamOrFlow {
     fn to_bytes(&self) -> [u8; 3] {
         let mut result: [u8; 3] = [0; 3];
         result[0..2].copy_from_slice(&self.handle.to_ne_bytes()[..]); // 2 bytes
@@ -101,14 +120,14 @@ impl XdpStream {
     }
 }
 
-struct XdpStreamBuilder {
-    stream: XdpStream,
+struct XdpStreamOrFlowBuilder {
+    stream: XdpStreamOrFlow,
 }
 
-impl XdpStreamBuilder {
+impl XdpStreamOrFlowBuilder {
     fn new() -> Self {
         Self {
-            stream: XdpStream {
+            stream: XdpStreamOrFlow {
                 handle: 0,
                 flags: FlagSet::default(),
             },
@@ -120,16 +139,25 @@ impl XdpStreamBuilder {
         self
     }
 
-    fn sequence_generation(mut self, enable: bool) -> Self {
+    fn l2_sequence_generation(mut self, enable: bool) -> Self {
         if enable {
-            self.stream.flags |= XdpStreamFlags::SequenceGeneration;
+            self.stream.flags |= XdpStreamOrFlowFlags::L2SequenceGeneration;
         } else {
-            self.stream.flags &= !XdpStreamFlags::SequenceGeneration;
+            self.stream.flags &= !XdpStreamOrFlowFlags::L2SequenceGeneration;
         }
         self
     }
 
-    const fn build(self) -> XdpStream {
+    fn l3_sequence_generation(mut self, enable: bool) -> Self {
+        if enable {
+            self.stream.flags |= XdpStreamOrFlowFlags::L3SequenceGeneration;
+        } else {
+            self.stream.flags &= !XdpStreamOrFlowFlags::L3SequenceGeneration;
+        }
+        self
+    }
+
+    const fn build(self) -> XdpStreamOrFlow {
         self.stream
     }
 }
@@ -239,24 +267,30 @@ impl DataPlane for BpfDataPlane<'_> {
             .iter()
             .map(String::as_str)
             .collect::<Vec<&str>>();
+
         for stream_identification in stream_config.identifications()? {
             self.skels
                 .with_interfaces(&interfaces, |skel| {
-                    let stream_handle = get_stream_handle(skel, stream_identification)?;
+                    let identification = Identification::Stream(stream_identification.clone());
+                    let stream_handle = get_stream_handle(skel, &identification)?;
 
                     let outgoing_l2 = stream_config.outgoing_l2()?;
 
-                    let xdp_stream = XdpStreamBuilder::new()
+                    let xdp_stream = XdpStreamOrFlowBuilder::new()
                         .handle(stream_handle)
-                        .sequence_generation(outgoing_l2.len() > 1)
+                        .l2_sequence_generation(outgoing_l2.len() > 1)
+                        .build();
+
+                    let outgoing_forwarding = OutgoingForwardingBuilder::new()
+                        .outgoing_l2(outgoing_l2.clone())
                         .build();
 
                     update_stream_maps(
                         skel,
                         stream_handle,
-                        stream_identification,
+                        &identification,
                         &xdp_stream,
-                        outgoing_l2,
+                        &[outgoing_forwarding],
                         &mut UpdateStreamCallbacks {
                             nametoindex: &mut self.nametoindex,
                             create_devmap: &mut self.create_devmap,
@@ -284,38 +318,79 @@ impl DataPlane for BpfDataPlane<'_> {
                     .map(String::as_str)
                     .collect::<Vec<&str>>();
 
-                let stream_identification = app_flow.ingress_identification()?;
+                let identification =
+                    Identification::Stream(app_flow.ingress_identification()?.clone());
                 self.skels
                     .with_interfaces(&interfaces, |skel| {
-                        let stream_handle = get_stream_handle(skel, stream_identification)?;
+                        let stream_handle = get_stream_handle(skel, &identification)?;
+                        let xdp_flow = outgoing_flow_handling(
+                            flow_config.outgoing_forwarding()?,
+                            stream_handle,
+                        )?;
 
-                        for of in flow_config.outgoing_forwarding()? {
-                            let outgoing_l2 = of.outgoing_l2()?;
-
-                            let xdp_stream = XdpStreamBuilder::new()
-                                .handle(stream_handle)
-                                .sequence_generation(outgoing_l2.len() > 1)
-                                .build();
-
-                            update_stream_maps(
-                                skel,
-                                stream_handle,
-                                stream_identification,
-                                &xdp_stream,
-                                outgoing_l2,
-                                &mut UpdateStreamCallbacks {
-                                    nametoindex: &mut self.nametoindex,
-                                    create_devmap: &mut self.create_devmap,
-                                    generate_skel_postprocessing: &mut self
-                                        .generate_skel_postprocessing,
-                                },
-                            )?;
-                        }
+                        update_stream_maps(
+                            skel,
+                            stream_handle,
+                            &identification,
+                            &xdp_flow,
+                            flow_config.outgoing_forwarding()?.as_slice(),
+                            &mut UpdateStreamCallbacks {
+                                nametoindex: &mut self.nametoindex,
+                                create_devmap: &mut self.create_devmap,
+                                generate_skel_postprocessing: &mut self
+                                    .generate_skel_postprocessing,
+                            },
+                        )?;
 
                         Ok(())
                     })
                     .context("Failed to configure flow")?;
             }
+        }
+
+        if let Some(incoming_forwardings) = flow_config.incoming_forwarding_opt() {
+            let interfaces = incoming_forwardings
+                .iter()
+                .map(|x| Ok(x.incoming_interface()?.as_str()))
+                .collect::<Result<Vec<&str>>>()?;
+
+            self.skels
+                .with_interfaces(&interfaces, |skel| {
+                    for incoming_forwarding in incoming_forwardings {
+                        let identification =
+                            Identification::Flow(incoming_forwarding.identification()?.clone());
+                        let stream_handle = get_stream_handle(skel, &identification)?;
+
+                        let xdp_flow = XdpStreamOrFlowBuilder::new().handle(stream_handle);
+
+                        let outgoing_forwardings = flow_config
+                            .outgoing_app_flows()?
+                            .iter()
+                            .map(|appflow| {
+                                Ok(OutgoingForwardingBuilder::new()
+                                    .outgoing_l2(vec![appflow.egress_l2()?.clone()])
+                                    .build())
+                            })
+                            .collect::<Result<Vec<OutgoingForwarding>>>()?;
+
+                        update_stream_maps(
+                            skel,
+                            stream_handle,
+                            &identification,
+                            &xdp_flow.build(),
+                            outgoing_forwardings.as_slice(),
+                            &mut UpdateStreamCallbacks {
+                                nametoindex: &mut self.nametoindex,
+                                create_devmap: &mut self.create_devmap,
+                                generate_skel_postprocessing: &mut self
+                                    .generate_skel_postprocessing,
+                            },
+                        )?;
+                    }
+
+                    Ok(())
+                })
+                .context("Failed to configure flow")?;
         }
 
         if let Some(ofs) = flow_config.outgoing_forwarding_opt() {
@@ -372,23 +447,69 @@ impl DataPlane for BpfDataPlane<'_> {
     }
 }
 
-#[allow(clippy::needless_pass_by_ref_mut)] // only not mut in testing
-fn get_stream_handle(
-    skel: &mut DataPlaneSkel<'_>,
-    stream_identification: &StreamIdentification,
-) -> Result<u16> {
-    find_or_add_stream(
-        skel.maps().streams(),
-        skel.maps().num_streams(),
-        stream_identification,
+#[allow(clippy::needless_pass_by_ref_mut, unused_mut)] // only not mut in testing
+fn get_stream_handle(skel: &mut DataPlaneSkel<'_>, identification: &Identification) -> Result<u16> {
+    let mut maps = skel.maps();
+    let map = match identification {
+        Identification::Stream(_) => maps.streams(),
+        Identification::Flow(_) => maps.flows(),
+    };
+
+    find_or_add_stream_or_flow(
+        map,
+        skel.maps().num_streams_or_flows(),
+        identification,
         |s| {
-            Ok(
-                XdpStream::from_bytes(s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?)?
-                    .handle,
-            )
+            Ok(XdpStreamOrFlow::from_bytes(
+                s.try_into().map_err(|_e| anyhow!("Invalid byte number"))?,
+            )?
+            .handle)
         },
     )
     .context("Failed to find or add stream")
+}
+
+fn outgoing_flow_handling(
+    outgoing_forwarding: &[OutgoingForwarding],
+    stream_handle: u16,
+) -> Result<XdpStreamOrFlow> {
+    let mut total_outgoing_l2 = 0;
+    let mut l2_with_mpls_encapsulation = 0;
+
+    for of in outgoing_forwarding {
+        let num_l2 = of.outgoing_l2()?.len();
+        total_outgoing_l2 += num_l2;
+
+        if of.mpls_opt().is_some() {
+            l2_with_mpls_encapsulation += num_l2;
+        }
+    }
+
+    let mut xdp_flow = XdpStreamOrFlowBuilder::new().handle(stream_handle);
+
+    if total_outgoing_l2 == 0 {
+        return Err(anyhow!(
+            "No OutgoingL2 specified for any OutgoingForwarding"
+        ));
+    } else if l2_with_mpls_encapsulation == total_outgoing_l2 {
+        // L3 sequence generation with MPLS -> DetNet PREF
+        // Even for only a single OutgoingL2, because we always
+        // want to add the DetNet CW with the sequence number in it
+        xdp_flow = xdp_flow.l3_sequence_generation(true);
+    } else if total_outgoing_l2 > 1 {
+        if l2_with_mpls_encapsulation == 0 {
+            // No MPLS encapsulation requested -> fall back to TSN FRER
+            xdp_flow = xdp_flow.l2_sequence_generation(true);
+        } else {
+            // Currently, the DetNet CW is prepended before the split,
+            // so inconsistent encapsulation is not possible
+            return Err(anyhow!(
+                "Currently, either all or no OutgoingForwarding can request MPLS encapsulation"
+            ));
+        }
+    }
+
+    Ok(xdp_flow.build())
 }
 
 impl BpfDataPlane<'_> {
@@ -485,14 +606,14 @@ impl<'a> Attacher<DataPlaneSkel<'a>> for DataPlaneAttacher {
             .streams()
             .update(
                 &[0; 8],
-                &XdpStreamBuilder::new().handle(0).build().to_bytes(),
+                &XdpStreamOrFlowBuilder::new().handle(0).build().to_bytes(),
                 MapFlags::ANY,
             )
             .context("Failed to configure initial default stream handling")?;
 
         // configure initial number of streams
         skel.maps_mut()
-            .num_streams()
+            .num_streams_or_flows()
             .update(&0_u32.to_ne_bytes(), &1_u16.to_ne_bytes(), MapFlags::ANY)
             .context("Failed to set num_streams")?;
 
@@ -509,38 +630,55 @@ struct UpdateStreamCallbacks<'a> {
 fn update_stream_maps(
     skel: &mut DataPlaneSkel<'_>,
     stream_handle: u16,
-    stream_identification: &StreamIdentification,
-    xdp_stream: &XdpStream,
-    outgoing_l2: &[OutgoingL2],
+    identification: &Identification,
+    xdp_stream: &XdpStreamOrFlow,
+    outgoing_forwardings: &[OutgoingForwarding],
     callbacks: &mut UpdateStreamCallbacks<'_>,
 ) -> Result<()> {
     let redirect_interfaces = (callbacks.create_devmap)()?;
 
-    for (i, l2) in outgoing_l2.iter().enumerate() {
-        // Load dedicated postprocessing BPF
-        let skel_builder = (callbacks.generate_skel_postprocessing)();
-        let mut open_skel = skel_builder.open()?;
-        open_skel.rodata_mut().debug_output = skel.rodata().debug_output;
+    let mut i = 0;
+    for outgoing_forwarding in outgoing_forwardings {
+        for l2 in outgoing_forwarding.outgoing_l2()? {
+            // Load dedicated postprocessing BPF
+            let skel_builder = (callbacks.generate_skel_postprocessing)();
+            let mut open_skel = skel_builder.open()?;
+            open_skel.rodata_mut().debug_output = skel.rodata().debug_output;
 
-        assemble_target_ethernet_header(&mut open_skel, l2)?;
+            let mut fallback_ethertype = None;
 
-        // Update map
-        let postprocessing_skel = open_skel.load()?;
+            if let Some(mpls) = outgoing_forwarding.mpls_opt() {
+                configure_mpls_encapsulation(&mut open_skel, mpls)?;
+                fallback_ethertype = Some(MPLS_ETHER_TYPE);
+            }
 
-        let devmap_val = BpfDevmapVal {
-            ifindex: (callbacks.nametoindex)(l2.outgoing_interface()?)?.try_into()?,
-            bpf_prog: postprocessing_skel
-                .progs()
-                .xdp_bridge_postprocessing()
-                .as_fd()
-                .as_raw_fd(),
-        };
+            if let Some(ip) = outgoing_forwarding.ip_opt() {
+                configure_udp_ip_encapsulation(&mut open_skel, ip)?;
+                fallback_ethertype = Some(IPV6_ETHER_TYPE);
+            }
 
-        redirect_interfaces.update(
-            &u32::try_from(i)?.to_ne_bytes(),
-            &devmap_val.to_bytes(),
-            MapFlags::ANY,
-        )?;
+            assemble_target_ethernet_header(&mut open_skel, l2, fallback_ethertype)?;
+
+            let postprocessing_skel = open_skel.load()?;
+
+            // Update map
+            let devmap_val = BpfDevmapVal {
+                ifindex: (callbacks.nametoindex)(l2.outgoing_interface()?)?.try_into()?,
+                bpf_prog: postprocessing_skel
+                    .progs()
+                    .xdp_bridge_postprocessing()
+                    .as_fd()
+                    .as_raw_fd(),
+            };
+
+            redirect_interfaces.update(
+                &u32::try_from(i)?.to_ne_bytes(),
+                &devmap_val.to_bytes(),
+                MapFlags::ANY,
+            )?;
+
+            i += 1;
+        }
     }
 
     skel.maps_mut().redirect_map().update(
@@ -554,11 +692,18 @@ fn update_stream_maps(
 
     let xdp_stream_bytes = xdp_stream.to_bytes();
 
-    skel.maps_mut().streams().update(
-        &stream_identification.to_bytes()?,
-        &xdp_stream_bytes,
-        MapFlags::ANY,
-    )?;
+    match identification {
+        Identification::Stream(stream) => skel.maps_mut().streams().update(
+            &stream.to_bytes()?,
+            &xdp_stream_bytes,
+            MapFlags::ANY,
+        )?,
+        Identification::Flow(flow) => {
+            skel.maps_mut()
+                .flows()
+                .update(&flow.to_bytes()?, &xdp_stream_bytes, MapFlags::ANY)?;
+        }
+    }
 
     Ok(())
 }
@@ -584,6 +729,7 @@ fn add_initial_entry(map: &Map, stream_handle: u16) -> Result<()> {
 fn assemble_target_ethernet_header(
     open_skel: &mut OpenPostprocessingSkel<'_>,
     l2: &OutgoingL2,
+    fallback_ethertype: Option<u16>,
 ) -> Result<()> {
     let mut hdr = VlanEthernetHeaderBuilder::new();
 
@@ -610,10 +756,78 @@ fn assemble_target_ethernet_header(
     if let Some(ethertype) = l2.ether_type_opt() {
         hdr = hdr.ether_type(EtherType(*ethertype));
         open_skel.rodata_mut().overwrite_ether_type = true;
+    } else if let Some(ethertype) = fallback_ethertype {
+        hdr = hdr.ether_type(EtherType(ethertype));
+        open_skel.rodata_mut().overwrite_ether_type = true;
     }
 
     let hdr = hdr.build();
     open_skel.rodata_mut().target_outer_hdr = hdr.to_vlan_ethhdr()?;
+
+    Ok(())
+}
+
+fn configure_mpls_encapsulation(
+    open_skel: &mut OpenPostprocessingSkel<'_>,
+    mpls: &MplsHeader,
+) -> Result<()> {
+    open_skel.rodata_mut().mpls_encapsulation = true;
+
+    let label = *mpls.label()?;
+    let bos: u32 = 1; // currently only a single MPLS header is support
+    let tc: u32 = (*mpls.tc()?).into();
+    let ttl: u32 = (*mpls.ttl()?).into();
+
+    if label > MAX_LABEL || tc > MAX_TC || ttl > MAX_TTL || bos > MAX_BOS {
+        return Err(anyhow!("MPLS fields too large"));
+    }
+
+    open_skel.rodata_mut().mpls_stack_entry = ((label << MPLS_LABEL_SHIFT)
+        | (tc << MPLS_TC_SHIFT)
+        | (bos << MPLS_BOS_SHIFT)
+        | (ttl << MPLS_TTL_SHIFT))
+        .to_be();
+
+    Ok(())
+}
+
+fn configure_udp_ip_encapsulation(
+    open_skel: &mut OpenPostprocessingSkel<'_>,
+    ip: &UdpIpHeader,
+) -> Result<()> {
+    open_skel.rodata_mut().udp_ip_encapsulation = true;
+
+    let udp_header = UdpHeader {
+        source_port: *ip.source_port()?,
+        destination_port: *ip.destination_port()?,
+        length: 0, /* will be calculated by eBPF */
+        checksum: 0,
+    };
+
+    let V6(source) = ip.source()? else {
+        return Err(anyhow!(
+            "Currently only IPv6 is supported for DetNet forwarding"
+        ));
+    };
+
+    let V6(destination) = ip.destination()? else {
+        return Err(anyhow!(
+            "Currently only IPv6 is supported for DetNet forwarding"
+        ));
+    };
+
+    let ip_header = Ipv6Header {
+        traffic_class: ip.dscp()? << 2,
+        flow_label: (*ip.flow()?).try_into()?,
+        payload_length: 0, /* will be calculated by eBPF */
+        next_header: IpNumber(*ip.protocol_next_header()?),
+        hop_limit: 255,
+        source: source.octets(),
+        destination: destination.octets(),
+    };
+
+    udp_header.write(&mut open_skel.rodata_mut().udp_header[..].as_mut())?;
+    ip_header.write(&mut open_skel.rodata_mut().ip_header[..].as_mut())?;
 
     Ok(())
 }
@@ -636,6 +850,7 @@ mod tests {
     use mocks::MockMapHandle as MapHandle;
     use mocks::MockOpenDataPlaneSkel as OpenDataPlaneSkel;
     use mocks::MockOpenPostprocessingSkel as OpenPostprocessingSkel;
+    use mocks::MockPostprocessingMapsMut as PostprocessingMapsMut;
     use mocks::MockPostprocessingProgs as PostprocessingProgs;
     use mocks::MockPostprocessingSkel as PostprocessingSkel;
     use std::os::fd::BorrowedFd;
@@ -715,7 +930,7 @@ mod tests {
             map
         });
 
-        maps_mut.expect_num_streams().returning(|| {
+        maps_mut.expect_num_streams_or_flows().returning(|| {
             let mut map = Map::default();
             map.expect_update()
                 .times(1)
@@ -763,7 +978,7 @@ mod tests {
     fn generate_maps() -> DataPlaneMaps {
         let mut maps = DataPlaneMaps::default();
 
-        maps.expect_num_streams().returning(|| {
+        maps.expect_num_streams_or_flows().returning(|| {
             let mut map = Map::default();
             map.expect_lookup()
                 .returning(|_key, _value| Ok(Some(vec![1, 0])));
@@ -781,7 +996,9 @@ mod tests {
                 })
             });
             map.expect_lookup().returning(|_key, _flags| {
-                Ok(Some(XdpStreamBuilder::new().build().to_bytes().into()))
+                Ok(Some(
+                    XdpStreamOrFlowBuilder::new().build().to_bytes().into(),
+                ))
             });
             map
         });
@@ -822,6 +1039,11 @@ mod tests {
                 overwrite_vlan_proto_and_tci: false,
                 overwrite_ether_type: false,
                 target_outer_hdr: vlan_ethhdr::default(),
+                mpls_encapsulation: false,
+                mpls_stack_entry: 0,
+                udp_ip_encapsulation: false,
+                udp_header: [0; 8],
+                ip_header: [0; 40],
             });
         open_skel
     }
@@ -829,6 +1051,8 @@ mod tests {
     fn generate_postprocessing_skel<'a>() -> PostprocessingSkel<'a> {
         let mut skel = PostprocessingSkel::default();
         skel.expect_progs().returning(generate_postprocessing_progs);
+        skel.expect_maps_mut()
+            .returning(generate_postprocessing_maps_mut);
         skel
     }
 
@@ -838,6 +1062,10 @@ mod tests {
             .expect_xdp_bridge_postprocessing()
             .returning(generate_postprocessing_program);
         progs
+    }
+
+    fn generate_postprocessing_maps_mut() -> PostprocessingMapsMut {
+        PostprocessingMapsMut::default()
     }
 
     fn generate_postprocessing_program() -> Program {
