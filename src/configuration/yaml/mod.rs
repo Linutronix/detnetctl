@@ -313,26 +313,32 @@ mod tests {
     }
 
     #[test]
-    fn test_get_stream_happy() -> Result<()> {
+    fn test_get_bridged_app_and_stream_happy() -> Result<()> {
         let yaml = concatcp!(
             "version: ",
             VERSION,
             "\n",
+            "bridged_apps:\n",
+            "  app0:\n",
+            "    vlans: [1]\n",
+            "    virtual_interface_app: veth0\n",
+            "    netns_app: app0\n",
+            "    virtual_interface_bridge: vethapp0\n",
             "streams:\n",
             "  stream0:\n",
-            "    incoming_interface: eth0.1\n",
+            "    incoming_interface: vethapp0\n",
             "    identification:\n",
             "      destination_address: cb:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
             "    outgoing_l2:\n",
             "      outgoing_interface: eth0\n",
             "  stream1:\n",
-            "    incoming_interface: eth3.1\n",
+            "    incoming_interface: eth1\n",
             "    identification:\n",
             "      destination_address: AB:cb:cb:cb:cb:cb\n",
             "      vid: 1\n",
             "    outgoing_l2:\n",
-            "      outgoing_interface: eth3\n",
+            "      outgoing_interface: eth0\n",
             "interfaces:\n",
             "  eth0:\n",
             "    schedule:\n",
@@ -358,6 +364,10 @@ mod tests {
         config.read(yaml.as_bytes())?;
 
         let plain_config: Config = serde_yaml::from_str(yaml)?;
+        assert_eq!(
+            config.get_bridged_app("app0")?.unwrap(),
+            plain_config.bridged_apps.as_ref().unwrap()["app0"]
+        );
         assert_eq!(
             config.get_stream("stream0")?.unwrap(),
             plain_config.streams.as_ref().unwrap()["stream0"]
@@ -522,10 +532,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_example_yaml() {
+    fn validate_example_yamls() {
         let mut config = YAMLConfiguration::default();
         config
-            .read(File::open("./config/yaml/example.yml").unwrap())
+            .read(File::open("./config/yaml/unbridged.yml").unwrap())
+            .unwrap();
+
+        config = YAMLConfiguration::default();
+        config
+            .read(File::open("./config/yaml/bridged.yml").unwrap())
             .unwrap();
     }
 }
