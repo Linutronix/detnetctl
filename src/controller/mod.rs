@@ -261,7 +261,7 @@ impl Setup for Controller {
             }
         }
 
-        // Configure IP addresses
+        // Configure IP addresses and promiscuous mode
         {
             let locked_interface_setup = interface_setup.lock().await;
             for (name, interface) in &config.interfaces {
@@ -273,6 +273,15 @@ impl Setup for Controller {
                             .context("Adding address to interface failed")?;
                         println!("  Added {ip}/{prefix_length} to {name}");
                     }
+                }
+
+                if let Some(promiscuous) = interface.config.promiscuous_opt() {
+                    locked_interface_setup
+                        .set_promiscuous(name, *promiscuous)
+                        .await
+                        .with_context(|| {
+                            format!("Setting interface {name} to promiscious mode failed")
+                        })?;
                 }
             }
         }

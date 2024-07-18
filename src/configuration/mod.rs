@@ -277,6 +277,9 @@ pub struct Interface {
 
     /// IP addresses and prefix lengths to configure
     addresses: Option<Vec<(IpAddr, u8)>>,
+
+    /// Set promiscuous mode
+    promiscuous: Option<bool>,
 }
 
 impl FillDefaults for Interface {
