@@ -142,7 +142,18 @@ impl DataPlane for BpfDataPlane<'_> {
                 update_stream_maps(skel, stream_identification, &xdp_stream)
                     .context("Failed to update stream maps")
             })
-            .context("Failed to configure stream")
+            .context("Failed to configure stream")?;
+
+        // Install blank XDP program on outgoing_interface.
+        // Otherwise, redirected packets will not be sent out.
+        // (see https://lore.kernel.org/xdp-newbies/87v86tg5qp.fsf@toke.dk/ )
+        // If streams are configured in the other direction as well
+        // (with this `outgoing_interface` as `incoming_interface`)
+        // it will be reused and filled with proper stream configurations.
+        let outgoing = stream_config.outgoing_l2()?.outgoing_interface()?;
+        self.skels
+            .with_interface(outgoing, |_skel| Ok(()))
+            .with_context(|| format!("Failed to configure blank XDP on {outgoing}"))
     }
 }
 
