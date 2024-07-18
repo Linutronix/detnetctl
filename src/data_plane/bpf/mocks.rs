@@ -30,6 +30,7 @@ bpf_mock!(
 mock! {
     pub(crate) DataPlaneProgs {
         pub(crate) fn xdp_bridge(&self) -> MockXdpProgram;
+        pub(crate) fn pass(&self) -> MockXdpProgram;
     }
 }
 

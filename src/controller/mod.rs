@@ -228,15 +228,27 @@ impl Setup for Controller {
 
         // Setup all veth pairs for the bridged applications
         for (name, app_config) in &config.bridged_apps {
+            let virtual_interface_app = app_config.virtual_interface_app()?;
+
             let locked_interface_setup = interface_setup.lock().await;
             locked_interface_setup
                 .setup_veth_pair_with_vlans(
-                    app_config.virtual_interface_app()?,
+                    virtual_interface_app,
                     app_config.virtual_interface_bridge()?,
                     app_config.vlans_opt().unwrap_or(&vec![]),
                 )
                 .await
                 .with_context(|| format!("Setting up veth pair for {name} failed"))?;
+
+            // Load dummy XDP for app side of veth
+            // pair, otherwise traffic redirected
+            // via XDP is not handled
+            let mut locked_data_plane = data_plane.lock().await;
+            locked_data_plane
+                .load_xdp_pass(virtual_interface_app)
+                .with_context(|| {
+                    format!("Installing dummy XDP on {virtual_interface_app} failed")
+                })?;
         }
 
         // Install all XDPs for the streams
@@ -724,6 +736,7 @@ mod tests {
     fn data_plane_happy() -> MockDataPlane {
         let mut data_plane = MockDataPlane::new();
         data_plane.expect_setup_stream().returning(|_| Ok(()));
+        data_plane.expect_load_xdp_pass().returning(|_| Ok(()));
         data_plane
     }
 
@@ -731,6 +744,9 @@ mod tests {
         let mut data_plane = MockDataPlane::new();
         data_plane
             .expect_setup_stream()
+            .returning(|_| Err(anyhow!("failed")));
+        data_plane
+            .expect_load_xdp_pass()
             .returning(|_| Err(anyhow!("failed")));
         data_plane
     }
@@ -871,7 +887,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Installing stream via XDP failed")]
+    #[should_panic(expected = "Installing dummy XDP on abc failed")]
     async fn test_setup_data_plane_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));
