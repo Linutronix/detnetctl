@@ -44,6 +44,17 @@ pub trait DataPlane {
     /// e.g. if the interface does not exist or there was a conflict
     /// creating the eBPF hook.
     fn setup_stream(&mut self, stream_config: &Stream) -> Result<()>;
+
+    /// Load a dummy XDP program that just lets all traffic pass
+    /// This is for enabling redirection to interfaces that
+    /// otherwise will not initialize their XDP.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if it was not possible to install a data plane,
+    /// e.g. if the interface does not exist or there was a conflict
+    /// creating the eBPF hook.
+    fn load_xdp_pass(&mut self, interface: &str) -> Result<()>;
 }
 
 #[cfg(feature = "bpf")]
@@ -58,6 +69,10 @@ pub struct DummyDataPlane;
 
 impl DataPlane for DummyDataPlane {
     fn setup_stream(&mut self, _stream_config: &Stream) -> Result<()> {
+        Ok(())
+    }
+
+    fn load_xdp_pass(&mut self, _interface: &str) -> Result<()> {
         Ok(())
     }
 }

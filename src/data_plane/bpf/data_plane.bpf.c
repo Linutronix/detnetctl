@@ -62,4 +62,10 @@ int xdp_bridge(struct xdp_md *ctx)
 	return bpf_redirect(stream->outgoing_interface, 0);
 }
 
+SEC("xdp")
+int pass(struct xdp_md *ctx)
+{
+	return XDP_PASS;
+}
+
 char __license[] SEC("license") = "GPL";

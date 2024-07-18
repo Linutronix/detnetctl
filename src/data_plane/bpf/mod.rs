@@ -104,6 +104,7 @@ type NameToIndexCallback = Box<dyn FnMut(&str) -> Result<i32> + Send>;
 pub struct BpfDataPlane<'a> {
     skels: SkelManager<DataPlaneSkel<'a>>,
     nametoindex: NameToIndexCallback,
+    generate_skel: GenerateSkelCallback,
 }
 
 struct DataPlaneAttacher {
@@ -155,6 +156,20 @@ impl DataPlane for BpfDataPlane<'_> {
             .with_interface(outgoing, |_skel| Ok(()))
             .with_context(|| format!("Failed to configure blank XDP on {outgoing}"))
     }
+
+    fn load_xdp_pass(&mut self, interface: &str) -> Result<()> {
+        let ifidx = (self.nametoindex)(interface)?;
+        let skel_builder = (self.generate_skel)();
+
+        let open_skel = skel_builder.open()?;
+        let skel = open_skel.load()?;
+        let progs = skel.progs();
+
+        let xdp = Xdp::new(progs.pass().as_fd());
+        xdp.attach(ifidx, XdpFlags::NONE)?;
+
+        Ok(())
+    }
 }
 
 impl BpfDataPlane<'_> {
@@ -162,6 +177,7 @@ impl BpfDataPlane<'_> {
     pub fn new(debug_output: bool) -> Self {
         Self {
             nametoindex: Box::new(nametoindex),
+            generate_skel: Box::new(DataPlaneSkelBuilder::default),
             skels: SkelManager::new(Box::new(DataPlaneAttacher {
                 generate_skel: Box::new(DataPlaneSkelBuilder::default),
                 nametoindex: Box::new(nametoindex),
@@ -361,6 +377,7 @@ mod tests {
     fn test_setup_happy() -> Result<()> {
         let mut data_plane = BpfDataPlane {
             nametoindex: Box::new(|_interface| Ok(3)),
+            generate_skel: Box::new(generate_skel_builder),
             skels: SkelManager::new(Box::new(DataPlaneAttacher {
                 generate_skel: Box::new(generate_skel_builder),
                 nametoindex: Box::new(|_interface| Ok(3)),
@@ -389,6 +406,7 @@ mod tests {
     fn test_setup_interface_not_found() {
         let mut data_plane = BpfDataPlane {
             nametoindex: Box::new(|_interface| Err(anyhow!("interface not found"))),
+            generate_skel: Box::new(generate_skel_builder),
             skels: SkelManager::new(Box::new(DataPlaneAttacher {
                 generate_skel: Box::new(generate_skel_builder),
                 nametoindex: Box::new(|_interface| Err(anyhow!("interface not found"))),
