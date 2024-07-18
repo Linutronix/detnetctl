@@ -83,6 +83,9 @@ pub trait InterfaceSetup {
         interface: &str,
         network_namespace: &str,
     ) -> Result<()>;
+
+    /// Set promiscuous mode
+    async fn set_promiscuous(&self, interface: &str, enable: bool) -> Result<()>;
 }
 
 #[cfg(feature = "netlink")]
@@ -131,6 +134,10 @@ impl InterfaceSetup for DummyInterfaceSetup {
         _interface: &str,
         _network_namespace: &str,
     ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn set_promiscuous(&self, _interface: &str, _enable: bool) -> Result<()> {
         Ok(())
     }
 }

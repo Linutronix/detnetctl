@@ -68,6 +68,7 @@ fn create_interface_config(interface: &DataNodeRef<'_>) -> Result<Interface> {
         taprio: None,
         pcp_encoding,
         addresses,
+        promiscuous: None,
     })
 }
 

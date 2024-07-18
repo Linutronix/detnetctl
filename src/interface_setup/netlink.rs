@@ -245,6 +245,20 @@ impl InterfaceSetup for NetlinkSetup {
 
         Self::move_to_namespace(network_namespace, interface, &handle).await
     }
+
+    async fn set_promiscuous(&self, interface: &str, enable: bool) -> Result<()> {
+        let (connection, handle, _) = rtnetlink::new_connection()?;
+        tokio::spawn(connection);
+
+        let idx = Self::get_interface_index(interface, &handle)
+            .await
+            .ok_or_else(|| anyhow!("No interface {interface} found"))?;
+
+        let set_request = handle.link().set(idx);
+        set_request.promiscuous(enable).execute().await?;
+
+        Ok(())
+    }
 }
 
 fn namespace_path(name: &str) -> PathBuf {
