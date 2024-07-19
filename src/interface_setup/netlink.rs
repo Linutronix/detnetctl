@@ -20,6 +20,7 @@ use std::fs::File;
 use std::net::IpAddr;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
+use std::process::Command;
 use tokio::time::{sleep, Duration, Instant};
 
 const INTERFACE_STATE_CHANGE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -256,6 +257,45 @@ impl InterfaceSetup for NetlinkSetup {
 
         let set_request = handle.link().set(idx);
         set_request.promiscuous(enable).execute().await?;
+
+        Ok(())
+    }
+
+    async fn set_vlan_offload(
+        &self,
+        interface: &str,
+        tx_enable: Option<bool>,
+        rx_enable: Option<bool>,
+    ) -> Result<()> {
+        if let Some(tx) = tx_enable {
+            if !Command::new("ethtool")
+                .args([
+                    "-K",
+                    interface,
+                    "tx-vlan-offload",
+                    if tx { "on" } else { "off" },
+                ])
+                .status()?
+                .success()
+            {
+                return Err(anyhow!("Setting tx-vlan-offload for {interface} failed"));
+            }
+        }
+
+        if let Some(rx) = rx_enable {
+            if !Command::new("ethtool")
+                .args([
+                    "-K",
+                    interface,
+                    "rx-vlan-offload",
+                    if rx { "on" } else { "off" },
+                ])
+                .status()?
+                .success()
+            {
+                return Err(anyhow!("Setting rx-vlan-offload for {interface} failed"));
+            }
+        }
 
         Ok(())
     }

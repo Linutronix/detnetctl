@@ -86,6 +86,14 @@ pub trait InterfaceSetup {
 
     /// Set promiscuous mode
     async fn set_promiscuous(&self, interface: &str, enable: bool) -> Result<()>;
+
+    /// Set VLAN offload
+    async fn set_vlan_offload(
+        &self,
+        interface: &str,
+        tx_enable: Option<bool>,
+        rx_enable: Option<bool>,
+    ) -> Result<()>;
 }
 
 #[cfg(feature = "netlink")]
@@ -138,6 +146,15 @@ impl InterfaceSetup for DummyInterfaceSetup {
     }
 
     async fn set_promiscuous(&self, _interface: &str, _enable: bool) -> Result<()> {
+        Ok(())
+    }
+
+    async fn set_vlan_offload(
+        &self,
+        _interface: &str,
+        _tx_enable: Option<bool>,
+        _rx_enable: Option<bool>,
+    ) -> Result<()> {
         Ok(())
     }
 }
