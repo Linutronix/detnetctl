@@ -249,6 +249,15 @@ impl Setup for Controller {
                 .with_context(|| {
                     format!("Installing dummy XDP on {virtual_interface_app} failed")
                 })?;
+
+            // Disable VLAN offload for all outgoing traffic
+            // on app side of veth so XDP can properly process the VLAN tags
+            locked_interface_setup
+                .set_vlan_offload(virtual_interface_app, Some(false), Some(false))
+                .await
+                .with_context(|| {
+                    format!("Disabling VLAN offload for {virtual_interface_app} failed")
+                })?;
         }
 
         // Install all XDPs for the streams
@@ -258,6 +267,14 @@ impl Setup for Controller {
                 locked_data_plane
                     .setup_stream(stream)
                     .context("Installing stream via XDP failed")?;
+
+                // Disable VLAN offload for all incoming traffic
+                // so XDP can properly process the VLAN tags
+                let locked_interface_setup = interface_setup.lock().await;
+                locked_interface_setup
+                    .set_vlan_offload(stream.incoming_interface()?, Some(false), Some(false))
+                    .await
+                    .context("Disabling VLAN offload failed")?;
             }
         }
 
@@ -806,6 +823,9 @@ mod tests {
             .expect_move_to_network_namespace()
             .returning(move |_, _| Ok(()));
         interface_setup
+            .expect_set_vlan_offload()
+            .returning(move |_, _, _| Ok(()));
+        interface_setup
     }
 
     fn interface_setup_failing() -> MockInterfaceSetup {
@@ -825,6 +845,9 @@ mod tests {
         interface_setup
             .expect_move_to_network_namespace()
             .returning(move |_, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_set_vlan_offload()
+            .returning(move |_, _, _| Err(anyhow!("failed")));
         interface_setup
     }
 
