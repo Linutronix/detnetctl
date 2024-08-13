@@ -143,7 +143,7 @@ impl TaprioSetup {
             .arg("map");
 
         for prio in 0..16 {
-            command.arg(&schedule.tc_for_priority(prio)?.to_string());
+            command.arg(schedule.tc_for_priority(prio)?.to_string());
         }
 
         command.arg("queues");
