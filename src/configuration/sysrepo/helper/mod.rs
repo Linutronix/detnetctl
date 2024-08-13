@@ -132,7 +132,7 @@ impl SysrepoReader {
         }
     }
 
-    pub(crate) fn get_config(&mut self, xpath: &str) -> Result<DataTree> {
+    pub(crate) fn get_config(&self, xpath: &str) -> Result<DataTree> {
         let mut lock = self
             .ctx
             .lock()
