@@ -315,8 +315,8 @@ impl Ptp for PtpManager {
             time_flags |= TimeFlags::FreqTraceable;
         }
 
-        let data_length = u16::try_from(mem::size_of::<GrandmasterSettingsNp>())?
-            .checked_sub(u16::try_from(mem::size_of::<ManagementTlv>())?)
+        let data_length = u16::try_from(size_of::<GrandmasterSettingsNp>())?
+            .checked_sub(u16::try_from(size_of::<ManagementTlv>())?)
             .ok_or_else(|| anyhow!("Negative data length"))?;
 
         let gptp_profile = config.gptp_profile()?;
@@ -564,7 +564,7 @@ fn send_wait_recv<T: Serialize, R: for<'a> Deserialize<'a> + MessageId>(
     req: &T,
 ) -> Result<R> {
     // both the actual response type as well as the error status have to fit into the buffer
-    let size = max(mem::size_of::<R>(), mem::size_of::<ManagementErrorStatus>());
+    let size = max(size_of::<R>(), size_of::<ManagementErrorStatus>());
     let mut rec_buf = vec![0; size];
     let serialized = bincode::serialize(req)?;
 
@@ -633,7 +633,7 @@ impl ManagementTlv {
 
         ptp_req.mgmt.hdr.ver = PTP_VERSION;
 
-        ptp_req.mgmt.hdr.msg_len = (u16::try_from(mem::size_of::<Self>())? + data_length).to_be();
+        ptp_req.mgmt.hdr.msg_len = (u16::try_from(size_of::<Self>())? + data_length).to_be();
 
         /*
          * FIXME: Linuxptp's pmc uses 1 for port id. At this point
