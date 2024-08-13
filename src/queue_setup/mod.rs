@@ -3,31 +3,54 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 //! Setup a TSN-capable NIC and qdiscs
-#![cfg_attr(not(feature = "detd"), doc = "```ignore")]
-#![cfg_attr(feature = "detd", doc = "```no_run")]
-//! use detnetctl::queue_setup::{QueueSetup, DetdGateway};
-//! use detnetctl::configuration::{AppConfigBuilder, StreamIdentificationBuilder};
+#![cfg_attr(not(feature = "netlink"), doc = "```ignore")]
+#![cfg_attr(feature = "netlink", doc = "```no_run")]
+//! use detnetctl::queue_setup::{QueueSetup, TaprioSetup};
+//! use std::collections::BTreeMap;
+//! use std::net::{IpAddr, Ipv4Addr};
+//! use detnetctl::configuration::{InterfaceBuilder, GateControlEntryBuilder, ScheduleBuilder,
+//!                                GateOperation, QueueMapping, TaprioConfigBuilder, Mode};
 //!
-//! let app_config = AppConfigBuilder::new()
-//!     .logical_interface("eth0.3".to_owned())
-//!     .physical_interface("eth0".to_owned())
-//!     .period_ns(1000*100)
-//!     .offset_ns(0)
-//!     .size_bytes(1000)
-//!     .stream(
-//!         StreamIdentificationBuilder::new()
-//!         .destination_address("8a:de:82:a1:59:5a".parse()?)
-//!         .vid(3)
-//!         .build()
-//!     )
-//!     .pcp(4)
-//!     .addresses(vec![
-//!         ("192.168.3.3".parse()?, 16)
-//!     ])
-//!     .build();
+//! # tokio_test::block_on(async {
+//! let interface_config = InterfaceBuilder::new()
+//!    .schedule(
+//!        ScheduleBuilder::new()
+//!            .basetime_ns(10)
+//!            .control_list(vec![GateControlEntryBuilder::new()
+//!                .operation(GateOperation::SetGates)
+//!                .time_interval_ns(1000)
+//!                .traffic_classes(vec![1, 2])
+//!                .build()])
+//!            .number_of_traffic_classes(3)
+//!            .priority_map(BTreeMap::from([(0, 1)]))
+//!            .build(),
+//!    )
+//!    .taprio(
+//!        TaprioConfigBuilder::new()
+//!            .mode(Mode::FullOffload)
+//!            .queues(vec![
+//!                QueueMapping {
+//!                    count: 2,
+//!                    offset: 0,
+//!                },
+//!                QueueMapping {
+//!                    count: 1,
+//!                    offset: 2,
+//!                },
+//!                QueueMapping {
+//!                    count: 1,
+//!                    offset: 3,
+//!                },
+//!            ])
+//!            .build(),
+//!    )
+//!    .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
+//!    .build();
 //!
-//! let mut queue_setup = DetdGateway::new(None, None);
-//! let response = queue_setup.apply_config(&app_config)?;
+//! let mut queue_setup = TaprioSetup;
+//! let response = queue_setup.apply_config("eth0", &interface_config).await?;
+//! # Ok::<(), anyhow::Error>(())
+//! # });
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
