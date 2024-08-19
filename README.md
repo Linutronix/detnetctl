@@ -21,10 +21,10 @@ The features are introduced one by one below, but you should be able to mix and 
 
 - [Oneshot Dry-Run (Minimal Feature Set)](#oneshot-dry-run-minimal-feature-set) - using `--oneshot`
 - [D-Bus Interface](#d-bus-interface) - requires `dbus` feature, preferred over oneshot
-- [Interface setup](#interface-setup) - requires `netlink` feature, skip at runtime via `--no-interface-setup`
+- [Interface setup](#interface-setup) - requires `iproute2` feature, skip at runtime via `--no-interface-setup`
 - [eBPF Dispatcher](#ebpf-dispatcher) - requires `bpf` feature, skip at runtime via `--no-dispatcher`
 - [PTP Configuration and Status](#ptp-configuration-and-status) - requires `ptp` feature, skip at runtime via `--no-ptp-config`
-- [TAPRIO Queue setup](#taprio-queue-setup) - requires `netlink` feature, skip at runtime via `--no-queue-setup`
+- [TAPRIO Queue setup](#taprio-queue-setup) - requires `iproute2` feature, skip at runtime via `--no-queue-setup`
 - [Configuration with sysrepo (YANG/NETCONF)](#configuration-via-sysrepo-yang-netconf) - requires `sysrepo` feature, if requested with `--sysrepo`
 
 ## License
@@ -382,7 +382,7 @@ webserver:~$ sudo python3 -m http.server 80
 ### Build
 Again at the first computer start the build:
 ```console
-cargo build --no-default-features --features dbus,netlink
+cargo build --no-default-features --features dbus,iproute2
 ```
 
 ### Run
@@ -432,7 +432,7 @@ sudo apt install libelf-dev clang
 ```
 2. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf
+cargo build --no-default-features --features dbus,iproute2,bpf
 ```
 
 ### Run
@@ -460,7 +460,7 @@ sudo cat /sys/kernel/debug/tracing/trace_pipe
 1. Install `linuxptp`, configure and run `ptp4l` and `phc2sys`, either from your packet repository or from source as described at <https://tsn.readthedocs.io/timesync.html>.
 2. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf,ptp
+cargo build --no-default-features --features dbus,iproute2,bpf,ptp
 ```
 
 ### Configuration
@@ -629,7 +629,7 @@ The `mode` option of `taprio` has `FullOffload` as default, but `Software` can b
 ### Build
 
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf,ptp
+cargo build --no-default-features --features dbus,iproute2,bpf,ptp
 ```
 
 ### Run
@@ -678,7 +678,7 @@ git submodule update --init
 ```
 3. Build detnetctl
 ```console
-cargo build --no-default-features --features dbus,netlink,bpf,ptp,sysrepo
+cargo build --no-default-features --features dbus,iproute2,bpf,ptp,sysrepo
 ```
 or equivalent
 ```console

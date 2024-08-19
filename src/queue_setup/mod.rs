@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 //! Setup a TSN-capable NIC and qdiscs
-#![cfg_attr(not(feature = "netlink"), doc = "```ignore")]
-#![cfg_attr(feature = "netlink", doc = "```no_run")]
+#![cfg_attr(not(feature = "iproute2"), doc = "```ignore")]
+#![cfg_attr(feature = "iproute2", doc = "```no_run")]
 //! use detnetctl::queue_setup::{QueueSetup, TaprioSetup};
 //! use std::collections::BTreeMap;
 //! use std::net::{IpAddr, Ipv4Addr};
@@ -61,9 +61,9 @@ use async_trait::async_trait;
 #[cfg(test)]
 use mockall::automock;
 
-#[cfg(feature = "netlink")]
+#[cfg(feature = "iproute2")]
 mod taprio;
-#[cfg(feature = "netlink")]
+#[cfg(feature = "iproute2")]
 pub use taprio::TaprioSetup;
 
 /// Defines how to apply an Ethernet configuration

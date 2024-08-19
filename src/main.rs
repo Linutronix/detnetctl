@@ -319,28 +319,28 @@ fn new_sysrepo_config_arc_mutex() -> Result<Arc<Mutex<dyn Configuration + Send>>
     Err(feature_missing_error("sysrepo", "a YAML file"))
 }
 
-#[cfg(feature = "netlink")]
+#[cfg(feature = "iproute2")]
 use detnetctl::queue_setup::TaprioSetup;
-#[cfg(feature = "netlink")]
+#[cfg(feature = "iproute2")]
 fn new_taprio_setup() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
     Ok(Arc::new(Mutex::new(TaprioSetup)))
 }
 
-#[cfg(not(feature = "netlink"))]
+#[cfg(not(feature = "iproute2"))]
 fn new_taprio_setup() -> Result<Arc<Mutex<dyn QueueSetup + Send>>> {
-    Err(feature_missing_error("netlink", "--no-queue-setup"))
+    Err(feature_missing_error("iproute2", "--no-queue-setup"))
 }
 
-#[cfg(feature = "netlink")]
-use detnetctl::interface_setup::NetlinkSetup;
-#[cfg(feature = "netlink")]
+#[cfg(feature = "iproute2")]
+use detnetctl::interface_setup::Iproute2Setup;
+#[cfg(feature = "iproute2")]
 fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send>>> {
-    Ok(Arc::new(Mutex::new(NetlinkSetup::new())))
+    Ok(Arc::new(Mutex::new(Iproute2Setup::new())))
 }
 
-#[cfg(not(feature = "netlink"))]
+#[cfg(not(feature = "iproute2"))]
 fn new_netinterface_setup() -> Result<Arc<Mutex<dyn InterfaceSetup + Sync + Send>>> {
-    Err(feature_missing_error("netlink", "--no-interface-setup"))
+    Err(feature_missing_error("iproute2", "--no-interface-setup"))
 }
 
 #[cfg(feature = "ptp")]

@@ -16,7 +16,7 @@ jobs:
       - name: Run clippy
         run: |
           # TODO for the moment do not use sysrepo feature, upstream packages are still too old
-          cargo clippy --all-targets --no-default-features --features dbus,bpf,netlink,ptp --color=always -- -D warnings
+          cargo clippy --all-targets --no-default-features --features dbus,bpf,iproute2,ptp --color=always -- -D warnings
   reuse:
     runs-on: ubuntu-latest
     steps:

@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 //! Setup the physical and logical network interfaces
-#![cfg_attr(not(feature = "netlink"), doc = "```ignore")]
-#![cfg_attr(feature = "netlink", doc = "```no_run")]
-//! use detnetctl::interface_setup::{InterfaceSetup, NetlinkSetup, LinkState};
+#![cfg_attr(not(feature = "iproute2"), doc = "```ignore")]
+#![cfg_attr(feature = "iproute2", doc = "```no_run")]
+//! use detnetctl::interface_setup::{InterfaceSetup, Iproute2Setup, LinkState};
 //!
 //! # tokio_test::block_on(async {
-//! let mut interface_setup = NetlinkSetup::new();
+//! let mut interface_setup = Iproute2Setup::new();
 //! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
 //! interface_setup.add_address("192.168.12.3".parse()?, 32, "eth0").await?;
 //! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
@@ -95,11 +95,6 @@ pub trait InterfaceSetup {
         rx_enable: Option<bool>,
     ) -> Result<()>;
 }
-
-#[cfg(feature = "netlink")]
-mod netlink;
-#[cfg(feature = "netlink")]
-pub use netlink::NetlinkSetup;
 
 #[cfg(feature = "iproute2")]
 mod iproute2;
