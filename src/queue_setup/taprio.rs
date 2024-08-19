@@ -3,16 +3,10 @@
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use log::warn;
-use netlink_packet_core::ExtendedAckAttribute;
-use nix::errno;
-use num_traits::ToPrimitive;
 use options_struct_derive::validate_are_some;
-use rtnetlink::Error::NetlinkError;
-use std::process::Command;
+use tokio::process::Command;
 
-use crate::configuration::{Interface, Mode, Schedule, TaprioConfig};
-use crate::interface_setup::NetlinkSetup;
+use crate::configuration::{Interface, Mode};
 use crate::queue_setup::QueueSetup;
 
 /// Setup TAPRIO Qdisc
@@ -20,7 +14,7 @@ pub struct TaprioSetup;
 
 #[async_trait]
 impl QueueSetup for TaprioSetup {
-    /// Setup TAPRIO schedule for the given interface via netlink
+    /// Setup TAPRIO schedule for the given interface
     ///
     /// # Errors
     ///
@@ -28,96 +22,6 @@ impl QueueSetup for TaprioSetup {
     async fn apply_config(&self, interface_name: &str, interface_config: &Interface) -> Result<()> {
         let schedule = interface_config.schedule()?;
         let taprio = interface_config.taprio()?;
-        validate_are_some!(
-            schedule,
-            number_of_traffic_classes,
-            priority_map,
-            basetime_ns,
-            control_list,
-        )?;
-        validate_are_some!(taprio, mode, queues)?;
-
-        let (connection, handle, _) = rtnetlink::new_connection()?;
-
-        tokio::spawn(connection);
-
-        let idx = NetlinkSetup::get_interface_index(interface_name, &handle)
-            .await
-            .ok_or_else(|| anyhow!("no interface {interface_name} found"))?;
-
-        let num_tcs = schedule.number_of_traffic_classes()?;
-
-        let priority_map = (0..16)
-            .map(|prio| Ok(*schedule.tc_for_priority(prio)?))
-            .collect::<Result<Vec<u8>>>()?;
-
-        let mut req = handle
-            .qdisc()
-            .replace(idx.try_into()?)
-            .root()
-            .taprio()
-            .flags(taprio.mode()?.flags())
-            .num_tc(*num_tcs)
-            .priority_map(priority_map)?
-            .queues(taprio.queue_mapping_as_pairs()?)?
-            .basetime(
-                (*schedule.basetime_ns()?)
-                    .try_into()
-                    .context("cannot convert basetime_ns into i64")?,
-            )
-            .schedule(schedule.gate_control_list()?)?;
-
-        if let Some(clock_id) = taprio.clock {
-            req = req.clockid(
-                clock_id
-                    .to_u32()
-                    .ok_or_else(|| anyhow!("Cannot convert clock ID"))?,
-            );
-        } else if taprio.mode()? != &Mode::FullOffload {
-            return Err(anyhow!(
-                "clock parameter is mandatory unless full offload mode is configured"
-            ));
-        }
-
-        if let Some(txtime_delay) = taprio.txtime_delay {
-            req = req.txtime_delay(txtime_delay);
-        }
-
-        let result = req.execute().await;
-
-        if let Err(NetlinkError(err)) = result {
-            let mut msg = String::new();
-
-            for ext_ack in err.extended_ack {
-                if let ExtendedAckAttribute::Msg(m) = ext_ack {
-                    msg = m;
-                }
-            }
-
-            if let Some(code) = err.code {
-                let errno = errno::Errno::from_i32((-code).into());
-                return Err(anyhow!("{} ({}) {msg}", errno.to_string(), (-code)));
-            }
-
-            warn!("{msg}");
-        }
-
-        Ok(())
-    }
-}
-
-impl TaprioSetup {
-    /// Assemble tc command for the given schedule and interface.
-    /// Usually `setup` is preferred that uses netlink directly.
-    ///
-    /// # Errors
-    ///
-    /// Will return `Err` if it was not possible to assemble the tc command.
-    pub fn assemble_tc_command(
-        interface_name: &str,
-        taprio: &TaprioConfig,
-        schedule: &Schedule,
-    ) -> Result<Command> {
         validate_are_some!(
             schedule,
             number_of_traffic_classes,
@@ -167,12 +71,31 @@ impl TaprioSetup {
 
         if let Some(clock_id) = taprio.clock {
             command.args(["clockid", &clock_id.to_string()]);
+        } else if taprio.mode()? != &Mode::FullOffload {
+            return Err(anyhow!(
+                "clock parameter is mandatory unless full offload mode is configured"
+            ));
         }
 
         if let Some(txtime_delay) = taprio.txtime_delay {
             command.args(["txtime-delay", &txtime_delay.to_string()]);
         }
 
-        Ok(command)
+        let output = command
+            .output()
+            .await
+            .context("Failed to execute tc command for setting up TAPRIO qdisc")?;
+
+        let stdout = String::from_utf8(output.stdout).context("Invalid UTF-8 sequence")?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Setting up TAPRIO qdisc failed with status: {}, {}",
+                output.status,
+                stdout
+            ));
+        }
+
+        Ok(())
     }
 }
