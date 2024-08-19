@@ -101,6 +101,11 @@ mod netlink;
 #[cfg(feature = "netlink")]
 pub use netlink::NetlinkSetup;
 
+#[cfg(feature = "iproute2")]
+mod iproute2;
+#[cfg(feature = "iproute2")]
+pub use iproute2::Iproute2Setup;
+
 /// A link setup doing nothing, but still providing the `InterfaceSetup` trait
 ///
 /// Useful for testing purposes or if you only want to use other features
