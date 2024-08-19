@@ -13,10 +13,7 @@
 use anyhow::{anyhow, Context, Error, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, NaiveDateTime};
-use ethtool::EthtoolAttr::TsInfo;
-use ethtool::EthtoolTsInfoAttr::PhcIndex;
 use flagset::{flags, FlagSet};
-use futures::TryStreamExt;
 use libc::clockid_t;
 use nix::libc;
 use nix::poll;
@@ -34,6 +31,7 @@ use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixDatagram;
 use std::path::Path;
+use tokio::process::Command;
 
 use crate::ptp::{
     ClockAccuracy, ClockClass, PortStates, Ptp, PtpInstanceConfig, PtpIssue, PtpIssues, PtpStatus,
@@ -424,23 +422,27 @@ const fn fd_to_clockid(fd: i32) -> ClockId {
 }
 
 async fn get_phc_index(interface: &str) -> Result<u32> {
-    let (connection, mut handle, _) = ethtool::new_connection()?;
-    tokio::spawn(connection);
+    let output = Command::new("ethtool")
+        .arg("-T")
+        .arg(interface)
+        .output()
+        .await?;
 
-    let mut tsinfo_handle = handle.tsinfo().get(Some(interface)).execute().await;
+    let stdout = String::from_utf8(output.stdout).context("Invalid UTF-8 sequence")?;
 
-    while let Some(msg) = tsinfo_handle.try_next().await? {
-        let idx = msg.payload.nlas.iter().find_map(|d| match d {
-            TsInfo(PhcIndex(idx)) => Some(idx),
-            _ => None,
-        });
+    for line in stdout.lines() {
+        if line.starts_with("PTP Hardware Clock:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
 
-        if let Some(idx) = idx {
-            return Ok(*idx);
+            let phc_index = parts
+                .get(1)
+                .ok_or_else(|| anyhow!("failed to parse PTP Hardware Clock"))?;
+
+            return Ok(phc_index.parse()?);
         }
     }
 
-    Err(anyhow!("No ethtool ts info message received"))
+    Err(anyhow!("No PTP Hardware Clock entry found"))
 }
 
 async fn open_phc_fd(ifname: &str) -> Result<File> {
