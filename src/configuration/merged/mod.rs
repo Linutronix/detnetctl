@@ -122,7 +122,7 @@ mod tests {
     use const_format::concatcp;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    const VERSION: &str = "0.6.0";
+    const VERSION: &str = "0.7.0";
 
     #[test]
     fn test_merged_streams() -> Result<()> {
@@ -175,7 +175,7 @@ mod tests {
     fn test_merged_interfaces() -> Result<()> {
         let interface = String::from("enp86s0.5");
         let expected = InterfaceBuilder::new()
-            .addresses(vec![
+            .ip_addresses(vec![
                 (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
                 (
                     IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
@@ -202,7 +202,7 @@ mod tests {
                 "version: {0}\n",
                 "interfaces:\n",
                 "  {1}:\n",
-                "    addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
+                "    ip_addresses: [[192.168.2.1, 24], ['fd2a:bc93:8476:634::', 64]]\n",
             ),
             VERSION, interface
         );

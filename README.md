@@ -181,7 +181,8 @@ Setup of DetNet system
                 ),
             },
         ),
-        addresses: None,
+        ip_addresses: None,
+        mac_address: None,
     },
     "enp86s0.5": Interface {
         schedule: None,
@@ -202,7 +203,7 @@ Setup of DetNet system
                 ),
             },
         ),
-        addresses: Some(
+        ip_addresses: Some(
             [
                 (
                     10.5.1.1,
@@ -210,6 +211,7 @@ Setup of DetNet system
                 ),
             ],
         ),
+        mac_address: None,
     },
 } {
     "app0": AppConfig {
@@ -317,7 +319,7 @@ The `SETCAPS` sets the required capabilities and for that calls `sudo setcap`, s
 
 Copy and adapt the configuration file according to your preference, especially the logical interface needs to be bindable from the application and should be able to reach the hostname you specify below. A minimal configuration file without VLAN and TSN settings would look like this:
 ```yaml
-version: 0.6.0
+version: 0.7.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0
@@ -350,7 +352,7 @@ Up to now the transmission took place directly via the physical interface. Now, 
 ### Configuration
 Adapt the configuration to include the interface configuration, e.g.
 ```yaml
-version: 0.6.0
+version: 0.7.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0.5
@@ -361,7 +363,7 @@ interfaces:
   enp86s0:
     schedule: null
   enp86s0.5:
-    addresses: [[10.5.1.1, 24]]
+    ip_addresses: [[10.5.1.1, 24]]
 ```
 
 ### Prepare second computer
@@ -410,7 +412,7 @@ How the cgroups are managed is system-dependent. Today, this is usually the resp
 ### Configuration
 To properly identify the TSN stream in the dispatcher and to set the PCP, we now also need to add the destination MAC address and the PCP to the configuration:
 ```yaml
-version: 0.6.0
+version: 0.7.0
 unbridged_apps:
   app0:
     bind_interface: enp86s0.5
@@ -422,7 +424,7 @@ interfaces:
   enp86s0:
     schedule: null
   enp86s0.5:
-    addresses: [[10.5.1.1, 24]]
+    ip_addresses: [[10.5.1.1, 24]]
 ```
 
 ### Build
@@ -598,7 +600,7 @@ interfaces:
 Apart from the priority, the schedule needs to be configured, like
 
 ```yaml
-version: 0.6.0
+version: 0.7.0
 apps:
   app0:
     bind_interface: enp86s0.5
@@ -617,7 +619,7 @@ interfaces:
         - time_interval_ns: 5000
           traffic_classes: [1]
   enp86s0.5:
-    addresses: [[10.5.1.1, 24]]
+    ip_addresses: [[10.5.1.1, 24]]
 ```
 
 There are several other configuration options:

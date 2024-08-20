@@ -276,7 +276,11 @@ pub struct Interface {
     pcp_encoding: Option<PcpEncodingTable>,
 
     /// IP addresses and prefix lengths to configure
-    addresses: Option<Vec<(IpAddr, u8)>>,
+    ip_addresses: Option<Vec<(IpAddr, u8)>>,
+
+    /// MAC address to configure
+    #[serde(default, with = "serialize_mac_address")]
+    mac_address: Option<MacAddress>,
 
     /// Set promiscuous mode
     promiscuous: Option<bool>,

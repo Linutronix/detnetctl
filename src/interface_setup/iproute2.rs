@@ -5,6 +5,7 @@
 use crate::interface_setup::{InterfaceSetup, LinkState};
 use anyhow::{anyhow, ensure, Context, Result};
 use async_trait::async_trait;
+use eui48::MacAddress;
 use serde_json::Value;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -176,7 +177,7 @@ impl InterfaceSetup for Iproute2Setup {
         }
     }
 
-    async fn add_address(&self, address: IpAddr, prefix_len: u8, interface: &str) -> Result<()> {
+    async fn add_ip_address(&self, address: IpAddr, prefix_len: u8, interface: &str) -> Result<()> {
         match Self::execute_ip(&[
             "address",
             "add",
@@ -195,6 +196,20 @@ impl InterfaceSetup for Iproute2Setup {
             }
             Ok(_j) => Ok(()),
         }
+    }
+
+    async fn set_mac_address(&self, address: MacAddress, interface: &str) -> Result<()> {
+        Self::execute_ip(&[
+            "link",
+            "set",
+            "dev",
+            interface,
+            "address",
+            &address.to_hex_string(),
+        ])
+        .await?;
+
+        Ok(())
     }
 
     async fn setup_vlan_interface(
