@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use eui48::MacAddress;
 use std::fmt;
 use std::net::IpAddr;
+use std::path::Path;
 
 #[cfg(test)]
 use mockall::automock;
@@ -114,6 +115,16 @@ pub trait InterfaceSetup {
         rx_enable: Option<bool>,
         netns: &Option<String>,
     ) -> Result<()>;
+
+    /// Attach pinned XDP program
+    /// This is especially useful when attaching an XDP
+    /// program to an interface in a different network namespace
+    async fn attach_pinned_xdp(
+        &self,
+        interface: &str,
+        netns: &Option<String>,
+        path: &Path,
+    ) -> Result<()>;
 }
 
 #[cfg(feature = "iproute2")]
@@ -193,6 +204,15 @@ impl InterfaceSetup for DummyInterfaceSetup {
         _tx_enable: Option<bool>,
         _rx_enable: Option<bool>,
         _netns: &Option<String>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn attach_pinned_xdp(
+        &self,
+        _interface: &str,
+        _netns: &Option<String>,
+        _path: &Path,
     ) -> Result<()> {
         Ok(())
     }

@@ -23,6 +23,7 @@ bpf_mock!(
     MockDispatcherSkel,
     DispatcherSkel,
     MockDispatcherProgs,
+    MockDispatcherProgsMut,
     MockDispatcherMapsMut,
     MockDispatcherMaps
 );
@@ -30,6 +31,12 @@ bpf_mock!(
 mock! {
     pub(crate) DispatcherProgs {
         pub(crate) fn tc_egress(&self) -> MockTcProgram;
+    }
+}
+
+mock! {
+    pub(crate) DispatcherProgsMut {
+        pub(crate) fn tc_egress(&mut self) -> MockTcProgram;
     }
 }
 

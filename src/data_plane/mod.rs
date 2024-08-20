@@ -29,6 +29,7 @@
 
 use crate::configuration::Stream;
 use anyhow::Result;
+use std::path::Path;
 
 #[cfg(test)]
 use mockall::automock;
@@ -55,6 +56,16 @@ pub trait DataPlane {
     /// e.g. if the interface does not exist or there was a conflict
     /// creating the eBPF hook.
     fn load_xdp_pass(&mut self, interface: &str) -> Result<()>;
+
+    /// Pin a dummy XDP program that just lets all traffic pass
+    /// Similar to `load_xdp_pass`, but just pins the program
+    /// and does not attach it. This allows to attach it via
+    /// the ip tool in a different namespace.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the program could not be loaded or pinned.
+    fn pin_xdp_pass(&mut self, path: &Path) -> Result<()>;
 }
 
 #[cfg(feature = "bpf")]
@@ -73,6 +84,10 @@ impl DataPlane for DummyDataPlane {
     }
 
     fn load_xdp_pass(&mut self, _interface: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn pin_xdp_pass(&mut self, _path: &Path) -> Result<()> {
         Ok(())
     }
 }
