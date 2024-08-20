@@ -9,6 +9,7 @@ use libbpf_rs::TcAttachPoint;
 use libbpf_rs::XdpFlags;
 use mockall::mock;
 use std::os::fd::BorrowedFd;
+use std::path::Path;
 
 #[macro_export]
 macro_rules! bpf_mock {
@@ -18,6 +19,7 @@ macro_rules! bpf_mock {
      $mockSkel:ident,
      $skel:ident,
      $mockProgs:ident,
+     $mockProgsMut:ident,
      $mockMapsMut:ident,
      $mockMaps:ident
      ) => {
@@ -37,6 +39,7 @@ macro_rules! bpf_mock {
         mock! {
             pub(crate) $skel<'a> {
                 pub(crate) fn progs(&self) -> $mockProgs;
+                pub(crate) fn progs_mut(&mut self) -> $mockProgsMut;
                 pub(crate) fn maps_mut(&mut self) -> $mockMapsMut;
                 pub(crate) fn maps(&mut self) -> $mockMaps;
             }
@@ -63,6 +66,7 @@ pub(crate) struct MockInnerMapInfo {
 mock! {
     pub(crate) XdpProgram {
         pub(crate) fn as_fd(&self) -> BorrowedFd<'_>;
+        pub(crate) fn pin(&mut self, path: &Path) -> Result<()>;
     }
 }
 

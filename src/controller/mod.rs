@@ -60,6 +60,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::Instant;
 
+const XDP_PASS_PIN_PATH: &str = "/sys/fs/bpf/detnetctl-pass";
+
 /// Defines a setup operation
 #[async_trait]
 pub trait Setup {
@@ -275,21 +277,21 @@ impl Setup for Controller {
             // pair, otherwise traffic redirected
             // via XDP is not handled
             let mut locked_data_plane = data_plane.lock().await;
+            let xdp_pin_path = Path::new(XDP_PASS_PIN_PATH);
             locked_data_plane
-                .load_xdp_pass(virtual_interface_app)
-                .with_context(|| {
-                    format!("Installing dummy XDP on {virtual_interface_app} failed")
-                })?;
+                .pin_xdp_pass(xdp_pin_path)
+                .context("Pinning dummy XDP failed")?;
+
+            let netns = Some(app_config.netns_app()?.to_owned());
+
+            locked_interface_setup
+                .attach_pinned_xdp(virtual_interface_app, &netns, xdp_pin_path)
+                .await?;
 
             // Disable VLAN offload for all outgoing traffic
             // on app side of veth so XDP can properly process the VLAN tags
             locked_interface_setup
-                .set_vlan_offload(
-                    virtual_interface_app,
-                    Some(false),
-                    Some(false),
-                    &Some(app_config.netns_app()?.to_owned()),
-                )
+                .set_vlan_offload(virtual_interface_app, Some(false), Some(false), &netns)
                 .await
                 .with_context(|| {
                     format!("Disabling VLAN offload for {virtual_interface_app} failed")
@@ -816,6 +818,7 @@ mod tests {
         let mut data_plane = MockDataPlane::new();
         data_plane.expect_setup_stream().returning(|_| Ok(()));
         data_plane.expect_load_xdp_pass().returning(|_| Ok(()));
+        data_plane.expect_pin_xdp_pass().returning(|_| Ok(()));
         data_plane
     }
 
@@ -826,6 +829,9 @@ mod tests {
             .returning(|_| Err(anyhow!("failed")));
         data_plane
             .expect_load_xdp_pass()
+            .returning(|_| Err(anyhow!("failed")));
+        data_plane
+            .expect_pin_xdp_pass()
             .returning(|_| Err(anyhow!("failed")));
         data_plane
     }
@@ -879,6 +885,9 @@ mod tests {
             .expect_set_vlan_offload()
             .returning(move |_, _, _, _| Ok(()));
         interface_setup
+            .expect_attach_pinned_xdp()
+            .returning(move |_, _, _| Ok(()));
+        interface_setup
     }
 
     fn interface_setup_failing() -> MockInterfaceSetup {
@@ -901,6 +910,9 @@ mod tests {
         interface_setup
             .expect_set_vlan_offload()
             .returning(move |_, _, _, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_attach_pinned_xdp()
+            .returning(move |_, _, _| Err(anyhow!("failed")));
         interface_setup
     }
 
@@ -972,7 +984,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Installing dummy XDP on abc failed")]
+    #[should_panic(expected = "Pinning dummy XDP failed")]
     async fn test_setup_data_plane_failure() {
         let configuration = Arc::new(Mutex::new(configuration_happy(String::from("abc"), 4)));
         let queue_setup = Arc::new(Mutex::new(queue_setup_happy()));

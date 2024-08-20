@@ -23,6 +23,7 @@ bpf_mock!(
     MockDataPlaneSkel,
     DataPlaneSkel,
     MockDataPlaneProgs,
+    MockDataPlaneProgsMut,
     MockDataPlaneMapsMut,
     MockDataPlaneMaps
 );
@@ -31,6 +32,13 @@ mock! {
     pub(crate) DataPlaneProgs {
         pub(crate) fn xdp_bridge(&self) -> MockXdpProgram;
         pub(crate) fn pass(&self) -> MockXdpProgram;
+    }
+}
+
+mock! {
+    pub(crate) DataPlaneProgsMut {
+        pub(crate) fn xdp_bridge(&mut self) -> MockXdpProgram;
+        pub(crate) fn pass(&mut self) -> MockXdpProgram;
     }
 }
 

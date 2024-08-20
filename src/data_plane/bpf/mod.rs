@@ -5,6 +5,8 @@
 use crate::configuration::{Stream, StreamIdentification};
 use anyhow::{anyhow, Context, Result};
 use libbpf_rs::{MapFlags, XdpFlags};
+use std::fs::remove_file;
+use std::path::Path;
 
 #[cfg(not(test))]
 #[allow(
@@ -167,6 +169,24 @@ impl DataPlane for BpfDataPlane<'_> {
 
         let xdp = Xdp::new(progs.pass().as_fd());
         xdp.attach(ifidx, XdpFlags::NONE)?;
+
+        Ok(())
+    }
+
+    fn pin_xdp_pass(&mut self, path: &Path) -> Result<()> {
+        // since program pins are just another reference,
+        // removing the pin won't deattach any existing programs
+        if path.exists() {
+            remove_file(path)?;
+        }
+
+        let skel_builder = (self.generate_skel)();
+
+        let open_skel = skel_builder.open()?;
+        let mut skel = open_skel.load()?;
+        let mut progs = skel.progs_mut();
+
+        progs.pass().pin(path)?;
 
         Ok(())
     }

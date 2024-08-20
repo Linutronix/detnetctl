@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use eui48::MacAddress;
 use serde_json::Value;
 use std::net::IpAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration, Instant};
@@ -408,6 +409,33 @@ impl InterfaceSetup for Iproute2Setup {
             .await
             .with_context(|| format!("Setting rx-vlan-offload for {interface} failed"))?;
         }
+
+        Ok(())
+    }
+
+    async fn attach_pinned_xdp(
+        &self,
+        interface: &str,
+        netns: &Option<String>,
+        path: &Path,
+    ) -> Result<()> {
+        Self::execute_ip(
+            &[
+                // do not set XDP_FLAGS_UPDATE_IF_NOEXIST in line
+                // with how the direct BPF attach is implemented
+                "-force",
+                "link",
+                "set",
+                "dev",
+                interface,
+                "xdp",
+                "pinned",
+                path.to_str()
+                    .ok_or_else(|| anyhow!("Failed to convert path"))?,
+            ],
+            netns,
+        )
+        .await?;
 
         Ok(())
     }
