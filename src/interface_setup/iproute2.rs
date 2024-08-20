@@ -26,8 +26,15 @@ impl Iproute2Setup {
         Self
     }
 
-    async fn execute_ip(args: &[&str]) -> Result<Value> {
-        let mut cmd = Command::new("ip");
+    async fn execute_ip(args: &[&str], netns: &Option<String>) -> Result<Value> {
+        let mut cmd = netns.as_ref().map_or_else(
+            || Command::new("ip"),
+            |namespace| {
+                let mut nscmd = Command::new("nsenter");
+                nscmd.arg(format!("--net=/run/netns/{namespace}")).arg("ip");
+                nscmd
+            },
+        );
 
         cmd.arg("-json").args(args);
 
@@ -78,8 +85,42 @@ impl Iproute2Setup {
             .cloned()
     }
 
-    async fn get_interface(interface: &str) -> Result<Option<Value>> {
-        match Self::execute_ip(&["-detail", "link", "show", interface]).await {
+    async fn execute_ethtool(args: &[&str], netns: &Option<String>) -> Result<String> {
+        let mut cmd = netns.as_ref().map_or_else(
+            || {
+                let mut ethtoolcmd = Command::new("ethtool");
+                ethtoolcmd.args(args);
+                ethtoolcmd
+            },
+            |namespace| {
+                let mut ipcmd = Command::new("ip");
+                ipcmd
+                    .arg("netns")
+                    .arg("exec")
+                    .arg(namespace)
+                    .arg("ethtool")
+                    .args(args);
+                ipcmd
+            },
+        );
+
+        let output = cmd.output().await?;
+
+        let stdout = String::from_utf8(output.stdout).context("Invalid UTF-8 sequence")?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Command failed with status: {}, {}",
+                output.status,
+                stdout
+            ));
+        }
+
+        Ok(stdout)
+    }
+
+    async fn get_interface(interface: &str, netns: &Option<String>) -> Result<Option<Value>> {
+        match Self::execute_ip(&["-detail", "link", "show", interface], netns).await {
             Err(e) => {
                 if e.to_string()
                     .contains(&format!("Device \"{interface}\" does not exist."))
@@ -97,8 +138,11 @@ impl Iproute2Setup {
     ///
     /// # Errors
     /// If an interface was found, but the interface index could not be determined.
-    pub async fn get_interface_index(interface: &str) -> Result<Option<u32>> {
-        Self::get_interface(interface).await.map(|r| {
+    pub async fn get_interface_index(
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<Option<u32>> {
+        Self::get_interface(interface, netns).await.map(|r| {
             r.map(|j| -> Result<u32> {
                 Ok(j.get("ifindex")
                     .ok_or_else(|| anyhow!("ifindex missing"))?
@@ -110,10 +154,12 @@ impl Iproute2Setup {
         })?
     }
 
-    async fn get_interface_speed(&self, interface: &str) -> Result<Option<u32>> {
-        let output = Command::new("ethtool").arg(interface).output().await?;
-
-        let stdout = String::from_utf8(output.stdout).context("Invalid UTF-8 sequence")?;
+    async fn get_interface_speed(
+        &self,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<Option<u32>> {
+        let stdout = Self::execute_ethtool(&[interface], netns).await?;
 
         for line in stdout.lines() {
             if line.trim().starts_with("Speed:") {
@@ -136,7 +182,7 @@ impl Iproute2Setup {
     }
 
     async fn move_to_namespace(netns: &str, interface: &str) -> Result<()> {
-        Self::execute_ip(&["link", "set", "dev", interface, "netns", netns]).await?;
+        Self::execute_ip(&["link", "set", "dev", interface, "netns", netns], &None).await?;
         Ok(())
     }
 }
@@ -149,20 +195,25 @@ impl Default for Iproute2Setup {
 
 #[async_trait]
 impl InterfaceSetup for Iproute2Setup {
-    async fn set_link_state(&self, state: LinkState, interface: &str) -> Result<()> {
+    async fn set_link_state(
+        &self,
+        state: LinkState,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<()> {
         let state_cmd = match state {
             LinkState::Up => "up",
             LinkState::Down => "down",
         };
 
-        Self::execute_ip(&["link", "set", state_cmd, "dev", interface]).await?;
+        Self::execute_ip(&["link", "set", state_cmd, "dev", interface], netns).await?;
 
         // Directly after setting the link state, it takes some time until
         // it is properly applied. E.g. the speed of the link mode is not yet
         // known. Therefore, poll it until the state was properly applied.
         let start_time = Instant::now();
         loop {
-            let speed = self.get_interface_speed(interface).await?;
+            let speed = self.get_interface_speed(interface, netns).await?;
             if speed.is_some() {
                 return Ok(());
             }
@@ -177,14 +228,23 @@ impl InterfaceSetup for Iproute2Setup {
         }
     }
 
-    async fn add_ip_address(&self, address: IpAddr, prefix_len: u8, interface: &str) -> Result<()> {
-        match Self::execute_ip(&[
-            "address",
-            "add",
-            &format!("{address}/{prefix_len}"),
-            "dev",
-            interface,
-        ])
+    async fn add_ip_address(
+        &self,
+        address: IpAddr,
+        prefix_len: u8,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<()> {
+        match Self::execute_ip(
+            &[
+                "address",
+                "add",
+                &format!("{address}/{prefix_len}"),
+                "dev",
+                interface,
+            ],
+            netns,
+        )
         .await
         {
             Err(e) => {
@@ -198,15 +258,23 @@ impl InterfaceSetup for Iproute2Setup {
         }
     }
 
-    async fn set_mac_address(&self, address: MacAddress, interface: &str) -> Result<()> {
-        Self::execute_ip(&[
-            "link",
-            "set",
-            "dev",
-            interface,
-            "address",
-            &address.to_hex_string(),
-        ])
+    async fn set_mac_address(
+        &self,
+        address: MacAddress,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<()> {
+        Self::execute_ip(
+            &[
+                "link",
+                "set",
+                "dev",
+                interface,
+                "address",
+                &address.to_hex_string(),
+            ],
+            netns,
+        )
         .await?;
 
         Ok(())
@@ -218,79 +286,90 @@ impl InterfaceSetup for Iproute2Setup {
         vlan_interface: &str,
         vid: u16,
     ) -> Result<()> {
-        if let Some(link) = Self::get_interface(vlan_interface).await? {
+        if let Some(link) = Self::get_interface(vlan_interface, &None).await? {
             // no need to add the interface, but still validate if it matches
             return validate_vlan_link(&link, vlan_interface, parent_interface, vid);
         }
 
-        Self::execute_ip(&[
-            "link",
-            "add",
-            "link",
-            parent_interface,
-            "name",
-            vlan_interface,
-            "type",
-            "vlan",
-            "id",
-            &vid.to_string(),
-        ])
+        Self::execute_ip(
+            &[
+                "link",
+                "add",
+                "link",
+                parent_interface,
+                "name",
+                vlan_interface,
+                "type",
+                "vlan",
+                "id",
+                &vid.to_string(),
+            ],
+            &None,
+        )
         .await?;
 
         // We want to set the interface state to up manually later
-        self.set_link_state(LinkState::Down, vlan_interface).await
+        self.set_link_state(LinkState::Down, vlan_interface, &None)
+            .await
     }
 
     async fn setup_veth_pair_with_vlans(
         &self,
         veth_app: &str,
+        netns_app: &str,
         veth_bridge: &str,
         vlan_ids: &[u16],
     ) -> Result<()> {
-        if Self::get_interface(veth_bridge).await?.is_some() {
-            return Err(anyhow!("Interface {veth_bridge} already exists. Currently reconfiguration is not possible."));
+        if let Some(veth_link) = Self::get_interface(veth_bridge, &None).await? {
+            // no need to add the interfaces, but still validate if they match
+            return validate_veth_link(&veth_link, veth_app, netns_app, vlan_ids).await;
+        }
+
+        // Setup network namespace if it does not exist
+        let ns_path = namespace_path(netns_app);
+        if !ns_path.exists() {
+            Self::execute_ip(&["netns", "add", netns_app], &None).await?;
         }
 
         // Create veth pair
-        Self::execute_ip(&[
-            "link",
-            "add",
-            "dev",
-            veth_bridge,
-            "type",
-            "veth",
-            "peer",
-            "name",
-            veth_app,
-        ])
+        Self::execute_ip(
+            &[
+                "link",
+                "add",
+                "dev",
+                veth_bridge,
+                "type",
+                "veth",
+                "peer",
+                "name",
+                veth_app,
+            ],
+            &None,
+        )
         .await?;
 
         for vid in vlan_ids {
-            self.setup_vlan_interface(veth_app, &format!("{veth_app}.{vid}"), *vid)
+            let vlan_interface = &format!("{veth_app}.{vid}");
+            self.setup_vlan_interface(veth_app, vlan_interface, *vid)
                 .await?;
+
+            Self::move_to_namespace(netns_app, vlan_interface).await?;
         }
+
+        Self::move_to_namespace(netns_app, veth_app).await?;
 
         Ok(())
     }
 
-    async fn move_to_network_namespace(
+    async fn set_promiscuous(
         &self,
         interface: &str,
-        network_namespace: &str,
+        enable: bool,
+        netns: &Option<String>,
     ) -> Result<()> {
-        // Setup network namespace if it does not exist
-        let ns_path = namespace_path(network_namespace);
-        if !ns_path.exists() {
-            Self::execute_ip(&["netns", "add", network_namespace]).await?;
-        }
-
-        Self::move_to_namespace(network_namespace, interface).await
-    }
-
-    async fn set_promiscuous(&self, interface: &str, enable: bool) -> Result<()> {
         let state_cmd = if enable { "on" } else { "off" };
 
-        Self::execute_ip(&["link", "set", interface, "promisc", state_cmd]).await?;
+        Self::execute_ip(&["link", "set", interface, "promisc", state_cmd], netns).await?;
 
         Ok(())
     }
@@ -300,37 +379,34 @@ impl InterfaceSetup for Iproute2Setup {
         interface: &str,
         tx_enable: Option<bool>,
         rx_enable: Option<bool>,
+        netns: &Option<String>,
     ) -> Result<()> {
         if let Some(tx) = tx_enable {
-            if !Command::new("ethtool")
-                .args([
+            Self::execute_ethtool(
+                &[
                     "-K",
                     interface,
                     "tx-vlan-offload",
                     if tx { "on" } else { "off" },
-                ])
-                .status()
-                .await?
-                .success()
-            {
-                return Err(anyhow!("Setting tx-vlan-offload for {interface} failed"));
-            }
+                ],
+                netns,
+            )
+            .await
+            .with_context(|| format!("Setting tx-vlan-offload for {interface} failed"))?;
         }
 
         if let Some(rx) = rx_enable {
-            if !Command::new("ethtool")
-                .args([
+            Self::execute_ethtool(
+                &[
                     "-K",
                     interface,
                     "rx-vlan-offload",
                     if rx { "on" } else { "off" },
-                ])
-                .status()
-                .await?
-                .success()
-            {
-                return Err(anyhow!("Setting rx-vlan-offload for {interface} failed"));
-            }
+                ],
+                netns,
+            )
+            .await
+            .with_context(|| format!("Setting rx-vlan-offload for {interface} failed"))?;
         }
 
         Ok(())
@@ -370,6 +446,38 @@ fn validate_vlan_link(
             .get("info_data")
             .is_some_and(|y| y.get("id").is_some_and(|z| z == vid))),
         "VLAN ID for {vlan_interface} is not {vid}"
+    );
+
+    Ok(())
+}
+
+async fn validate_veth_link(
+    veth_bridge_link: &Value,
+    veth_app: &str,
+    netns_app: &str,
+    vlan_ids: &[u16],
+) -> Result<()> {
+    for vid in vlan_ids {
+        let vlan_interface = &format!("{veth_app}.{vid}");
+        let vlan_link = Iproute2Setup::get_interface(vlan_interface, &Some(netns_app.to_owned()))
+            .await?
+            .ok_or_else(|| anyhow!("interface {vlan_interface} not found"))?;
+
+        validate_vlan_link(&vlan_link, vlan_interface, veth_app, *vid)?;
+    }
+
+    let veth_app_link = Iproute2Setup::get_interface(veth_app, &Some(netns_app.to_owned()))
+        .await?
+        .ok_or_else(|| anyhow!("interface not found"))?;
+
+    let veth_bridge_index = veth_bridge_link
+        .get("ifindex")
+        .ok_or_else(|| anyhow!("ifindex not found"))?;
+    ensure!(
+        veth_app_link
+            .get("link_index")
+            .is_some_and(|x| x == veth_bridge_index),
+        "link index for veth pair does not match"
     );
 
     Ok(())

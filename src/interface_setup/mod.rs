@@ -9,9 +9,9 @@
 //!
 //! # tokio_test::block_on(async {
 //! let mut interface_setup = Iproute2Setup::new();
-//! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
-//! interface_setup.add_ip_address("192.168.12.3".parse()?, 32, "eth0").await?;
-//! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
+//! interface_setup.set_link_state(LinkState::Down, "eth0", &None).await?;
+//! interface_setup.add_ip_address("192.168.12.3".parse()?, 32, "eth0", &None).await?;
+//! interface_setup.set_link_state(LinkState::Down, "eth0", &None).await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
 //! # Ok::<(), anyhow::Error>(())
@@ -50,13 +50,29 @@ impl fmt::Display for LinkState {
 #[async_trait]
 pub trait InterfaceSetup {
     /// Construct a link setup command
-    async fn set_link_state(&self, state: LinkState, interface: &str) -> Result<()>;
+    async fn set_link_state(
+        &self,
+        state: LinkState,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<()>;
 
     /// Add IP address to interface
-    async fn add_ip_address(&self, address: IpAddr, prefix_len: u8, interface: &str) -> Result<()>;
+    async fn add_ip_address(
+        &self,
+        address: IpAddr,
+        prefix_len: u8,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<()>;
 
     /// Set MAC address of interface
-    async fn set_mac_address(&self, address: MacAddress, interface: &str) -> Result<()>;
+    async fn set_mac_address(
+        &self,
+        address: MacAddress,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<()>;
 
     /// Setup VLAN interface
     async fn setup_vlan_interface(
@@ -66,30 +82,29 @@ pub trait InterfaceSetup {
         vid: u16,
     ) -> Result<()>;
 
-    /// Setup VETH pair
+    /// Setup VETH pair and move app side to network namespace
     /// Also setup VLAN interfaces if `vlan_ids` are provided.
     /// Corresponding to
+    /// `ip netns add netns_app`
     /// `ip link add dev veth_bridge type veth peer name veth_app`
     /// `ip link add link veth_app name veth_app.100 type vlan id 100`
+    /// `ip link set dev veth_app netns netns_app`
+    /// `ip link set dev veth_app.100 netns netns_app`
     async fn setup_veth_pair_with_vlans(
         &self,
         veth_app: &str,
+        netns_app: &str,
         veth_bridge: &str,
         vlan_ids: &[u16],
     ) -> Result<()>;
 
-    /// Move interface to network namespace and create if it does not exist.
-    /// Corresponding to
-    /// `ip netns add netns_app`
-    /// `ip link set dev veth_app netns netns_app`
-    async fn move_to_network_namespace(
+    /// Set promiscuous mode
+    async fn set_promiscuous(
         &self,
         interface: &str,
-        network_namespace: &str,
+        enable: bool,
+        netns: &Option<String>,
     ) -> Result<()>;
-
-    /// Set promiscuous mode
-    async fn set_promiscuous(&self, interface: &str, enable: bool) -> Result<()>;
 
     /// Set VLAN offload
     async fn set_vlan_offload(
@@ -97,6 +112,7 @@ pub trait InterfaceSetup {
         interface: &str,
         tx_enable: Option<bool>,
         rx_enable: Option<bool>,
+        netns: &Option<String>,
     ) -> Result<()>;
 }
 
@@ -115,7 +131,12 @@ impl DummyInterfaceSetup {}
 
 #[async_trait]
 impl InterfaceSetup for DummyInterfaceSetup {
-    async fn set_link_state(&self, _state: LinkState, _interface: &str) -> Result<()> {
+    async fn set_link_state(
+        &self,
+        _state: LinkState,
+        _interface: &str,
+        _netns: &Option<String>,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -124,11 +145,17 @@ impl InterfaceSetup for DummyInterfaceSetup {
         _address: IpAddr,
         _prefix_len: u8,
         _interface: &str,
+        _netns: &Option<String>,
     ) -> Result<()> {
         Ok(())
     }
 
-    async fn set_mac_address(&self, _address: MacAddress, _interface: &str) -> Result<()> {
+    async fn set_mac_address(
+        &self,
+        _address: MacAddress,
+        _interface: &str,
+        _netns: &Option<String>,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -144,21 +171,19 @@ impl InterfaceSetup for DummyInterfaceSetup {
     async fn setup_veth_pair_with_vlans(
         &self,
         _veth_app: &str,
+        _netns_app: &str,
         _veth_bridge: &str,
         _vlan_ids: &[u16],
     ) -> Result<()> {
         Ok(())
     }
 
-    async fn move_to_network_namespace(
+    async fn set_promiscuous(
         &self,
         _interface: &str,
-        _network_namespace: &str,
+        _enable: bool,
+        _netns: &Option<String>,
     ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn set_promiscuous(&self, _interface: &str, _enable: bool) -> Result<()> {
         Ok(())
     }
 
@@ -167,6 +192,7 @@ impl InterfaceSetup for DummyInterfaceSetup {
         _interface: &str,
         _tx_enable: Option<bool>,
         _rx_enable: Option<bool>,
+        _netns: &Option<String>,
     ) -> Result<()> {
         Ok(())
     }

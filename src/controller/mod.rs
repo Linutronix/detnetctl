@@ -107,6 +107,9 @@ struct ExpandedInterface {
 
     /// Streams that have this physical interface as `outgoing_l2.outgoing_interface`
     streams_to_protect: Vec<StreamIdentification>,
+
+    /// Network namespace if this is a virtual interface of a bridged app
+    network_namespace: Option<String>,
 }
 
 struct ExpandedConfiguration {
@@ -165,7 +168,12 @@ async fn fetch_expanded_configuration(
     println!("Streams: {streams:#?}");
 
     Ok(ExpandedConfiguration {
-        interfaces: collect_expanded_interfaces(&interfaces, &unbridged_apps, &streams)?,
+        interfaces: collect_expanded_interfaces(
+            &interfaces,
+            &unbridged_apps,
+            &bridged_apps,
+            &streams,
+        )?,
         bridged_apps,
         streams: streams.into_values().collect(),
     })
@@ -174,6 +182,7 @@ async fn fetch_expanded_configuration(
 fn collect_expanded_interfaces(
     interfaces: &BTreeMap<String, Interface>,
     unbridged_apps: &BTreeMap<String, UnbridgedApp>,
+    bridged_apps: &BTreeMap<String, BridgedApp>,
     streams: &BTreeMap<String, Stream>,
 ) -> Result<BTreeMap<String, ExpandedInterface>> {
     interfaces
@@ -184,6 +193,25 @@ fn collect_expanded_interfaces(
             for stream in streams.values() {
                 if stream.outgoing_l2()?.outgoing_interface()? == name {
                     streams_to_protect.push(stream.identification()?.clone());
+                }
+            }
+
+            // find matching bridged app to set the network namespace
+            let mut network_namespace = None;
+            for app_config in bridged_apps.values() {
+                let veth_app = app_config.virtual_interface_app()?;
+                let netns_app = app_config.netns_app()?;
+
+                if veth_app == name {
+                    network_namespace = Some(netns_app.to_owned());
+                    break;
+                }
+
+                for vid in app_config.vlans_opt().unwrap_or(&vec![]) {
+                    if &format!("{veth_app}.{vid}") == name {
+                        network_namespace = Some(netns_app.to_owned());
+                        break;
+                    }
                 }
             }
 
@@ -202,6 +230,8 @@ fn collect_expanded_interfaces(
                         })
                         .filter_map(Result::transpose)
                         .collect::<Result<Vec<UnbridgedApp>>>()?,
+
+                    network_namespace,
                 },
             ))
         })
@@ -234,6 +264,7 @@ impl Setup for Controller {
             locked_interface_setup
                 .setup_veth_pair_with_vlans(
                     virtual_interface_app,
+                    app_config.netns_app()?,
                     app_config.virtual_interface_bridge()?,
                     app_config.vlans_opt().unwrap_or(&vec![]),
                 )
@@ -253,7 +284,12 @@ impl Setup for Controller {
             // Disable VLAN offload for all outgoing traffic
             // on app side of veth so XDP can properly process the VLAN tags
             locked_interface_setup
-                .set_vlan_offload(virtual_interface_app, Some(false), Some(false))
+                .set_vlan_offload(
+                    virtual_interface_app,
+                    Some(false),
+                    Some(false),
+                    &Some(app_config.netns_app()?.to_owned()),
+                )
                 .await
                 .with_context(|| {
                     format!("Disabling VLAN offload for {virtual_interface_app} failed")
@@ -272,7 +308,12 @@ impl Setup for Controller {
                 // so XDP can properly process the VLAN tags
                 let locked_interface_setup = interface_setup.lock().await;
                 locked_interface_setup
-                    .set_vlan_offload(stream.incoming_interface()?, Some(false), Some(false))
+                    .set_vlan_offload(
+                        stream.incoming_interface()?,
+                        Some(false),
+                        Some(false),
+                        &None,
+                    )
                     .await
                     .context("Disabling VLAN offload failed")?;
             }
@@ -280,6 +321,9 @@ impl Setup for Controller {
 
         // Configure IP and MAC addresses and promiscuous mode
         perform_interface_setup(&config, &interface_setup).await?;
+
+        // Set both sides of the veth pairs up
+        set_veths_up(&config, &interface_setup).await?;
 
         // Iterate over all interfaces with schedule configuration
         // By this approach, instead of iterating over the apps,
@@ -296,8 +340,13 @@ impl Setup for Controller {
             )
             .await; // No ? since we need to ensure that the link is up again even after error
 
-            let if_up_result =
-                set_interface_state(name, LinkState::Up, &*locked_interface_setup).await;
+            let if_up_result = set_interface_state(
+                name,
+                LinkState::Up,
+                &interface.network_namespace,
+                &*locked_interface_setup,
+            )
+            .await;
 
             // The first occurred error shall be returned, but a potential second still be printed
             if let Err(if_up_error) = if_up_result {
@@ -317,19 +366,12 @@ impl Setup for Controller {
                 set_interface_state(
                     app_config.bind_interface()?,
                     LinkState::Up,
+                    &None,
                     &*locked_interface_setup,
                 )
                 .await?;
             }
         }
-
-        move_veths_to_namespaces(&config, &interface_setup).await?;
-
-        // Finally set the bridge side of the veth pair up.
-        // The other side needs to be set up by the user
-        // inside the namespace, since it cannot be set up
-        // from this process.
-        set_veth_bridge_side_up(&config, &interface_setup).await?;
 
         println!("  Finished after {:.1?}", start.elapsed());
 
@@ -345,7 +387,7 @@ async fn perform_interface_setup(
     for (name, interface) in &config.interfaces {
         if let Some(address) = interface.config.mac_address_opt() {
             locked_interface_setup
-                .set_mac_address(*address, name)
+                .set_mac_address(*address, name, &interface.network_namespace)
                 .await
                 .context("Setting MAC address of interface failed")?;
             println!("  Set {address} to {name}");
@@ -354,7 +396,7 @@ async fn perform_interface_setup(
         if let Some(addresses) = &interface.config.ip_addresses_opt() {
             for (ip, prefix_length) in *addresses {
                 locked_interface_setup
-                    .add_ip_address(*ip, *prefix_length, name)
+                    .add_ip_address(*ip, *prefix_length, name, &interface.network_namespace)
                     .await
                     .context("Adding IP address to interface failed")?;
                 println!("  Added {ip}/{prefix_length} to {name}");
@@ -363,7 +405,7 @@ async fn perform_interface_setup(
 
         if let Some(promiscuous) = interface.config.promiscuous_opt() {
             locked_interface_setup
-                .set_promiscuous(name, *promiscuous)
+                .set_promiscuous(name, *promiscuous, &interface.network_namespace)
                 .await
                 .with_context(|| format!("Setting interface {name} to promiscious mode failed"))?;
         }
@@ -372,46 +414,37 @@ async fn perform_interface_setup(
     Ok(())
 }
 
-async fn move_veths_to_namespaces(
+async fn set_veths_up(
     config: &ExpandedConfiguration,
     interface_setup: &Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
 ) -> Result<()> {
+    let locked_interface_setup = interface_setup.lock().await;
+
     for app_config in config.bridged_apps.values() {
-        let interface = app_config.virtual_interface_app()?;
+        let veth_app = app_config.virtual_interface_app()?;
 
-        let locked_interface_setup = interface_setup.lock().await;
-
-        if let Some(vids) = app_config.vlans_opt() {
-            for vid in vids {
-                locked_interface_setup
-                    .move_to_network_namespace(
-                        &format!("{interface}.{vid}"),
-                        app_config.netns_app()?,
-                    )
-                    .await?;
-            }
-        }
-
-        locked_interface_setup
-            .move_to_network_namespace(interface, app_config.netns_app()?)
-            .await?;
-    }
-
-    Ok(())
-}
-
-async fn set_veth_bridge_side_up(
-    config: &ExpandedConfiguration,
-    interface_setup: &Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
-) -> Result<()> {
-    for app_config in config.bridged_apps.values() {
-        let locked_interface_setup = interface_setup.lock().await;
         set_interface_state(
             app_config.virtual_interface_bridge()?,
             LinkState::Up,
+            &None,
             &*locked_interface_setup,
         )
         .await?;
+
+        let netns = Some(app_config.netns_app()?.clone());
+
+        set_interface_state(veth_app, LinkState::Up, &netns, &*locked_interface_setup).await?;
+
+        for vid in app_config.vlans_opt().unwrap_or(&vec![]) {
+            let vlan_interface = &format!("{veth_app}.{vid}");
+            set_interface_state(
+                vlan_interface,
+                LinkState::Up,
+                &netns,
+                &*locked_interface_setup,
+            )
+            .await?;
+        }
     }
 
     Ok(())
@@ -466,7 +499,13 @@ async fn setup_before_interface_up(
     dispatcher: Arc<Mutex<dyn Dispatcher + Send>>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
-    set_interface_state(interface_name, LinkState::Down, interface_setup).await?;
+    set_interface_state(
+        interface_name,
+        LinkState::Down,
+        &interface.network_namespace,
+        interface_setup,
+    )
+    .await?;
 
     // Setup Queue
     if interface.config.schedule_is_some() {
@@ -554,10 +593,11 @@ async fn setup_before_interface_up(
 async fn set_interface_state(
     interface: &str,
     state: LinkState,
+    netns: &Option<String>,
     interface_setup: &(dyn InterfaceSetup + Sync + Send),
 ) -> Result<()> {
     interface_setup
-        .set_link_state(state, interface)
+        .set_link_state(state, interface, netns)
         .await
         .with_context(|| format!("Setting interface {interface} {state} failed"))?;
     println!("  Interface {interface} {state}");
@@ -822,25 +862,22 @@ mod tests {
         let mut interface_setup = MockInterfaceSetup::new();
         interface_setup
             .expect_set_link_state()
-            .returning(move |_, _| Ok(()));
-        interface_setup
-            .expect_add_ip_address()
             .returning(move |_, _, _| Ok(()));
         interface_setup
+            .expect_add_ip_address()
+            .returning(move |_, _, _, _| Ok(()));
+        interface_setup
             .expect_set_mac_address()
-            .returning(move |_, _| Ok(()));
+            .returning(move |_, _, _| Ok(()));
         interface_setup
             .expect_setup_vlan_interface()
             .returning(move |_, _, _| Ok(()));
         interface_setup
             .expect_setup_veth_pair_with_vlans()
-            .returning(move |_, _, _| Ok(()));
-        interface_setup
-            .expect_move_to_network_namespace()
-            .returning(move |_, _| Ok(()));
+            .returning(move |_, _, _, _| Ok(()));
         interface_setup
             .expect_set_vlan_offload()
-            .returning(move |_, _, _| Ok(()));
+            .returning(move |_, _, _, _| Ok(()));
         interface_setup
     }
 
@@ -848,25 +885,22 @@ mod tests {
         let mut interface_setup = MockInterfaceSetup::new();
         interface_setup
             .expect_set_link_state()
-            .returning(|_, _| Err(anyhow!("failed")));
-        interface_setup
-            .expect_add_ip_address()
             .returning(|_, _, _| Err(anyhow!("failed")));
         interface_setup
+            .expect_add_ip_address()
+            .returning(|_, _, _, _| Err(anyhow!("failed")));
+        interface_setup
             .expect_set_mac_address()
-            .returning(|_, _| Err(anyhow!("failed")));
+            .returning(|_, _, _| Err(anyhow!("failed")));
         interface_setup
             .expect_setup_vlan_interface()
             .returning(|_, _, _| Err(anyhow!("failed")));
         interface_setup
             .expect_setup_veth_pair_with_vlans()
-            .returning(move |_, _, _| Err(anyhow!("failed")));
-        interface_setup
-            .expect_move_to_network_namespace()
-            .returning(move |_, _| Err(anyhow!("failed")));
+            .returning(move |_, _, _, _| Err(anyhow!("failed")));
         interface_setup
             .expect_set_vlan_offload()
-            .returning(move |_, _, _| Err(anyhow!("failed")));
+            .returning(move |_, _, _, _| Err(anyhow!("failed")));
         interface_setup
     }
 
