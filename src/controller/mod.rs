@@ -278,30 +278,8 @@ impl Setup for Controller {
             }
         }
 
-        // Configure IP addresses and promiscuous mode
-        {
-            let locked_interface_setup = interface_setup.lock().await;
-            for (name, interface) in &config.interfaces {
-                if let Some(addresses) = &interface.config.addresses_opt() {
-                    for (ip, prefix_length) in *addresses {
-                        locked_interface_setup
-                            .add_address(*ip, *prefix_length, name)
-                            .await
-                            .context("Adding address to interface failed")?;
-                        println!("  Added {ip}/{prefix_length} to {name}");
-                    }
-                }
-
-                if let Some(promiscuous) = interface.config.promiscuous_opt() {
-                    locked_interface_setup
-                        .set_promiscuous(name, *promiscuous)
-                        .await
-                        .with_context(|| {
-                            format!("Setting interface {name} to promiscious mode failed")
-                        })?;
-                }
-            }
-        }
+        // Configure IP and MAC addresses and promiscuous mode
+        perform_interface_setup(&config, &interface_setup).await?;
 
         // Iterate over all interfaces with schedule configuration
         // By this approach, instead of iterating over the apps,
@@ -357,6 +335,41 @@ impl Setup for Controller {
 
         Ok(())
     }
+}
+
+async fn perform_interface_setup(
+    config: &ExpandedConfiguration,
+    interface_setup: &Arc<Mutex<dyn InterfaceSetup + Sync + Send>>,
+) -> Result<()> {
+    let locked_interface_setup = interface_setup.lock().await;
+    for (name, interface) in &config.interfaces {
+        if let Some(address) = interface.config.mac_address_opt() {
+            locked_interface_setup
+                .set_mac_address(*address, name)
+                .await
+                .context("Setting MAC address of interface failed")?;
+            println!("  Set {address} to {name}");
+        }
+
+        if let Some(addresses) = &interface.config.ip_addresses_opt() {
+            for (ip, prefix_length) in *addresses {
+                locked_interface_setup
+                    .add_ip_address(*ip, *prefix_length, name)
+                    .await
+                    .context("Adding IP address to interface failed")?;
+                println!("  Added {ip}/{prefix_length} to {name}");
+            }
+        }
+
+        if let Some(promiscuous) = interface.config.promiscuous_opt() {
+            locked_interface_setup
+                .set_promiscuous(name, *promiscuous)
+                .await
+                .with_context(|| format!("Setting interface {name} to promiscious mode failed"))?;
+        }
+    }
+
+    Ok(())
 }
 
 async fn move_veths_to_namespaces(
@@ -602,7 +615,7 @@ mod tests {
                     ])
                     .build(),
             )
-            .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
+            .ip_addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
             .build()
     }
 
@@ -811,8 +824,11 @@ mod tests {
             .expect_set_link_state()
             .returning(move |_, _| Ok(()));
         interface_setup
-            .expect_add_address()
+            .expect_add_ip_address()
             .returning(move |_, _, _| Ok(()));
+        interface_setup
+            .expect_set_mac_address()
+            .returning(move |_, _| Ok(()));
         interface_setup
             .expect_setup_vlan_interface()
             .returning(move |_, _, _| Ok(()));
@@ -834,8 +850,11 @@ mod tests {
             .expect_set_link_state()
             .returning(|_, _| Err(anyhow!("failed")));
         interface_setup
-            .expect_add_address()
+            .expect_add_ip_address()
             .returning(|_, _, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_set_mac_address()
+            .returning(|_, _| Err(anyhow!("failed")));
         interface_setup
             .expect_setup_vlan_interface()
             .returning(|_, _, _| Err(anyhow!("failed")));

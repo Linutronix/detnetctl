@@ -10,7 +10,7 @@
 //! # tokio_test::block_on(async {
 //! let mut interface_setup = Iproute2Setup::new();
 //! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
-//! interface_setup.add_address("192.168.12.3".parse()?, 32, "eth0").await?;
+//! interface_setup.add_ip_address("192.168.12.3".parse()?, 32, "eth0").await?;
 //! interface_setup.set_link_state(LinkState::Down, "eth0").await?;
 //! # Ok::<(), anyhow::Error>(())
 //! # });
@@ -19,6 +19,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use eui48::MacAddress;
 use std::fmt;
 use std::net::IpAddr;
 
@@ -51,8 +52,11 @@ pub trait InterfaceSetup {
     /// Construct a link setup command
     async fn set_link_state(&self, state: LinkState, interface: &str) -> Result<()>;
 
-    /// Add address to interface
-    async fn add_address(&self, address: IpAddr, prefix_len: u8, interface: &str) -> Result<()>;
+    /// Add IP address to interface
+    async fn add_ip_address(&self, address: IpAddr, prefix_len: u8, interface: &str) -> Result<()>;
+
+    /// Set MAC address of interface
+    async fn set_mac_address(&self, address: MacAddress, interface: &str) -> Result<()>;
 
     /// Setup VLAN interface
     async fn setup_vlan_interface(
@@ -115,7 +119,16 @@ impl InterfaceSetup for DummyInterfaceSetup {
         Ok(())
     }
 
-    async fn add_address(&self, _address: IpAddr, _prefix_len: u8, _interface: &str) -> Result<()> {
+    async fn add_ip_address(
+        &self,
+        _address: IpAddr,
+        _prefix_len: u8,
+        _interface: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn set_mac_address(&self, _address: MacAddress, _interface: &str) -> Result<()> {
         Ok(())
     }
 

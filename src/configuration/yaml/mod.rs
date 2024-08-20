@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
 
-const VERSION_REQ: &str = "=0.6.*";
+const VERSION_REQ: &str = "=0.7.*";
 
 /// Reads configuration from YAML file
 #[derive(Default, Debug)]
@@ -156,7 +156,7 @@ mod tests {
     };
     use const_format::concatcp;
     use std::fs::File;
-    const VERSION: &str = "0.6.0";
+    const VERSION: &str = "0.7.0";
 
     #[test]
     fn test_get_unbridged_app_happy() -> Result<()> {

@@ -44,7 +44,7 @@
 //!            ])
 //!            .build(),
 //!    )
-//!    .addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
+//!    .ip_addresses(vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 3, 3)), 16)])
 //!    .build();
 //!
 //! let mut queue_setup = TaprioSetup;

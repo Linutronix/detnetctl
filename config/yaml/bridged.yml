@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Linutronix GmbH
 # SPDX-License-Identifier: 0BSD
 
-version: 0.6.0
+version: 0.7.0
 bridged_apps:
   app0:
     vlans: [1]
@@ -19,7 +19,7 @@ streams:
   stream_out_unicast:
     incoming_interface: vethapp0
     identification:
-      destination_address: 36:b3:b1:1a:f0:97
+      destination_address: 02:00:00:00:00:02
       vid: 1
     outgoing_l2:
       outgoing_interface: enp87s0
@@ -33,10 +33,13 @@ streams:
   stream_in_unicast:
     incoming_interface: enp87s0
     identification:
-      destination_address: aa:f9:f4:20:d2:65
+      destination_address: &myapp0mac 02:00:00:00:00:01
       vid: 1
     outgoing_l2:
       outgoing_interface: vethapp0
 interfaces:
   enp87s0:
     promiscuous: true
+  veth0.1:
+    ip_addresses: [[10.0.0.1,24]]
+    mac_address: *myapp0mac

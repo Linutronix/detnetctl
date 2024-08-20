@@ -16,6 +16,7 @@ use crate::configuration::{
 use crate::ptp::{
     ClockAccuracy, ClockClass, PtpInstanceConfig, PtpInstanceConfigBuilder, TimeSource,
 };
+use eui48::MacAddress;
 use log::debug;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -61,13 +62,16 @@ fn create_interface_config(interface: &DataNodeRef<'_>) -> Result<Interface> {
         pcp_encoding = Some(parse_pcp_encoding(&bridge_port)?);
     }
 
-    let addresses = get_interface_addresses(interface)?;
+    let ip_addresses = get_interface_ip_addresses(interface)?;
+
+    let mac_address = get_interface_mac_address(interface)?;
 
     Ok(Interface {
         schedule,
         taprio: None,
         pcp_encoding,
-        addresses,
+        ip_addresses,
+        mac_address,
         promiscuous: None,
     })
 }
@@ -416,7 +420,7 @@ fn get_ptp_instance(tree: &DataTree, instance_index: u32) -> Result<Option<PtpIn
     Ok(None)
 }
 
-fn get_interface_addresses(interface: &DataNodeRef<'_>) -> Result<Option<Vec<(IpAddr, u8)>>> {
+fn get_interface_ip_addresses(interface: &DataNodeRef<'_>) -> Result<Option<Vec<(IpAddr, u8)>>> {
     Ok(interface
         .find_xpath("ipv4/address | ipv6/address")
         .ok()
@@ -444,6 +448,13 @@ fn get_interface_addresses(interface: &DataNodeRef<'_>) -> Result<Option<Vec<(Ip
         })
         .transpose()?
         .flatten())
+}
+
+fn get_interface_mac_address(interface: &DataNodeRef<'_>) -> Result<Option<MacAddress>> {
+    Ok(interface
+        .get_value_for_xpath::<String>("phys-address")?
+        .map(|addr| addr.parse())
+        .transpose()?)
 }
 
 fn parse_schedule(tree: &DataNodeRef<'_>) -> Result<Schedule> {
@@ -760,7 +771,7 @@ mod tests {
         assert_eq!(
             config_vlan.unwrap(),
             InterfaceBuilder::new()
-                .addresses(vec![
+                .ip_addresses(vec![
                     (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24),
                     (
                         IpAddr::V6(Ipv6Addr::new(0xfd2a, 0xbc93, 0x8476, 0x634, 0, 0, 0, 0)),
