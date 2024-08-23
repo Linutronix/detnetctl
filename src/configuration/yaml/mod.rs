@@ -525,14 +525,15 @@ mod tests {
 
     #[test]
     fn validate_example_yamls() {
-        let mut config = YAMLConfiguration::default();
-        config
-            .read(File::open("./config/yaml/unbridged.yml").unwrap())
-            .unwrap();
+        let files = [
+            "./config/yaml/unbridged.yml",
+            "./config/yaml/bridged.yml",
+            "./config/yaml/bridged_frer.yml",
+        ];
 
-        config = YAMLConfiguration::default();
-        config
-            .read(File::open("./config/yaml/bridged.yml").unwrap())
-            .unwrap();
+        for file in files {
+            let mut config = YAMLConfiguration::default();
+            config.read(File::open(file).unwrap()).unwrap();
+        }
     }
 }
