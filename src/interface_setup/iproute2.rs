@@ -249,7 +249,7 @@ impl InterfaceSetup for Iproute2Setup {
         .await
         {
             Err(e) => {
-                if e.to_string().contains("Address already assigned") {
+                if e.to_string().contains("already assigned") {
                     return Ok(());
                 }
 
