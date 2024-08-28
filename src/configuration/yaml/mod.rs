@@ -592,6 +592,7 @@ mod tests {
             "./config/yaml/unbridged.yml",
             "./config/yaml/bridged.yml",
             "./config/yaml/bridged_frer.yml",
+            "./config/yaml/bridged_detnet.yml",
         ];
 
         for file in files {
