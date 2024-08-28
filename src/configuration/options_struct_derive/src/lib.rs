@@ -124,6 +124,7 @@ pub fn options_getters(input: TokenStream) -> TokenStream {
                     let field_name_string = field_name.as_ref().unwrap().to_string();
                     let struct_name_string = struct_name.to_string();
                     let opt_name = syn::Ident::new(&format!("{}_opt", field_name.as_ref().unwrap()), field_name.span());
+                    let mut_name = syn::Ident::new(&format!("{}_mut", field_name.as_ref().unwrap()), field_name.span());
                     let is_some_name = syn::Ident::new(&format!("{}_is_some", field_name.as_ref().unwrap()), field_name.span());
                     let is_some_comment = format!("If field `{}` contains a value", field_name.as_ref().unwrap());
                     let req_doc_comment = format!("{0}\n\nThis method should be used if a valid configuration is expected contain a `{1}` field.\n# Errors\nIf `{1}` does not contain a value, an error is returned.", doc_comment, field_name.as_ref().unwrap());
@@ -139,6 +140,11 @@ pub fn options_getters(input: TokenStream) -> TokenStream {
                         #[doc=#opt_doc_comment]
                         pub fn #opt_name(&self) -> Option<&#generics_type> {
                             self.#field_name.as_ref()
+                        }
+
+                        #[doc=#opt_doc_comment]
+                        pub fn #mut_name(&mut self) -> &mut Option<#generics_type> {
+                            &mut self.#field_name
                         }
 
                         #[doc=#is_some_comment]

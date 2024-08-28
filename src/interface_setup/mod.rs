@@ -69,6 +69,13 @@ pub trait InterfaceSetup {
         netns: &Option<String>,
     ) -> Result<()>;
 
+    /// Get IP addresses from interface
+    async fn get_ip_addresses(
+        &self,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<Vec<IpAddr>>;
+
     /// Set MAC address of interface
     async fn set_mac_address(
         &self,
@@ -76,6 +83,9 @@ pub trait InterfaceSetup {
         interface: &str,
         netns: &Option<String>,
     ) -> Result<()>;
+
+    /// Get MAC address of interface
+    async fn get_mac_address(&self, interface: &str, netns: &Option<String>) -> Result<MacAddress>;
 
     /// Setup VLAN interface
     async fn setup_vlan_interface(
@@ -163,6 +173,14 @@ impl InterfaceSetup for DummyInterfaceSetup {
         Ok(())
     }
 
+    async fn get_ip_addresses(
+        &self,
+        _interface: &str,
+        _netns: &Option<String>,
+    ) -> Result<Vec<IpAddr>> {
+        Ok(vec![])
+    }
+
     async fn set_mac_address(
         &self,
         _address: MacAddress,
@@ -170,6 +188,14 @@ impl InterfaceSetup for DummyInterfaceSetup {
         _netns: &Option<String>,
     ) -> Result<()> {
         Ok(())
+    }
+
+    async fn get_mac_address(
+        &self,
+        _interface: &str,
+        _netns: &Option<String>,
+    ) -> Result<MacAddress> {
+        Ok(MacAddress::default())
     }
 
     async fn setup_vlan_interface(

@@ -455,11 +455,11 @@ impl Setup for Controller {
                 })?;
         }
 
-        // Install all XDPs for the streams and flows
-        install_xdps(&config, &data_plane, &interface_setup).await?;
-
         // Configure IP and MAC addresses and promiscuous mode
         perform_interface_setup(&config, &interface_setup).await?;
+
+        // Install all XDPs for the streams and flows
+        install_xdps(&config, &data_plane, &interface_setup).await?;
 
         // Set both sides of the veth pairs up
         set_veths_up(&config, &interface_setup).await?;
@@ -542,8 +542,67 @@ async fn install_xdps(
     }
 
     for flow in &config.flows {
+        let mut modified_flow = flow.flow.clone();
+
+        // Fill in source IP and MAC for encapsulation if needed
+        // and possible. This simplifies the configuration in
+        // certain scenarios.
+        if let Some(ofs) = modified_flow.outgoing_forwarding_mut() {
+            for of in ofs {
+                if of.ip_opt().is_none() {
+                    // If no IP encapsulation shall take place,
+                    // IP source address is not needed and
+                    // MAC address should not be overwritten
+                    // if not explictly requested
+                    continue;
+                }
+
+                // Fill MAC addresses
+                let mut first_interface = None;
+                let mut num_l2s = 0;
+                if let Some(outgoing_l2s) = of.outgoing_l2_mut() {
+                    for outgoing_l2 in outgoing_l2s {
+                        let interface = outgoing_l2.outgoing_interface()?.to_owned();
+                        *outgoing_l2.source_mut() = Some(
+                            locked_interface_setup
+                                .get_mac_address(&interface, &None)
+                                .await?,
+                        );
+
+                        if first_interface.is_none() {
+                            first_interface = Some(interface);
+                        }
+
+                        num_l2s += 1;
+                    }
+                }
+
+                // Fill IP addresses
+                if let Some(ip) = of.ip_mut() {
+                    if ip.source_opt().is_none() {
+                        let Some(interface) = first_interface else {
+                            return Err(anyhow!("Source IP can not be determined automatically if no Outgoing L2 exists"));
+                        };
+
+                        if num_l2s != 1 {
+                            return Err(anyhow!("Source IP is required since it cannot be determined automatically if IP encapsulation is requested and multiple outgoing L2 exist (i.e. FRER shall be applied)"));
+                        }
+
+                        let addresses = locked_interface_setup
+                            .get_ip_addresses(&interface, &None)
+                            .await?;
+
+                        // find first IPv6 address as primary address
+                        let address = addresses.iter().find(|addr| addr.is_ipv6());
+
+                        *ip.source_mut() = address.copied();
+                    }
+                }
+            }
+        }
+
         locked_data_plane
-            .setup_flow(&flow.flow, &flow.queues)
+            .setup_flow(&modified_flow, &flow.queues)
             .context("Installing flow via XDP failed")?;
 
         // Disable VLAN offload for all incoming traffic
@@ -1098,8 +1157,14 @@ mod tests {
             .expect_add_ip_address()
             .returning(move |_, _, _, _| Ok(()));
         interface_setup
+            .expect_get_ip_addresses()
+            .returning(move |_, _| Ok(vec![]));
+        interface_setup
             .expect_set_mac_address()
             .returning(move |_, _, _| Ok(()));
+        interface_setup
+            .expect_get_mac_address()
+            .returning(move |_, _| Ok("8b:de:82:a1:59:5a".parse().unwrap()));
         interface_setup
             .expect_setup_vlan_interface()
             .returning(move |_, _, _| Ok(()));
@@ -1123,6 +1188,9 @@ mod tests {
         interface_setup
             .expect_add_ip_address()
             .returning(|_, _, _, _| Err(anyhow!("failed")));
+        interface_setup
+            .expect_get_ip_addresses()
+            .returning(|_, _| Err(anyhow!("failed")));
         interface_setup
             .expect_set_mac_address()
             .returning(|_, _, _| Err(anyhow!("failed")));
