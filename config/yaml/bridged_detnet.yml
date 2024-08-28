@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2023 Linutronix GmbH
+# SPDX-License-Identifier: 0BSD
+
+version: 0.8.0
+bridged_apps:
+  app0:
+    vlans: [1]
+    virtual_interface_app: veth0
+    netns_app: app0
+    virtual_interface_bridge: vethapp0
+flows:
+  flow:
+    incoming_app_flows:
+      - ingress_interfaces: [vethapp0]
+        ingress_identification:
+          destination_address: 02:00:00:00:00:02
+          vid: 1
+      - ingress_interfaces: [vethapp0]
+        ingress_identification:
+          destination_address: ff:ff:ff:ff:ff:ff
+          vid: 1
+    outgoing_forwarding:
+      - mpls:
+          label: 1234
+        ip:
+          source_port: 6543 
+          destination: fd02:5cb3:dba1::3
+        outgoing_l2:
+          - outgoing_interface: enp86s0
+            destination: 48:21:0b:56:de:92
+            vid: 1
+      - mpls:
+          label: 1234
+        ip:
+          source_port: 6543
+          destination: fd02:5cb3:dba1::4
+        outgoing_l2:
+          - outgoing_interface: enp87s0
+            destination: 48:21:0b:3e:31:ce
+            vid: 1
+    incoming_forwarding:
+      - incoming_interface: enp86s0
+        identification:
+          mpls_label: 1234
+          udp_source_port: 6543
+      - incoming_interface: enp87s0
+        identification:
+          mpls_label: 1234
+          udp_source_port: 6543
+    outgoing_app_flows:
+      - egress_l2:
+          outgoing_interface: vethapp0
+interfaces:
+  enp86s0:
+    promiscuous: true
+    ip_addresses: [[fd02:5cb3:dba1::1, 64]]
+  enp87s0:
+    promiscuous: true
+    ip_addresses: [[fd02:5cb3:dba1::2, 64]]
+  veth0.1:
+    ip_addresses: [[10.0.0.1,24]]
+    mac_address: 02:00:00:00:00:01
