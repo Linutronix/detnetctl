@@ -267,6 +267,30 @@ impl InterfaceSetup for Iproute2Setup {
         }
     }
 
+    async fn get_ip_addresses(
+        &self,
+        interface: &str,
+        netns: &Option<String>,
+    ) -> Result<Vec<IpAddr>> {
+        let iface = Self::execute_ip(&["-detail", "address", "show", interface], netns).await?;
+
+        iface
+            .get("addr_info")
+            .ok_or_else(|| anyhow!("addr_info not found for {interface}"))?
+            .as_array()
+            .ok_or_else(|| anyhow!("addr_info not an array for {interface}"))?
+            .iter()
+            .map(|addr| -> Result<IpAddr> {
+                Ok(addr
+                    .get("local")
+                    .ok_or_else(|| anyhow!("no local entry for address for {interface}"))?
+                    .as_str()
+                    .ok_or_else(|| anyhow!("local entry for address not a string for {interface}"))?
+                    .parse()?)
+            })
+            .collect::<Result<Vec<IpAddr>>>()
+    }
+
     async fn set_mac_address(
         &self,
         address: MacAddress,
@@ -287,6 +311,20 @@ impl InterfaceSetup for Iproute2Setup {
         .await?;
 
         Ok(())
+    }
+
+    async fn get_mac_address(&self, interface: &str, netns: &Option<String>) -> Result<MacAddress> {
+        let iface = Self::get_interface(interface, netns)
+            .await?
+            .ok_or_else(|| anyhow!("Interface {interface} not found"))?;
+
+        Ok(MacAddress::parse_str(
+            iface
+                .get("address")
+                .ok_or_else(|| anyhow!("No address found for {interface}"))?
+                .as_str()
+                .ok_or_else(|| anyhow!("Address of {interface} not a string"))?,
+        )?)
     }
 
     async fn setup_vlan_interface(
