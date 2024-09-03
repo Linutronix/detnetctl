@@ -11,6 +11,10 @@
 
 #define ETH_P_8021Q 0x8100
 #define ETH_P_8021AD 0x88A8
+#define ETH_P_IP 0x0800
+#define ETHER_ADDR_LEN 6
+#define ICMP_DEST_UNREACH 3
+#define ICMP_FRAG_NEEDED 4
 
 volatile const bool debug_output = false;
 volatile const struct vlan_ethhdr target_outer_hdr;
@@ -50,6 +54,8 @@ void *memcpy_v(void *dst, const volatile void *src, size_t n)
 	return dst;
 }
 
+int respond_to_large_packet(struct xdp_md *ctx, u16 total_encapsulation_size);
+
 SEC("xdp/devmap")
 int xdp_bridge_postprocessing(struct xdp_md *ctx)
 {
@@ -71,13 +77,17 @@ int xdp_bridge_postprocessing(struct xdp_md *ctx)
 
 		u16 payload_len = data_end - data;
 
+		bpf_printk("encapsulated frame size %i", payload_len + total_encapsulation_size);
+
 		if (payload_len + total_encapsulation_size >
 		    MAX_ENCAPSULATED_FRAME_SIZE) {
 			if (debug_output) {
 				bpf_printk(
 					"Packet with encapsulation header does not fit into MTU");
 			}
-			return XDP_DROP;
+
+			return respond_to_large_packet(
+				ctx, total_encapsulation_size);
 		}
 
 		if (bpf_xdp_adjust_head(ctx, -total_encapsulation_size)) {
@@ -251,6 +261,142 @@ int xdp_bridge_postprocessing(struct xdp_md *ctx)
 	// first entry in the CPUMAP is always configured
 	// for the correct queue.
 	return bpf_redirect_map(&cpu_map, 0, 0);
+}
+
+static __always_inline void swap_src_dst_mac(struct vlan_ethhdr *eth)
+{
+	__u8 h_tmp[ETHER_ADDR_LEN];
+
+	__builtin_memcpy(h_tmp, eth->h_source, ETHER_ADDR_LEN);
+	__builtin_memcpy(eth->h_source, eth->h_dest, ETHER_ADDR_LEN);
+	__builtin_memcpy(eth->h_dest, h_tmp, ETHER_ADDR_LEN);
+}
+
+static __always_inline void swap_src_dst_ipv4(struct iphdr *iphdr)
+{
+	__be32 tmp = iphdr->saddr;
+
+	iphdr->saddr = iphdr->daddr;
+	iphdr->daddr = tmp;
+}
+
+static __always_inline u16 calculate_checksum(unsigned short *data,
+					      unsigned int count)
+{
+	unsigned long sum = 0;
+
+	for (int i = 0; i < count; i++) {
+		sum += *data;
+		data++;
+	}
+
+	while (sum >> 16) {
+		sum = (sum & 0xFFFF) + (sum >> 16);
+	}
+
+	return ~sum;
+}
+
+// Respond to too large packet with ICMP_DEST_UNREACH/ICMP_FRAG_NEEDED.
+// This is particularly important for TCP transmitters to adapt the frame size.
+// Currently only implemented for IPv4
+int respond_to_large_packet(struct xdp_md *ctx, u16 total_encapsulation_size)
+{
+	// DetNet CW was already prepended, so remove again
+	if (bpf_xdp_adjust_head(ctx, 4)) {
+		if (debug_output) {
+			bpf_printk(
+				"Internal error: Cannot remove CW for sending ICMP");
+		}
+		return XDP_DROP;
+	}
+
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data = (void *)(long)ctx->data;
+	struct vlan_ethhdr *ethhdr = data;
+
+	if (data + sizeof(struct vlan_ethhdr) > data_end) {
+		if (debug_output) {
+			bpf_printk(
+				"Internal error: Packet too large for encapsulation, but too small for Ethernet header");
+		}
+		return XDP_DROP;
+	}
+
+	u16 vlan_proto = bpf_ntohs(ethhdr->h_vlan_proto);
+	u16 ether_type;
+	struct iphdr *ip;
+	u16 ethsize;
+	if (vlan_proto != ETH_P_8021Q && vlan_proto != ETH_P_8021AD) {
+		ether_type = vlan_proto;
+		ethsize = sizeof(struct ethhdr);
+	} else {
+		ether_type = bpf_ntohs(ethhdr->h_vlan_encapsulated_proto);
+		ethsize = sizeof(struct vlan_ethhdr);
+	}
+
+	ip = data + ethsize;
+
+	if (ether_type != ETH_P_IP) {
+		if (debug_output) {
+			bpf_printk(
+				"Responding to too large packets currently only implemented for IPv4");
+		}
+		return XDP_DROP;
+	}
+
+	struct icmphdr *icmp = (void *)ip + sizeof(struct iphdr);
+	void *orig_hdr =
+		(void *)icmp +
+		sizeof(struct icmphdr); // ICMP response contains original IP header
+
+	if ((void *)ip + sizeof(struct iphdr) > data_end ||
+	    (void *)icmp + sizeof(struct icmphdr) > data_end ||
+	    (void *)orig_hdr + sizeof(struct iphdr) + 8 > data_end) {
+		if (debug_output) {
+			bpf_printk(
+				"Internal error: Packet too large for encapsulation, but too small to fit ICMP response");
+		}
+		return XDP_DROP;
+	}
+
+	__builtin_memcpy(orig_hdr, ip, sizeof(struct iphdr) + 8);
+
+	swap_src_dst_ipv4(ip);
+	swap_src_dst_mac(ethhdr);
+
+	u16 ip_tot_len =
+		(void *)orig_hdr + sizeof(struct iphdr) + 8 - (void *)ip;
+	ip->tot_len = bpf_htons(ip_tot_len);
+
+	ip->protocol = IPPROTO_ICMP;
+
+	icmp->type = ICMP_DEST_UNREACH;
+	icmp->code = ICMP_FRAG_NEEDED;
+	icmp->un.frag.__unused = 0;
+	int max_forwarded_frame_size =
+		MAX_ENCAPSULATED_FRAME_SIZE - total_encapsulation_size;
+	icmp->un.frag.mtu = bpf_htons(max_forwarded_frame_size -
+				      ethsize); // MTU excludes L2 header
+
+	ip->check = 0;
+	ip->check = calculate_checksum((unsigned short *)ip,
+				       sizeof(struct iphdr) / 2);
+
+	icmp->checksum = 0;
+	icmp->checksum = calculate_checksum(
+		(unsigned short *)icmp,
+		(sizeof(struct icmphdr) + sizeof(struct iphdr) + 8) / 2);
+
+	if (bpf_xdp_adjust_tail(ctx, ((void *)ip + ip_tot_len) - data_end)) {
+		if (debug_output) {
+			bpf_printk(
+				"Changing packet size for ICMP response failed");
+		}
+		return XDP_DROP;
+	}
+
+	return bpf_redirect(ctx->ingress_ifindex, 0); // send back
 }
 
 char __license[] SEC("license") = "GPL";
