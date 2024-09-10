@@ -28,7 +28,7 @@ use std::path::Path;
 use mockall::automock;
 
 /// State of a network link
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkState {
     /// Link is active
     Up,
@@ -50,7 +50,9 @@ impl fmt::Display for LinkState {
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub trait InterfaceSetup {
-    /// Construct a link setup command
+    /// Set link state down.
+    /// When link shall be set up, wait until the
+    /// speed requested via ethtool is available.
     async fn set_link_state(
         &self,
         state: LinkState,
