@@ -209,6 +209,14 @@ impl InterfaceSetup for Iproute2Setup {
 
         Self::execute_ip(&["link", "set", state_cmd, "dev", interface], netns).await?;
 
+        if state == LinkState::Down {
+            // For setting the link down, it is not
+            // important to wait. Also, requesting
+            // the link speed for a link that is down
+            // is not an adequate method. So just skip it.
+            return Ok(());
+        }
+
         // Directly after setting the link state, it takes some time until
         // it is properly applied. E.g. the speed of the link mode is not yet
         // known. Therefore, poll it until the state was properly applied.
