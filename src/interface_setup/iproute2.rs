@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration, Instant};
 
-const INTERFACE_STATE_CHANGE_TIMEOUT: Duration = Duration::from_secs(10);
+const INTERFACE_STATE_CHANGE_TIMEOUT: Duration = Duration::from_secs(20);
 const INTERFACE_STATE_CHANGE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const NETNS_PATH: &str = "/run/netns/";
 
