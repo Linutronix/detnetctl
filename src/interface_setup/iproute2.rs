@@ -335,7 +335,11 @@ impl InterfaceSetup for Iproute2Setup {
     ) -> Result<()> {
         if let Some(link) = Self::get_interface(vlan_interface, &None).await? {
             // no need to add the interface, but still validate if it matches
-            return validate_vlan_link(&link, vlan_interface, parent_interface, vid);
+            if parent_interface == vlan_interface {
+                return Ok(());
+            } else {
+                return validate_vlan_link(&link, vlan_interface, parent_interface, vid);
+            }
         }
 
         Self::execute_ip(
