@@ -698,15 +698,21 @@ fn update_stream_maps(
                 max_cpu = max(max_cpu, (*cpu).into());
                 open_skel.rodata_mut().fixed_egress_cpu = true;
                 open_skel.rodata_mut().outgoing_cpu = (*cpu).into();
+                open_skel.rodata_mut().outgoing_interface = (callbacks.nametoindex)(l2.outgoing_interface()?)?.try_into()?;
             }
 
             let mut postprocessing_skel = open_skel.load()?;
 
             // Initialize CPUMAP
-            for cpu in 0..max_cpu {
+            for cpu in 0..max_cpu+1 {
                 let cpumap_val = BpfCpumapVal {
                     qsize: CPUMAP_QUEUE_SIZE,
-                    bpf_prog: 0,
+                //    bpf_prog: 0,
+                bpf_prog: postprocessing_skel
+                    .progs()
+                    .after_cpumap()
+                    .as_fd()
+                    .as_raw_fd(),
                 };
 
                 postprocessing_skel.maps_mut().cpu_map().update(

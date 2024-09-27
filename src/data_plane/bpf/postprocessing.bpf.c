@@ -24,6 +24,7 @@ volatile const bool overwrite_vlan_proto_and_tci = false;
 volatile const bool overwrite_ether_type = false;
 volatile const bool fixed_egress_cpu = false;
 volatile const u32 outgoing_cpu = 0;
+volatile const u32 outgoing_interface = 0;
 volatile const bool mpls_encapsulation = false;
 volatile const u32 mpls_stack_entry;
 volatile const bool udp_ip_encapsulation = false;
@@ -256,10 +257,7 @@ int xdp_bridge_postprocessing(struct xdp_md *ctx)
 	}
 
 	// We are not on the correct CPU, go over CPUMAP.
-	// Since this is a per-stream loaded XDP, the
-	// first entry in the CPUMAP is always configured
-	// for the correct queue.
-	return bpf_redirect_map(&cpu_map, 0, 0);
+	return bpf_redirect_map(&cpu_map, outgoing_cpu, 0);
 }
 
 static __always_inline void swap_src_dst_mac(struct vlan_ethhdr *eth)
@@ -396,6 +394,12 @@ int respond_to_large_packet(struct xdp_md *ctx, u16 total_encapsulation_size)
 	}
 
 	return bpf_redirect(ctx->ingress_ifindex, 0); // send back
+}
+
+SEC("xdp/cpumap")
+int after_cpumap(struct xdp_md *ctx)
+{
+	return bpf_redirect(outgoing_interface, 0); // TODO devmap then cpumap forgets previous devmap. fix in kernel patch!
 }
 
 char __license[] SEC("license") = "GPL";
