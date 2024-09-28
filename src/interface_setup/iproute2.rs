@@ -370,7 +370,7 @@ impl InterfaceSetup for Iproute2Setup {
     async fn setup_veth_pair_with_vlans(
         &self,
         veth_app: &str,
-        netns_app: &str,
+        netns_app: Option<&String>,
         veth_bridge: &str,
         vlan_ids: &[u16],
     ) -> Result<()> {
@@ -380,9 +380,11 @@ impl InterfaceSetup for Iproute2Setup {
         }
 
         // Setup network namespace if it does not exist
-        let ns_path = namespace_path(netns_app);
-        if !ns_path.exists() {
-            Self::execute_ip(&["netns", "add", netns_app], &None).await?;
+        if let Some(netns) = netns_app {
+            let ns_path = namespace_path(netns);
+            if !ns_path.exists() {
+                Self::execute_ip(&["netns", "add", netns], &None).await?;
+            }
         }
 
         // Create veth pair
@@ -407,10 +409,14 @@ impl InterfaceSetup for Iproute2Setup {
             self.setup_vlan_interface(veth_app, vlan_interface, *vid)
                 .await?;
 
-            Self::move_to_namespace(netns_app, vlan_interface).await?;
+            if let Some(netns) = netns_app {
+                Self::move_to_namespace(netns, vlan_interface).await?;
+            }
         }
 
-        Self::move_to_namespace(netns_app, veth_app).await?;
+        if let Some(netns) = netns_app {
+            Self::move_to_namespace(netns, veth_app).await?;
+        }
 
         Ok(())
     }
@@ -535,19 +541,21 @@ fn validate_vlan_link(
 async fn validate_veth_link(
     veth_bridge_link: &Value,
     veth_app: &str,
-    netns_app: &str,
+    netns_app: Option<&String>,
     vlan_ids: &[u16],
 ) -> Result<()> {
     for vid in vlan_ids {
         let vlan_interface = &format!("{veth_app}.{vid}");
-        let vlan_link = Iproute2Setup::get_interface(vlan_interface, &Some(netns_app.to_owned()))
+        //let vlan_link = Iproute2Setup::get_interface(vlan_interface, &Some(netns_app.to_owned()))
+        let vlan_link = Iproute2Setup::get_interface(vlan_interface, &netns_app.cloned())
             .await?
             .ok_or_else(|| anyhow!("interface {vlan_interface} not found"))?;
 
         validate_vlan_link(&vlan_link, vlan_interface, veth_app, *vid)?;
     }
 
-    let veth_app_link = Iproute2Setup::get_interface(veth_app, &Some(netns_app.to_owned()))
+    //let veth_app_link = Iproute2Setup::get_interface(veth_app, &Some(netns_app.to_owned()))
+    let veth_app_link = Iproute2Setup::get_interface(veth_app, &netns_app.cloned())
         .await?
         .ok_or_else(|| anyhow!("interface not found"))?;
 

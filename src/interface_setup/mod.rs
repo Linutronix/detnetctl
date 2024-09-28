@@ -106,7 +106,7 @@ pub trait InterfaceSetup {
     async fn setup_veth_pair_with_vlans(
         &self,
         veth_app: &str,
-        netns_app: &str,
+        netns_app: Option<&String>,
         veth_bridge: &str,
         vlan_ids: &[u16],
     ) -> Result<()>;
@@ -210,7 +210,7 @@ impl InterfaceSetup for DummyInterfaceSetup {
     async fn setup_veth_pair_with_vlans(
         &self,
         _veth_app: &str,
-        _netns_app: &str,
+        _netns_app: Option<&String>,
         _veth_bridge: &str,
         _vlan_ids: &[u16],
     ) -> Result<()> {

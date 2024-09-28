@@ -167,7 +167,6 @@ async fn fetch_expanded_configuration(
         validate_are_some!(
             app_config,
             virtual_interface_app,
-            netns_app,
             virtual_interface_bridge,
         )?;
     }
@@ -278,16 +277,16 @@ fn collect_expanded_interfaces(
             let mut network_namespace = None;
             for app_config in bridged_apps.values() {
                 let veth_app = app_config.virtual_interface_app()?;
-                let netns_app = app_config.netns_app()?;
+                let netns_app = app_config.netns_app_opt();
 
                 if veth_app == name {
-                    network_namespace = Some(netns_app.to_owned());
+                    network_namespace = netns_app.cloned(); // Some(netns_app.to_owned());
                     break;
                 }
 
                 for vid in app_config.vlans_opt().unwrap_or(&vec![]) {
                     if &format!("{veth_app}.{vid}") == name {
-                        network_namespace = Some(netns_app.to_owned());
+                        network_namespace = netns_app.cloned(); //Some(netns_app.to_owned());
                         break;
                     }
                 }
@@ -423,7 +422,7 @@ impl Setup for Controller {
             locked_interface_setup
                 .setup_veth_pair_with_vlans(
                     virtual_interface_app,
-                    app_config.netns_app()?,
+                    app_config.netns_app_opt(),
                     app_config.virtual_interface_bridge()?,
                     app_config.vlans_opt().unwrap_or(&vec![]),
                 )
@@ -439,7 +438,8 @@ impl Setup for Controller {
                 .pin_xdp_pass(xdp_pin_path)
                 .context("Pinning dummy XDP failed")?;
 
-            let netns = Some(app_config.netns_app()?.to_owned());
+            //let netns = Some(app_config.netns_app()?.to_owned());
+            let netns = app_config.netns_app_opt().cloned();
 
             locked_interface_setup
                 .attach_pinned_xdp(virtual_interface_app, &netns, xdp_pin_path)
@@ -674,7 +674,8 @@ async fn set_veths_up(
         )
         .await?;
 
-        let netns = Some(app_config.netns_app()?.clone());
+        //let netns = Some(app_config.netns_app()?.clone());
+        let netns = app_config.netns_app_opt().cloned();
 
         set_interface_state(veth_app, LinkState::Up, &netns, &*locked_interface_setup).await?;
 
